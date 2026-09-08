@@ -1,0 +1,27 @@
+<?php
+
+/**
+ * Stockpicker configuration template.
+ *
+ * Copy to config.php at the project root (above public_html/), fill in the
+ * real values, and keep config.php out of git. Loaded through Stockpicker\Config.
+ *
+ * For local development the db values point at the MariaDB service in
+ * docker-compose.yml (docker compose up -d).
+ */
+
+return [
+    'db' => [
+        'host' => '127.0.0.1',
+        'name' => 'stockpicker',
+        'user' => 'stockpicker',
+        'pass' => 'stockpicker',
+        'charset' => 'utf8mb4',
+    ],
+
+    // Shared secret for the /cron/* endpoints, compared with hash_equals().
+    'cron_token' => 'change-me',
+
+    // Log file, relative to the project root or absolute. Must be outside public_html/.
+    'log_path' => 'var/log/stockpicker.log',
+];

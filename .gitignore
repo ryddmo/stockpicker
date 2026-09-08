@@ -1,0 +1,9 @@
+/vendor/
+/config.php
+/var/
+.phpunit.result.cache
+/.phpunit.cache/
+/stockpicker-loopia*
+.DS_Store
+.idea/
+.vscode/
