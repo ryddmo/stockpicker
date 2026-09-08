@@ -177,10 +177,15 @@ antal instrument, lyckade/misslyckade per källa, upptäckta schemaavvikelser) s
 inspektera i efterhand.
 
 **Icke-funktionellt.** Enanvändarsystem. Datavolymen är liten (~1 000 instrument × 2
-källor × 365 dagar ≈ 730 000 rader per år). Ska kunna driftas på en laptop eller
-en liten server med en enkel schemaläggare. Ingen molninfrastruktur krävs. Val av
-databas (SQLite räcker sannolikt; Postgres om det blir aktuellt att bygga vidare)
-avgörs i den tekniska beskrivningen.
+källor × 365 dagar ≈ 730 000 rader per år) och ska rymmas inom 256 MB PHP-minne.
+Systemet driftas helt oövervakat på Loopia delat webbhotell (Privatpaket): PHP 8.3+,
+MariaDB 10.11, och nattjobbet triggas enbart av Loopias URL-cron (HTTP GET) — ingen
+CLI-cron, ingen egen server, ingen molninfrastruktur. Bindande stack- och
+plattformsbeslut ligger i arkitektur-spinen.
+
+> _Uppdaterad 2026-09-08: infrastrukturvalet (Loopia, MariaDB, URL-cron) fastställdes i
+> arkitektur-spinen efter att briefen skrevs; tidigare formulering ("SQLite på laptop")
+> är ersatt._
 
 ## Öppna frågor
 

@@ -33,7 +33,7 @@ FR13: Varje körning/slice skriver en inspekterbar körningslogg (start/slut, an
 
 ### NonFunctional Requirements
 
-NFR1: Systemet körs helt på Loopia delat webbhotell (Privatpaket): PHP 8.3, MariaDB 10.6. Ingen annan runtime eller databas.
+NFR1: Systemet körs helt på Loopia delat webbhotell (Privatpaket): PHP 8.3+ (skalet 8.5), MariaDB 10.11 (verifierat på Loopia 2026-09-08). Ingen annan runtime eller databas.
 NFR2: Nattarbetet triggas enbart av Loopias URL-cron (HTTP GET); inget steg får förutsätta att det slutförs i en enda invokation; systemet tål exekveringstidsgräns och en cron-instans i taget.
 NFR3: Externa anrop sker seriellt, strypta per källa (anrop/s från `settings`), med exponentiell backoff vid 429 eller strypning; inga parallella massanrop.
 NFR4: Endast personligt bruk — ingen komponent exponerar hämtad data utåt; anropsvolymen hålls låg; cron-endpoints kräver en hemlig token.
@@ -45,7 +45,7 @@ NFR9: Hemligheter (DB-uppgifter, cron-token) ligger i `config.php` utanför webr
 
 ### Additional Requirements
 
-- **Greenfield, ingen starter-template.** Composer-projekt utan ramverk. Beroenden: `guzzlehttp/guzzle ^7.9 || ^8.0`, `monolog/monolog ^3.11`, `robmorgan/phinx ^0.16.12`.
+- **Greenfield, ingen starter-template.** Composer-projekt utan ramverk. Beroenden: `guzzlehttp/guzzle ^7.9 || ^8.0`, `monolog/monolog ^3.11`, `robmorgan/phinx ^0.16.12`. `composer.json` sätter `require.php` till `>=8.3` (inte pinnad) — Loopias skal kör PHP 8.5; web-PHP-versionen väljs per domän i Kundzon.
 - **Paradigm:** pipes-and-filters (`UniverseSync → Enqueue → FetchRunner → Normalizer → Deriver`) + ports-and-adapters. All källåtkomst bakom `SourceAdapter`-interface i `src/Adapter/`; ingen HTTP/URL utanför `src/Adapter/` (AD-1).
 - **Adapterkontrakt:** `fetch` returnerar normaliserad rad `{isin, source, as_of_date, number_of_owners, last_price, market_cap, fetched_at}` eller typat fel `SchemaMismatch | NotFound | Transient` (AD-2).
 - **Katalogstruktur:** `public_html/` (tunn front controller: `/cron/refill`, `/cron/work`, `/cron/derive`), `src/{Adapter,Pipeline,Store,Error}/`, `bin/`, `db/migrations/`, `config.php` utanför webroot, `vendor/`.
@@ -55,10 +55,10 @@ NFR9: Hemligheter (DB-uppgifter, cron-token) ligger i `config.php` utanför webr
 - **Dataägande (AD-3):** `instrument` skrivs bara av `UniverseSync`; `owner_count_daily` är källindelad — varje adapterflöde skriver bara sina egna `source`-rader; `Deriver` läser fakta, skriver dem aldrig.
 - **Tabeller:** `instrument`, `owner_count_daily`, `work_queue`, `ingest_run`, `settings`. `snake_case`, singular tabellnamn. ISIN naturlig nyckel överallt; Avanza/Nordnet-id är cachade attribut på `instrument`.
 - **Migrationer via Phinx**; första migrationen sätter kanoniska `settings`-nycklar (`run_after`, `batch_size`, `rate.<källa>`, `queue.stale_after`).
-- **Deploy:** SSH + Composer; `vendor/` byggs och laddas upp; migrationer körs manuellt via SSH.
+- **Deploy (Story 1.10):** rsync över SSH, inte FTP. Källkod (utan `vendor/`) synkas till `~/stockpicker/`; `composer install --no-dev --optimize-autoloader` körs på servern (lokalt byggt `vendor/` är fallback); `config.php` kopieras manuellt en gång, utanför docroot; migrationer körs manuellt via SSH (`vendor/bin/phinx migrate`); subdomän med docroot `~/stockpicker/public_html/`; Loopias tre URL-cron-jobb registreras i Kundzon. Runbook i `docs/deploy.md`.
 - **Härledda mått:** MariaDB window functions; SQL-vy vs materialiserad tabell avgörs vid implementation.
 - **Loggning:** Monolog till fil; `warning` för schemaavvikelse, `error` för oväntat undantag.
-- **Öppna frågor att hantera i drift:** Börsdatas gratisnivå-täckning overifierad; Nordnets uppdateringstid okänd; Loopias exekveringstidsgräns för URL-cron okänd (supportfråga före drift).
+- **Öppna frågor att hantera i drift:** Börsdatas gratisnivå-täckning overifierad; Nordnets uppdateringstid okänd; web-PHP:ns `memory_limit`/`max_execution_time` och URL-cronens tidsgräns + minsta intervall ännu okänt (Kundzon + probe i Story 1.10). Verifierat 2026-09-08: SSH, `rsync`, server-`composer`, `pdo_mysql`/`curl` finns.
 
 ### UX Design Requirements
 
@@ -83,8 +83,11 @@ FR13: Epic 1 (minimalt: en ingest_run-rad per körning) + Epic 2 (fullt: lyckade
 ## Epic List
 
 ### Epic 1: Tunn end-to-end-skiva — nattlig insamling bevisad på en seed-lista
-Varje lager, tunt: projektskelett (Composer utan ramverk, katalogstruktur, `config.php`, Phinx-migrationer, cron-endpoints), `SourceAdapter`-porten, Avanza- och Nordnet-adaptrarna som separata stories, kö + tidsbox, append-only-lagring med idempotens, ISIN-matchning, datumfälten. Instrumenten kommer från en hårdkodad lista på ~20 ISIN. Plus golvet av FR12/FR13: ett förändrat/saknat fält kastar `SchemaMismatch` i stället för att skriva null, körningsloggen finns från den story `FetchRunner` föds i (inte sist), adaptrarna gör ett ett-skotts omförsök vid `Transient` så natt ett överlever kontakt, och en avslutande story kör hela pipen mot seed-listan och ser riktiga rader dyka upp. Efter epicen finns riktig data på disk och pipen kör oövervakad mot seed-listan.
+Varje lager, tunt: projektskelett (Composer utan ramverk, katalogstruktur, `config.php`, Phinx-migrationer, cron-endpoints), `SourceAdapter`-porten, Avanza- och Nordnet-adaptrarna som separata stories, kö + tidsbox, append-only-lagring med idempotens, ISIN-matchning, datumfälten. Instrumenten kommer från en hårdkodad lista på ~20 ISIN. Plus golvet av FR12/FR13: ett förändrat/saknat fält kastar `SchemaMismatch` i stället för att skriva null, körningsloggen finns från den story `FetchRunner` föds i (inte sist), adaptrarna gör ett ett-skotts omförsök vid `Transient` så natt ett överlever kontakt, och en avslutande story kör hela pipen mot seed-listan och ser riktiga rader dyka upp. Epicen inkluderar också driftsättning på Loopia (rsync över SSH, manuell migration,
+URL-cron-registrering) så att den avslutande röktesten körs mot ett riktigt driftsatt
+system. Efter epicen finns riktig data på disk och pipen kör oövervakad mot seed-listan.
 **FRs covered:** FR2, FR3, FR4, FR5, FR6, FR10, FR11, FR12 (minimalt), FR13 (minimalt), FR9 (ett-skotts omförsök)
+**NFRs covered:** NFR1, NFR2, NFR4, NFR8, NFR9 (Story 1.10 realiserar NFR1/NFR2-driftsättningen; NFR8 verifieras i Story 1.7)
 
 ### Epic 2: Live universum + överleva en månad oövervakad
 Byt seed-listan mot den riktiga Börsdata-synken: FR1, daglig avstämning, churn-loggning. Och rustningen: delfel förlorar inte en natt (FR8), övergående fel återförsöks med backoff (FR9), fastnade `claimed`-jobb återöppnas, körningsloggen får lyckade/misslyckade per källa och schemaavvikelser, schemaändringar blir larm — inte bara en loggrad. Ordnad story-lista: live universum först, sedan härdningsstories utifrån vad de första veckorna faktiskt kastar. Återkopplingsgränsen ligger inuti den här epicen.
@@ -252,6 +255,11 @@ So that en körning kan delas över flera cron-pass utan att överskrida exekver
 **When** `FetchRunner` tar emot det
 **Then** återställs jobbet till `pending`, `FetchRunner` går vidare till nästa jobb och kraschar inte
 
+**Given** en `FetchRunner`-slice som bearbetar upp till `batch_size` jobb (NFR8)
+**When** slicen körs via `/cron/work` (web-PHP-kontext, inte CLI)
+**Then** håller sig minnesanvändningen under web-PHP:s `memory_limit` på Loopia (mål: 256 MB)
+**And** `batch_size` startvärde i `settings` är satt så att en slice ryms med marginal
+
 ### Story 1.8: Minimal körningslogg
 
 As en operatör,
@@ -290,7 +298,38 @@ So that pipen kör automatiskt vid rätt tid utan att vara publik.
 **When** `/cron/work` anropas före den tiden
 **Then** utförs ingen hämtning och svaret anger att körfönstret inte är öppet
 
-### Story 1.10: End-to-end-röktest mot seed-listan
+### Story 1.10: Loopia-driftsättning och deploy-runbook
+
+As en operatör,
+I want ett repeterbart sätt att lägga upp koden på Loopia och köra migrationer,
+So that jag kan driftsätta nya versioner utan att klicka runt i en filhanterare.
+
+**Kända Loopia-fakta (verifierade 2026-09-08 via SSH):** hemkatalog med en mapp per
+domän (ingen delad `public_html/`); `rsync` 3.4.4, `composer` och `php` (8.5 på skalet,
+`memory_limit` 1024M på CLI) finns i PATH; `pdo_mysql`, `curl`, `mbstring`, `json`
+laddade. Appen läggs i `~/stockpicker/` med `config.php` och `src/` där, och en subdomän
+(t.ex. `stockpicker.<domän>`) vars docroot pekar på `~/stockpicker/public_html/`.
+
+**Acceptance Criteria:**
+
+**Given** ett committat projekt utan `vendor/`
+**When** `bin/deploy.sh` körs
+**Then** synkas källkoden till `~/stockpicker/` på Loopia över SSH/rsync med `--delete`, utom `config.php`, `.git/`, `vendor/`, `_bmad-output/`, tester och `docs/`
+**And** `composer install --no-dev --optimize-autoloader` körs på servern via SSH så att `vendor/` byggs mot Loopias PHP
+**And** ett lokalt byggt `vendor/` som synkas med är den dokumenterade fallbacken om server-composer inte är tillgängligt
+
+**Given** en färsk deploy
+**When** `vendor/bin/phinx migrate -e production` körs över SSH
+**Then** appliceras utestående migrationer mot MariaDB-databasen på Loopia
+
+**Given** en första driftsättning
+**When** runbooken följs
+**Then** ligger `config.php` på plats (manuellt kopierad, aldrig via rsync) i `~/stockpicker/` utanför docroot
+**And** subdomänens docroot pekar på `~/stockpicker/public_html/`
+**And** Loopias tre URL-cron-jobb (`/cron/refill`, `/cron/work`, `/cron/derive`) är registrerade med rätt token
+**And** en runbook i repot (`docs/deploy.md`) beskriver stegen och de Loopia-specifika förutsättningarna (SSH aktiverat, subdomän + docroot till underkatalog, web-PHP-version och dess `memory_limit`/`max_execution_time`, URL-cronens tidsgräns och minsta intervall)
+
+### Story 1.11: End-to-end-röktest mot seed-listan
 
 As en operatör,
 I want en manuell helkörning av hela pipen mot de ~20 seed-instrumenten,

@@ -174,8 +174,8 @@ Inget lager beror uppåt. Store beror inte på pipeline eller adapter.
 
 | Name | Version |
 | --- | --- |
-| PHP | 8.3 (8.4/8.5 finns hos Loopia) |
-| MariaDB | 10.6 |
+| PHP | 8.3+ (`require.php >=8.3`; Loopias skal kör 8.5, web-versionen väljs per domän) |
+| MariaDB | 10.11 (verifierat på Loopia 2026-09-08) |
 | Composer | 2.x |
 | guzzlehttp/guzzle | ^7.9 \|\| ^8.0 |
 | monolog/monolog | ^3.11 |
@@ -250,6 +250,30 @@ sequenceDiagram
     P->>DB: materialisera/uppdatera härledda mått
 ```
 
+## Deployment
+
+Deploy sker över SSH (rsync), inte FTP — en shell krävs ändå för migrationer och
+`bin/`-skript. Loopia-fakta verifierade 2026-09-08: `rsync`, `composer` och `php` (8.5 på
+skalet) finns i PATH; hemkatalog har en mapp per domän, ingen delad `public_html/`.
+
+- **Synk:** `rsync -az --delete` av källkoden till `~/stockpicker/`, exkluderar
+  `config.php`, `.git/`, `vendor/`, `_bmad-output/`, tester och `docs/`.
+- **Beroenden:** `composer install --no-dev --optimize-autoloader` körs på servern via SSH
+  så `vendor/` byggs mot Loopias PHP. Lokalt byggt `vendor/` som synkas med är den
+  dokumenterade fallbacken om server-composer inte längre finns.
+- **Layout:** en subdomän (t.ex. `stockpicker.<domän>`) vars docroot pekar på
+  `~/stockpicker/public_html/`; `src/` och `config.php` ligger ovanför docroot.
+- **`config.php`:** kopieras manuellt en gång, aldrig via rsync, aldrig i git (AD-8).
+- **Migrationer:** körs manuellt via SSH (`vendor/bin/phinx migrate`), aldrig från en
+  cron-endpoint eller automatiskt i deployen.
+- **URL-cron:** de tre jobben för `/cron/refill`, `/cron/work`, `/cron/derive` registreras
+  i Loopias Kundzon med cron-token.
+
+`composer.json` sätter `require.php` till `>=8.3` (inte pinnad). Att verifiera mot Loopia
+före första driftsättning: subdomän + docroot till underkatalog, web-PHP-versionen och
+dess `memory_limit` / `max_execution_time` (URL-cron kör i web-kontext, inte CLI),
+URL-cronens exekveringstidsgräns och minsta intervall.
+
 ## Capability → Architecture Map
 
 | Krav | Lever i | Styrs av |
@@ -279,7 +303,7 @@ sequenceDiagram
   `db/migrations/` när koden finns; nyckelnamn som `run_after`, `batch_size`,
   `rate.<källa>`, `queue.stale_after` sätts i första migrationen. Endast naturliga
   nycklar och ägande är fixerade här.
-- **Databasval bortom v1.** MariaDB 10.6 är bundet av plattformen. Om ett analyslager
+- **Databasval bortom v1.** MariaDB 10.11 är bundet av plattformen. Om ett analyslager
   senare kräver annat är det ett nytt beslut.
 - **Retry-/backoff-parametrar.** Startvärden i `settings`; trimmas i drift.
 - **Definition av "tillfällig topp" / spikindikator.** Öppen fråga i briefen, medvetet

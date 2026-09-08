@@ -80,10 +80,10 @@ datainsamlingen redan gått ett tag.
 
 ## Constraints
 
-- **Kör helt på Loopia delat webbhotell (Privatpaket).** PHP 8.3 + MariaDB 10.6. Cron
-  är enbart HTTP GET mot en URL (ingen CLI-cron), med exekveringstidsgräns och en
-  cron-instans i taget. Utesluter CLI-jobb, långa oavbrutna körningar och val av annan
-  runtime eller databas.
+- **Kör helt på Loopia delat webbhotell (Privatpaket).** PHP 8.3+ + MariaDB 10.11
+  (verifierat på Loopia 2026-09-08; skalet kör PHP 8.5). Cron är enbart HTTP GET mot en
+  URL (ingen CLI-cron), med exekveringstidsgräns och en cron-instans i taget. Utesluter
+  CLI-jobb, långa oavbrutna körningar och val av annan runtime eller databas.
 - **Ägarantal-källorna är inofficiella, odokumenterade endpoints** (Avanza
   `market-guide`, Nordnet `stocklist`) som kan ändras utan förvarning. Kräver
   schemakontroll (CAP-6) och låg anropsvolym.

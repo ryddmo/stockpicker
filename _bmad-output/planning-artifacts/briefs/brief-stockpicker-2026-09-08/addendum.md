@@ -153,8 +153,10 @@ GET https://www.nordnet.se/api/2/instrument_search/query/stocklist?free_text_sea
 starttid, sluttid, antal instrument, lyckade/misslyckade per källa, upptäckta
 schemaavvikelser.
 
-Datavolym: ~1 000 instrument × 2 källor × 365 dagar ≈ 730 000 rader/år. SQLite räcker
-gott; Postgres om analyslagret senare motiverar det.
+Datavolym: ~1 000 instrument × 2 källor × 365 dagar ≈ 730 000 rader/år — ryms inom
+256 MB PHP-minne. Databas: MariaDB 10.11 på Loopia, bundet av plattformen (se
+arkitektur-spinen). Ett annat databasval för ett framtida analyslager är ett separat
+beslut.
 
 ## Härledda mått (K10) — kandidater
 
@@ -171,14 +173,19 @@ Exakt definition av "tillfällig topp" är inte fastställd (öppen fråga).
 
 ## Konfiguration (v1)
 
-Bör ligga i en konfigfil / miljövariabler, inte i koden:
+Uppdelningen är fastställd i arkitektur-spinen (AD-8): hemligheter i `config.php` utanför
+`public_html/`, aldrig i versionshantering; drift-parametrar i `settings`-tabellen, lästa
+vid varje körning.
 
-- körtid för det nattliga jobbet (cron-uttryck eller klockslag) — justeras för att prova
-  fram Nordnets uppdateringstid
-- Börsdata API-nyckel
-- rate-limit-parametrar (anrop/s, backoff)
-- databassökväg / anslutningssträng
-- vilka listor som ingår i universumet (LC/MC/SC/First North som på/av)
+- **`config.php`** (hemligt, utanför webroot): MariaDB-anslutningsuppgifter, cron-token,
+  Börsdata API-nyckel
+- **`settings`-tabell** (ändras utan deploy): `run_after` (kör-inte-före-tid, klockslag i
+  `Europe/Stockholm` — justeras för att prova fram Nordnets uppdateringstid),
+  `rate.avanza` / `rate.nordnet` (anrop/s) och backoff-parametrar, `batch_size`,
+  `queue.stale_after`, vilka listor som ingår i universumet (LC/MC/SC/First North på/av)
+
+Loopias URL-cron styr *när* endpointsen anropas; körfönstret gate:as dessutom av
+`run_after` så det kan ändras utan att röra cron-schemat.
 
 ## Efterlevnad / ToS (bakgrund)
 

@@ -1,13 +1,14 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-08 against 1869dfb. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-08 against 731166a. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## stockpicker
 
 Personal nightly data-collection engine: builds a per-day time series of Avanza and Nordnet
-owner counts for Swedish Nasdaq Stockholm (LC/MC/SC) and First North stocks. PHP 8.3,
-MariaDB 10.6, Composer, no framework; Guzzle, Monolog, Phinx. Runs entirely on Loopia
-shared hosting. v1 is the collection engine only — no UI or analysis layer. The canonical
-contract is `_bmad-output/specs/spec-stockpicker/SPEC.md` plus the architecture spine.
+owner counts for Swedish Nasdaq Stockholm (LC/MC/SC) and First North stocks. PHP 8.3+
+(Loopia's shell runs 8.5), MariaDB 10.11, Composer, no framework; Guzzle, Monolog, Phinx.
+Runs entirely on Loopia shared hosting. v1 is the collection engine only — no UI or
+analysis layer. The canonical contract is `_bmad-output/specs/spec-stockpicker/SPEC.md`
+plus the architecture spine.
 
 ## Policy
 
@@ -32,18 +33,23 @@ contract is `_bmad-output/specs/spec-stockpicker/SPEC.md` plus the architecture 
 - Planned layout: `public_html/` thin front controller (`/cron/refill`, `/cron/work`,
   `/cron/derive`); `src/{Adapter,Pipeline,Store,Error}/`; `bin/` for SSH-run scripts;
   `db/migrations/` (Phinx); `config.php` outside webroot.
+- Deploying to Loopia: `docs/deploy.md` — SSH/subdomain/DB setup, `bin/deploy.sh`, prerequisites.
 
 ## Running and verifying
 
-TODO — no code yet. Decided stack for when it lands:
+TODO — no application code yet (`composer.json`, `src/`). Deploy tooling exists (`bin/`,
+`docs/deploy.md`). Decided stack for when the rest lands:
 - Setup: `composer install`. Deps: `guzzlehttp/guzzle ^7.9`, `monolog/monolog ^3.11`,
   `robmorgan/phinx ^0.16.12`.
 - Tests: PHPUnit — add `phpunit/phpunit` to `require-dev`, run `vendor/bin/phpunit`.
-- Migrations: `vendor/bin/phinx migrate` — run manually over SSH on Loopia, never wired
-  into a cron endpoint or deploy step.
-- Deploy: SSH + Composer; `vendor/` is built and uploaded.
+- Migrations: `vendor/bin/phinx migrate -e production` — run manually over SSH; never in a
+  cron endpoint or the deploy beyond its explicit step.
+- Deploy: `bin/deploy.sh` — rsync source over SSH, then `composer install --no-dev` on the
+  server (not FTP, not a local `vendor/` upload). Runbook: `docs/deploy.md`.
 - Nightly work is triggered only by Loopia URL-cron (HTTP GET) — no CLI cron, one instance
-  at a time, execution-time limit unknown. No step may assume a single invocation finishes it.
+  at a time, execution-time limit unknown (URL-cron runs in web-PHP context, whose
+  `memory_limit` / `max_execution_time` are still unverified). No step may assume a single
+  invocation finishes it.
 
 ## Conventions that differ from defaults
 
