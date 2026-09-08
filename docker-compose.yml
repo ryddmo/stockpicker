@@ -1,0 +1,24 @@
+# Local development database only. Credentials here are literal, local-only,
+# and intentionally not secret — production DB credentials live in config.php.
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: stockpicker-mariadb
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_DATABASE: stockpicker
+      MYSQL_USER: stockpicker
+      MYSQL_PASSWORD: stockpicker
+      MYSQL_ROOT_PASSWORD: root
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    volumes:
+      - stockpicker-db-data:/var/lib/mysql
+
+volumes:
+  stockpicker-db-data:
