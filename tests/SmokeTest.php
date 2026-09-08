@@ -123,6 +123,21 @@ final class SmokeTest extends TestCase
         self::assertStringContainsString('stockpicker', (string) file_get_contents($logPath));
     }
 
+    public function testLastDitchWritesToErrorLog(): void
+    {
+        $errorLog = $this->fixtureRoot . '/php-error.log';
+        $previous = ini_set('error_log', $errorLog);
+
+        try {
+            Logging::lastDitch('bootstrap failed: boom');
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+        }
+
+        self::assertFileExists($errorLog);
+        self::assertStringContainsString('stockpicker bootstrap failed: boom', (string) file_get_contents($errorLog));
+    }
+
     private function removeDir(string $dir): void
     {
         if (!is_dir($dir)) {

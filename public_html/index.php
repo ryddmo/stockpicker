@@ -11,6 +11,7 @@ use Monolog\Level;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Stockpicker\Config;
+use Stockpicker\Logging;
 
 /** @var array{config: Config, logger: Logger} $services */
 try {
@@ -53,9 +54,16 @@ try {
             'file' => $e->getFile(),
             'line' => $e->getLine(),
         ]);
-    } catch (\Throwable) {
+    } catch (\Throwable $logError) {
         // A failing log write (unwritable path, full disk) must not stop the
-        // 500 response below.
+        // 500 response below — but it must not vanish either.
+        Logging::lastDitch(sprintf(
+            'log write failed while handling: %s (%s); original: %s (%s)',
+            $logError->getMessage(),
+            $logError::class,
+            $e->getMessage(),
+            $e::class,
+        ));
     }
     send_json(500, ['error' => 'internal server error']);
 }
@@ -82,7 +90,7 @@ function log_bootstrap_failure(\Throwable $e): void
         // fall through
     }
 
-    error_log('stockpicker ' . $message);
+    Logging::lastDitch($message);
 }
 
 /**

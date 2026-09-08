@@ -36,4 +36,14 @@ final class Logging
 
         return $logger;
     }
+
+    /**
+     * Last-resort log for when the file handler itself is unavailable (an
+     * unwritable path, a full disk). Goes straight to PHP's error_log so a
+     * failed log write is never fully silent.
+     */
+    public static function lastDitch(string $message): void
+    {
+        error_log('stockpicker ' . $message);
+    }
 }
