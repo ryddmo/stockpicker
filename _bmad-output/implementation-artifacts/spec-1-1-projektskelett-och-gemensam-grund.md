@@ -79,6 +79,7 @@ context:
 - Given the app is served, when `GET /` is requested, then the response is 200 with a JSON healthcheck body.
 - Given code calls the logger, when a record is written, then it lands in a file under `var/log/` (outside `public_html/`).
 - Given `composer test`, when it runs, then the PHPUnit smoke suite passes.
+- Given a log write fails during request handling, when the front controller catches it, then the failure is recorded via `error_log()` and a 500 JSON is still returned.
 
 ## Design Notes
 
@@ -109,6 +110,10 @@ context:
 **Review iteration 1 patches applied** (see Review Triage Log): guarded the logger call in `index.php`'s request catch; `phinx.php` now defines `production` only on successful `Config::load()` and fails loudly otherwise; `FrontControllerTest` rebuilt against an isolated temp project root (no longer touches the real `config.php` / `var/log/`); added malformed-config + ERROR-level test coverage; `docker-compose.yml` binds `127.0.0.1` and gained a healthcheck; `.htaccess` wrapped in `<IfModule mod_rewrite.c>` with `Options -MultiViews -Indexes`; `Config::DEFAULT_LOG_PATH` constant shared with the bootstrap-failure fallback. Post-patch: `composer validate --strict` clean, `composer test` green (11 tests, 25 assertions), `docker compose config` valid, lint clean.
 
 ## Spec Change Log
+
+### 2026-09-08 — party-mode review patch
+
+Party-mode round-table (Code Review Crew walk-on) flagged an asymmetry: `log_bootstrap_failure()` falls back to `error_log()`, but the request-handling `catch` in `public_html/index.php` swallowed a failed log write silently — the failure mode that matters most (unbounded log on shared hosting, deferred as BH5) would leave a bare 500 with nothing written anywhere. Patch: added `Stockpicker\Logging::lastDitch()` (thin `error_log()` wrapper), called from both the request `catch` and the `log_bootstrap_failure()` fallback so the last resort has one definition. Added `SmokeTest::testLastDitchWritesToErrorLog`. New AC covers it. Scope held tight — log rotation / structured run log remain Story 1.8. `composer test` green (12 tests, 27 assertions).
 
 ## Review Triage Log
 
