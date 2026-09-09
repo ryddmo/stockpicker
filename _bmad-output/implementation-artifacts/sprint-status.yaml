@@ -29,24 +29,24 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-08-2026 15:06
-last_updated: 09-09-2026 21:20
+last_updated: 09-09-2026 21:45
 project: stockpicker
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
-  1-1-projektskelett-och-gemensam-grund: review
-  1-2-instrumenttabell-settings-och-seed-lista: review
-  1-3-sourceadapter-port-feltyper-och-id-uppslag: review
-  1-4-avanza-hämtningsadapter-med-schemakoll: review
-  1-5-nordnet-hämtningsadapter-med-schemakoll: review
-  1-6-append-only-tidsserielagring: review
-  1-7-work-queue-och-tidsboxad-fetchrunner: review
-  1-8-minimal-körningslogg: review
-  1-9-cron-endpoints-med-token-och-kör-inte-före-tid: review
-  1-10-loopia-driftsättning-och-deploy-runbook: review
-  1-11-end-to-end-röktest-mot-seed-listan: review
+  epic-1: done
+  1-1-projektskelett-och-gemensam-grund: done
+  1-2-instrumenttabell-settings-och-seed-lista: done
+  1-3-sourceadapter-port-feltyper-och-id-uppslag: done
+  1-4-avanza-hämtningsadapter-med-schemakoll: done
+  1-5-nordnet-hämtningsadapter-med-schemakoll: done
+  1-6-append-only-tidsserielagring: done
+  1-7-work-queue-och-tidsboxad-fetchrunner: done
+  1-8-minimal-körningslogg: done
+  1-9-cron-endpoints-med-token-och-kör-inte-före-tid: done
+  1-10-loopia-driftsättning-och-deploy-runbook: done
+  1-11-end-to-end-röktest-mot-seed-listan: done
   epic-1-retrospective: optional
 
   epic-2: backlog
