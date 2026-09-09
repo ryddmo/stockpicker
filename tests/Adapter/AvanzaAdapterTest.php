@@ -114,4 +114,138 @@ final class AvanzaAdapterTest extends AdapterTestCase
         $this->expectException(SchemaMismatch::class);
         $this->adapter()->resolveId($this->instrument());
     }
+
+    // --- fetch() ---------------------------------------------------------
+
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    private function guide(array $overrides = []): array
+    {
+        return array_replace_recursive([
+            'isin' => 'SE0015811963',
+            'name' => 'Investor B',
+            'keyIndicators' => [
+                'numberOfOwners' => 533660,
+                'marketCapital' => ['value' => 1230083289623.0, 'currency' => 'SEK'],
+            ],
+            'quote' => ['last' => 402.2],
+            'historicalClosingPrices' => ['oneDay' => 407.95],
+        ], $overrides);
+    }
+
+    private function resolved(): \Stockpicker\Store\Instrument
+    {
+        return $this->instrument(avanzaOrderbookId: '5247');
+    }
+
+    public function testFetchReturnsANormalizedRow(): void
+    {
+        $this->queue([$this->json($this->guide())]);
+
+        $row = $this->adapter()->fetch($this->resolved());
+
+        self::assertSame('SE0015811963', $row->isin);
+        self::assertSame('avanza', $row->source);
+        self::assertSame(533660, $row->numberOfOwners);
+        self::assertSame(402.2, $row->lastPrice);
+        self::assertSame(1230083289623.0, $row->marketCap);
+        self::assertNull($row->sourceTimestamp);
+        self::assertSame('UTC', $row->fetchedAt->getTimezone()->getName());
+        $this->assertQueueDrained();
+    }
+
+    public function testFetchFallsBackToPreviousCloseWhenQuoteIsAbsent(): void
+    {
+        $guide = $this->guide();
+        unset($guide['quote']);
+        $this->queue([$this->json($guide)]);
+
+        self::assertSame(407.95, $this->adapter()->fetch($this->resolved())->lastPrice);
+    }
+
+    public function testFetchLeavesLastPriceNullWhenNoPriceIsPresent(): void
+    {
+        $guide = $this->guide();
+        unset($guide['quote'], $guide['historicalClosingPrices']);
+        $this->queue([$this->json($guide)]);
+
+        self::assertNull($this->adapter()->fetch($this->resolved())->lastPrice);
+    }
+
+    public function testFetchLeavesMarketCapNullWhenAbsent(): void
+    {
+        $guide = $this->guide();
+        unset($guide['keyIndicators']['marketCapital']);
+        $this->queue([$this->json($guide)]);
+
+        self::assertNull($this->adapter()->fetch($this->resolved())->marketCap);
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersMissing(): void
+    {
+        $guide = $this->guide();
+        unset($guide['keyIndicators']['numberOfOwners']);
+        $this->queue([$this->json($guide)]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersIsNotAnInt(): void
+    {
+        $this->queue([$this->json($this->guide(['keyIndicators' => ['numberOfOwners' => '533660']]))]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersIsNegative(): void
+    {
+        $this->queue([$this->json($this->guide(['keyIndicators' => ['numberOfOwners' => -1]]))]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchOnIsinMismatch(): void
+    {
+        $this->queue([$this->json($this->guide(['isin' => 'SE0000000000']))]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsNotFoundOnHttp404(): void
+    {
+        $this->queue([new Response(404)]);
+
+        $this->expectException(NotFound::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsNotFoundWhenInstrumentHasNoOrderbookId(): void
+    {
+        $this->expectException(NotFound::class);
+        $this->adapter()->fetch($this->instrument());
+    }
+
+    public function testFetchRetriesOnceThenSucceeds(): void
+    {
+        $this->queue([new Response(503), $this->json($this->guide())]);
+
+        self::assertSame(533660, $this->adapter()->fetch($this->resolved())->numberOfOwners);
+        $this->assertQueueDrained();
+    }
+
+    public function testFetchThrowsTransientWhenBothAttemptsFail(): void
+    {
+        $this->queue([
+            new Response(503),
+            new ConnectException('timeout', new Request('GET', 'market-guide')),
+        ]);
+
+        $this->expectException(Transient::class);
+        $this->adapter()->fetch($this->resolved());
+    }
 }
