@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-08-2026 15:06
-last_updated: 09-09-2026 15:30
+last_updated: 09-09-2026 17:30
 project: stockpicker
 project_key: NOKEY
 tracking_system: file-system
@@ -42,7 +42,7 @@ development_status:
   1-4-avanza-hämtningsadapter-med-schemakoll: review
   1-5-nordnet-hämtningsadapter-med-schemakoll: review
   1-6-append-only-tidsserielagring: review
-  1-7-work-queue-och-tidsboxad-fetchrunner: backlog
+  1-7-work-queue-och-tidsboxad-fetchrunner: review
   1-8-minimal-körningslogg: backlog
   1-9-cron-endpoints-med-token-och-kör-inte-före-tid: backlog
   1-10-loopia-driftsättning-och-deploy-runbook: backlog

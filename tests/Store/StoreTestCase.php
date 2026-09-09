@@ -69,8 +69,9 @@ abstract class StoreTestCase extends TestCase
 
     private function dropSchema(): void
     {
-        // owner_count_daily first — it has an FK to instrument.
+        // owner_count_daily and work_queue first — both have an FK to instrument.
         $this->pdo->exec('DROP TABLE IF EXISTS owner_count_daily');
+        $this->pdo->exec('DROP TABLE IF EXISTS work_queue');
         $this->pdo->exec('DROP TABLE IF EXISTS instrument');
         $this->pdo->exec('DROP TABLE IF EXISTS settings');
     }
@@ -110,6 +111,19 @@ abstract class StoreTestCase extends TestCase
                 PRIMARY KEY (isin, source, as_of_date),
                 CONSTRAINT fk_owner_count_daily_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $this->pdo->exec(
+            "CREATE TABLE work_queue (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                isin VARCHAR(12) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                run_date DATE NOT NULL,
+                claimed_at DATETIME NULL,
+                UNIQUE KEY uq_work_queue_isin_run_date (isin, run_date),
+                KEY ix_work_queue_status_run_date (status, run_date),
+                CONSTRAINT fk_work_queue_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
     }
 }

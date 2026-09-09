@@ -172,4 +172,65 @@ final class OwnerCountRepositoryTest extends StoreTestCase
             $repo->asOfDate($this->row(sourceTimestamp: $this->utc('2026-03-29T10:00:00Z'))),
         );
     }
+
+    public function testOverrideIsIgnoredWhenNordnetSourceTimestampIsPresent(): void
+    {
+        $repo = $this->repo();
+
+        // 2026-01-01 23:30 UTC -> Stockholm 2026-01-02; override says otherwise.
+        self::assertTrue($repo->upsert(
+            $this->row(
+                source: NormalizedRow::SOURCE_NORDNET,
+                sourceTimestamp: $this->utc('2026-01-01T23:30:00Z'),
+                fetchedAt: '2026-01-02T05:00:00Z',
+            ),
+            '2026-06-30',
+        ));
+
+        self::assertNotNull($repo->get(self::ISIN, 'nordnet', '2026-01-02'), 'statistics_timestamp still wins (FR5)');
+        self::assertNull($repo->get(self::ISIN, 'nordnet', '2026-06-30'));
+    }
+
+    public function testOverrideIsUsedForAvanzaInsteadOfTheFetchClock(): void
+    {
+        $repo = $this->repo();
+
+        // fetchedAt would map to 2026-06-16 in Stockholm; the run date is the 15th.
+        self::assertTrue($repo->upsert(
+            $this->row(sourceTimestamp: null, fetchedAt: '2026-06-15T23:30:00Z'),
+            '2026-06-15',
+        ));
+
+        self::assertNotNull($repo->get(self::ISIN, 'avanza', '2026-06-15'));
+        self::assertNull($repo->get(self::ISIN, 'avanza', '2026-06-16'));
+        self::assertSame(
+            '2026-06-15',
+            $repo->asOfDate($this->row(sourceTimestamp: null, fetchedAt: '2026-06-15T23:30:00Z'), '2026-06-15'),
+        );
+    }
+
+    public function testNullOverrideKeepsTheFetchClockFallback(): void
+    {
+        $repo = $this->repo();
+
+        $repo->upsert($this->row(sourceTimestamp: null, fetchedAt: '2026-06-15T21:00:00Z'), null);
+
+        // Summer: Stockholm +02:00 -> 2026-06-15 23:00, still the 15th.
+        self::assertNotNull($repo->get(self::ISIN, 'avanza', '2026-06-15'));
+    }
+
+    public function testRetryStraddlingLocalMidnightStillLandsOnTheRunDate(): void
+    {
+        $repo = $this->repo();
+        $runDate = '2026-06-15';
+
+        // First fetch at 23:59 Stockholm (21:59 UTC) then a retry at 00:05 the
+        // next day (22:05 UTC) — both writes pin to the run date.
+        self::assertTrue($repo->upsert($this->row(sourceTimestamp: null, fetchedAt: '2026-06-15T21:59:00Z'), $runDate));
+        self::assertFalse($repo->upsert($this->row(sourceTimestamp: null, fetchedAt: '2026-06-15T22:05:00Z', owners: 999), $runDate));
+
+        self::assertSame(1, $repo->countForIsin(self::ISIN));
+        $stored = $repo->get(self::ISIN, 'avanza', $runDate);
+        self::assertSame(500000, (int) $stored['number_of_owners']);
+    }
 }
