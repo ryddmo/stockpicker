@@ -103,4 +103,144 @@ final class NordnetAdapterTest extends AdapterTestCase
         $this->expectException(SchemaMismatch::class);
         $this->adapter()->resolveId($this->instrument());
     }
+
+    // --- fetch() ---------------------------------------------------------
+
+    private const STATS_TS_MS = 1788955452687;
+
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    private function fetchResult(array $overrides = []): array
+    {
+        return array_replace_recursive([
+            'instrument_info' => ['isin' => 'SE0015811963', 'name' => 'Investor AB ser. B'],
+            'nnx_info' => ['nnx_instrument_id' => '19fa390b-040f-45a9-8fa2-e7fd34e319ab'],
+            'statistical_info' => ['number_of_owners' => 69611, 'statistics_timestamp' => self::STATS_TS_MS],
+            'price_info' => ['last' => ['price' => 401.4, 'decimals' => 2]],
+            'company_info' => ['market_cap' => 1238152058906],
+        ], $overrides);
+    }
+
+    private function resolved(): \Stockpicker\Store\Instrument
+    {
+        return $this->instrument(nordnetInstrumentId: '19fa390b-040f-45a9-8fa2-e7fd34e319ab');
+    }
+
+    public function testFetchReturnsANormalizedRow(): void
+    {
+        $this->queue([$this->json(['results' => [$this->fetchResult()]])]);
+
+        $row = $this->adapter()->fetch($this->resolved());
+
+        self::assertSame('SE0015811963', $row->isin);
+        self::assertSame('nordnet', $row->source);
+        self::assertSame(69611, $row->numberOfOwners);
+        self::assertSame(401.4, $row->lastPrice);
+        self::assertSame(1238152058906.0, $row->marketCap);
+        self::assertSame('UTC', $row->fetchedAt->getTimezone()->getName());
+        self::assertNotNull($row->sourceTimestamp);
+        self::assertSame(intdiv(self::STATS_TS_MS, 1000), $row->sourceTimestamp->getTimestamp());
+        self::assertSame('UTC', $row->sourceTimestamp->getTimezone()->getName());
+        $this->assertQueueDrained();
+    }
+
+    public function testFetchLeavesPriceAndMarketCapNullWhenAbsent(): void
+    {
+        $result = $this->fetchResult();
+        unset($result['price_info'], $result['company_info']);
+        $this->queue([$this->json(['results' => [$result]])]);
+
+        $row = $this->adapter()->fetch($this->resolved());
+        self::assertNull($row->lastPrice);
+        self::assertNull($row->marketCap);
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersMissing(): void
+    {
+        $result = $this->fetchResult();
+        unset($result['statistical_info']['number_of_owners']);
+        $this->queue([$this->json(['results' => [$result]])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersNegative(): void
+    {
+        $this->queue([$this->json(['results' => [
+            $this->fetchResult(['statistical_info' => ['number_of_owners' => -5]]),
+        ]])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenOwnersIsNotAnInt(): void
+    {
+        $this->queue([$this->json(['results' => [
+            $this->fetchResult(['statistical_info' => ['number_of_owners' => '69611']]),
+        ]])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenTimestampMissing(): void
+    {
+        $result = $this->fetchResult();
+        unset($result['statistical_info']['statistics_timestamp']);
+        $this->queue([$this->json(['results' => [$result]])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsSchemaMismatchWhenTimestampIsNotNumeric(): void
+    {
+        $this->queue([$this->json(['results' => [
+            $this->fetchResult(['statistical_info' => ['statistics_timestamp' => '2026-09-09']]),
+        ]])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsNotFoundWhenNoResultMatchesTheIsin(): void
+    {
+        $this->queue([$this->json(['results' => [
+            $this->fetchResult(['instrument_info' => ['isin' => 'SE0000000000']]),
+        ]])]);
+
+        $this->expectException(NotFound::class);
+        $this->adapter()->fetch($this->resolved());
+    }
+
+    public function testFetchThrowsNotFoundWhenInstrumentIsUnresolved(): void
+    {
+        $this->expectException(NotFound::class);
+        $this->adapter()->fetch($this->instrument());
+    }
+
+    public function testFetchRetriesOnceThenSucceeds(): void
+    {
+        $this->queue([
+            new Response(503),
+            $this->json(['results' => [$this->fetchResult()]]),
+        ]);
+
+        self::assertSame(69611, $this->adapter()->fetch($this->resolved())->numberOfOwners);
+        $this->assertQueueDrained();
+    }
+
+    public function testFetchThrowsTransientWhenBothAttemptsFail(): void
+    {
+        $this->queue([
+            new Response(503),
+            new ConnectException('timeout', new Request('GET', 'stocklist')),
+        ]);
+
+        $this->expectException(Transient::class);
+        $this->adapter()->fetch($this->resolved());
+    }
 }
