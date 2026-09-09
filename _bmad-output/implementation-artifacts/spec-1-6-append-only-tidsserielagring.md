@@ -88,6 +88,8 @@ context:
 
 ## Spec Change Log
 
+- **2026-09-09 (Story 1.7, human-renegotiated) — `OwnerCountRepository::upsert()` and `asOfDate()` gained an additive `?string $asOfDateOverride = null` parameter.** New precedence: `row.sourceTimestamp` (Nordnet, FR5 unchanged) → `$asOfDateOverride` (the run's calendar date, passed by `FetchRunner`) → `row.fetchedAt` (unchanged fallback). Only the sourceless case (Avanza) changes — from the fetch clock to the run date — so a fetch/retry straddling local midnight can no longer split one night's observation across two `as_of_date`s. No change to storage semantics, the composite key, or first-write-wins. `asOfDate()` stays pure/public. This addresses the `deferred-work.md` item "Fix each night's `as_of_date` at Enqueue time…" (that entry is left in place per the file's append-only rule).
+
 ## Review Triage Log
 
 ### Iteration 1 (2026-09-09) — 3 layers (blind-hunter N=6, edge-case-hunter, verification-gap)

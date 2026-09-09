@@ -27,10 +27,17 @@ final class OwnerCountRepository
      * case the stored row is left exactly as it was (this method never updates
      * an existing row; the name follows the architecture spine's `upsert`).
      *
+     * `$asOfDateOverride` (Story 1.7, human-renegotiated) is the run's calendar
+     * date. It is used only for the sourceless case (Avanza): precedence is
+     * `row.sourceTimestamp` (Nordnet, FR5 preserved) -> `$asOfDateOverride`
+     * (the run date) -> `row.fetchedAt` (today's fallback). Passing the run
+     * date means a fetch/retry straddling local midnight cannot split one
+     * night's observation across two `as_of_date`s.
+     *
      * @throws \PDOException on a foreign-key violation when `$row->isin` is not
      *                       in `instrument` (fail loud — the caller decides).
      */
-    public function upsert(NormalizedRow $row): bool
+    public function upsert(NormalizedRow $row, ?string $asOfDateOverride = null): bool
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO owner_count_daily
@@ -42,7 +49,7 @@ final class OwnerCountRepository
         $stmt->execute([
             'isin' => $row->isin,
             'source' => $row->source,
-            'as_of_date' => $this->asOfDate($row),
+            'as_of_date' => $this->asOfDate($row, $asOfDateOverride),
             'owners' => $row->numberOfOwners,
             // Format the DECIMAL columns as fixed-point strings: casting a float
             // to string uses PHP's `precision` ini (14 sig digits), which
@@ -80,14 +87,21 @@ final class OwnerCountRepository
     }
 
     /**
-     * The single Europe/Stockholm calendar conversion (Story 1.1 Design Notes):
-     * from the source's own timestamp when it has one (Nordnet), else the
-     * fetch time (Avanza has no per-datum timestamp).
+     * The single Europe/Stockholm calendar conversion (Story 1.1 Design Notes).
+     * Precedence: the source's own timestamp when it has one (Nordnet, FR5) ->
+     * `$asOfDateOverride` (the run date, Story 1.7) when given -> the fetch time
+     * (Avanza has no per-datum timestamp). Pure/public — no clock read.
      */
-    public function asOfDate(NormalizedRow $row): string
+    public function asOfDate(NormalizedRow $row, ?string $asOfDateOverride = null): string
     {
-        return ($row->sourceTimestamp ?? $row->fetchedAt)
-            ->setTimezone(new DateTimeZone(self::STOCKHOLM))
-            ->format('Y-m-d');
+        if ($row->sourceTimestamp !== null) {
+            return $row->sourceTimestamp->setTimezone(new DateTimeZone(self::STOCKHOLM))->format('Y-m-d');
+        }
+
+        if ($asOfDateOverride !== null) {
+            return $asOfDateOverride;
+        }
+
+        return $row->fetchedAt->setTimezone(new DateTimeZone(self::STOCKHOLM))->format('Y-m-d');
     }
 }

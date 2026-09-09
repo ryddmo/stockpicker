@@ -62,6 +62,7 @@ final class MigrationTest extends TestCase
         self::assertTrue($this->tableExists('instrument'));
         self::assertTrue($this->tableExists('settings'));
         self::assertTrue($this->tableExists('owner_count_daily'));
+        self::assertTrue($this->tableExists('work_queue'));
 
         // Story 1.6 widened this column to hold the 36-char nnx UUID.
         self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
@@ -87,6 +88,44 @@ final class MigrationTest extends TestCase
             self::assertSame('23000', $e->getCode());
         }
 
+        // work_queue: surrogate BIGINT UNSIGNED id, status default 'pending',
+        // unique (isin, run_date), FK on isin.
+        self::assertSame(['id'], $this->primaryKey('work_queue'));
+        self::assertStringContainsString('bigint', $this->columnType('work_queue', 'id'));
+        self::assertStringContainsString('unsigned', $this->columnType('work_queue', 'id'));
+
+        // Hot-path index for claimBatch / countByStatus (status, run_date).
+        self::assertSame(
+            ['status', 'run_date'],
+            $this->indexColumns('work_queue', 'ix_work_queue_status_run_date'),
+        );
+
+        $this->pdo->exec(
+            "INSERT INTO work_queue (isin, run_date) VALUES ('SE0000000000', '2026-01-01')"
+        );
+        $status = $this->pdo->query(
+            "SELECT status FROM work_queue WHERE isin = 'SE0000000000' AND run_date = '2026-01-01'"
+        )->fetchColumn();
+        self::assertSame('pending', $status, 'status defaults to pending');
+
+        try {
+            $this->pdo->exec(
+                "INSERT INTO work_queue (isin, run_date) VALUES ('SE0000000000', '2026-01-01')"
+            );
+            self::fail('the migrated schema allowed a duplicate (isin, run_date)');
+        } catch (\PDOException $e) {
+            self::assertSame('23000', $e->getCode());
+        }
+
+        try {
+            $this->pdo->exec(
+                "INSERT INTO work_queue (isin, run_date) VALUES ('XX0000000000', '2026-01-01')"
+            );
+            self::fail('the migrated schema allowed a work_queue row with no matching instrument');
+        } catch (\PDOException $e) {
+            self::assertSame('23000', $e->getCode());
+        }
+
         $settings = $this->pdo->query('SELECT `key`, `value` FROM settings')->fetchAll(PDO::FETCH_KEY_PAIR);
         self::assertSame([
             'batch_size' => '25',
@@ -107,6 +146,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('instrument'));
         self::assertFalse($this->tableExists('settings'));
         self::assertFalse($this->tableExists('owner_count_daily'));
+        self::assertFalse($this->tableExists('work_queue'));
     }
 
     /**
@@ -162,10 +202,25 @@ final class MigrationTest extends TestCase
         return array_map('strval', $stmt->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    /**
+     * @return list<string> the index's columns in key order (empty if absent)
+     */
+    private function indexColumns(string $table, string $indexName): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT column_name FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = :t AND index_name = :i
+             ORDER BY seq_in_index'
+        );
+        $stmt->execute(['t' => $table, 'i' => $indexName]);
+
+        return array_map('strval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     private function dropAll(): void
     {
-        // owner_count_daily first — FK to instrument.
-        foreach (['owner_count_daily', 'instrument', 'settings', 'phinxlog'] as $table) {
+        // owner_count_daily and work_queue first — FK to instrument.
+        foreach (['owner_count_daily', 'work_queue', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }

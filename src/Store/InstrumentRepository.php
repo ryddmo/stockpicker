@@ -61,4 +61,29 @@ final class InstrumentRepository
             'first_seen' => (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d'),
         ]);
     }
+
+    /**
+     * Write-once cache of the Avanza orderbook id: set it only when the column
+     * is still NULL, never overwrite a resolved id. Used by bin/resolve-ids.php
+     * (the scoped, interim second writer of `instrument` for Epic 1 — AD-3
+     * exception; Epic 2's UniverseSync takes over the whole row).
+     */
+    public function cacheAvanzaId(string $isin, string $id): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE instrument SET avanza_orderbook_id = :id WHERE isin = :isin AND avanza_orderbook_id IS NULL'
+        );
+        $stmt->execute(['id' => $id, 'isin' => $isin]);
+    }
+
+    /**
+     * Write-once cache of the Nordnet instrument id — see cacheAvanzaId().
+     */
+    public function cacheNordnetId(string $isin, string $id): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE instrument SET nordnet_instrument_id = :id WHERE isin = :isin AND nordnet_instrument_id IS NULL'
+        );
+        $stmt->execute(['id' => $id, 'isin' => $isin]);
+    }
 }

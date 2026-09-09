@@ -59,6 +59,34 @@ final class InstrumentRepositoryTest extends StoreTestCase
         self::assertCount(1, $repo->all(), 'no duplicate row');
     }
 
+    public function testCacheAvanzaIdAndCacheNordnetIdSetNullColumns(): void
+    {
+        $repo = new InstrumentRepository($this->pdo);
+        $repo->upsertSeed('SE0000108656', 'Ericsson B', 'LC');
+
+        $repo->cacheAvanzaId('SE0000108656', '5479');
+        $repo->cacheNordnetId('SE0000108656', '19fa390b-040f-45a9-8fa2-e7fd34e319ab');
+
+        $row = $repo->get('SE0000108656');
+        self::assertSame('5479', $row->avanzaOrderbookId);
+        self::assertSame('19fa390b-040f-45a9-8fa2-e7fd34e319ab', $row->nordnetInstrumentId);
+    }
+
+    public function testCacheIdsAreWriteOnceAndNeverOverwriteAResolvedId(): void
+    {
+        $repo = new InstrumentRepository($this->pdo);
+        $repo->upsertSeed('SE0000108656', 'Ericsson B', 'LC');
+        $repo->cacheAvanzaId('SE0000108656', '5479');
+        $repo->cacheNordnetId('SE0000108656', '101');
+
+        $repo->cacheAvanzaId('SE0000108656', '9999');
+        $repo->cacheNordnetId('SE0000108656', '202');
+
+        $row = $repo->get('SE0000108656');
+        self::assertSame('5479', $row->avanzaOrderbookId, 'existing id preserved');
+        self::assertSame('101', $row->nordnetInstrumentId, 'existing id preserved');
+    }
+
     public function testAllIsKeyedByIsin(): void
     {
         $repo = new InstrumentRepository($this->pdo);

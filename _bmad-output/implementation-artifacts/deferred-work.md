@@ -22,3 +22,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-append-only-tidsserielagring.md`
   summary: Fix each night's `as_of_date` at Enqueue time so a fetch retry straddling local midnight doesn't split one observation across two calendar days.
   evidence: `OwnerCountRepository::asOfDate()` derives the day from `(sourceTimestamp ?? fetchedAt)` in Europe/Stockholm (a frozen Story 1.4/1.6 decision). For Avanza (no sourceTimestamp) a job fetched at 23:59 and re-fetched at 00:05 after a Transient/timebox gets two rows with the same owner count on consecutive dates. Home: Story 1.7 (`work_queue.run_date` / `Enqueue`) — pass the run's calendar date to `upsert()` rather than deriving per-fetch.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
+  summary: Add a retention / pruning step for `work_queue` — old `done`/`failed` rows accumulate one-per-instrument-per-run-date forever.
+  evidence: The `20260909150000_create_work_queue` migration and the pipeline never delete rows. Within NFR8's stated tolerance today (~365k rows/yr at full universe) but the table and its scans (see next item) grow unbounded. Belongs with Story 1.8/2.6 observability or its own chore.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
+  summary: `FetchRunner` reads `batch_size` from `settings` with no upper bound — a very large value makes one `claimBatch` load that many `QueueJob` rows and voids the NFR8 256 MB margin.
+  evidence: `FetchRunner::intSetting('batch_size')` guards `> 0` but not a ceiling. The default 25 is safe; a `min($value, MAX)` clamp is the right fix once Story 1.10's Loopia probe measures the real web-PHP `memory_limit`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
+  summary: Validate `run_date` format where Story 1.9 derives it — the pipeline passes it straight to SQL.
+  evidence: `Enqueue::run()` / `QueueRepository` bind `$runDate` unchecked. A malformed string (`''`, `'2026-9-9'`, trailing space) makes MySQL coerce the key and `FetchRunner` silently claim nothing, indistinguishable from an empty queue. Not reachable from current callers (tests pass `Y-m-d`; Story 1.9 will mint it via `->format('Y-m-d')`), so the guard belongs at the derivation site in Story 1.9.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
+  summary: A source stuck on `Transient` has no retry cap — the job ping-pongs `pending ↔ claimed` every slice until it eventually succeeds.
+  evidence: `FetchRunner` reopens the job on any `Transient` with no attempt counter. Explicitly Epic 2 by the FR coverage map (FR9: exponential backoff, rate-limit-aware, retry caps — Story 2.4). `upsert` idempotency makes the re-store of an already-healthy source benign.
