@@ -27,9 +27,11 @@ interface SourceAdapter
 
     /**
      * Fetch one normalized owner-count datapoint for the instrument.
+     * Implemented for Avanza in Story 1.4; for Nordnet in Story 1.5.
      *
-     * Declared here for the pipeline contract; implemented in Story 1.4
-     * (Avanza) and Story 1.5 (Nordnet).
+     * @throws \Stockpicker\Error\NotFound       the source has no data for this instrument / id
+     * @throws \Stockpicker\Error\Transient      retryable failure, already retried once
+     * @throws \Stockpicker\Error\SchemaMismatch a required field is missing or the wrong type
      */
-    public function fetch(Instrument $instrument): mixed;
+    public function fetch(Instrument $instrument): NormalizedRow;
 }

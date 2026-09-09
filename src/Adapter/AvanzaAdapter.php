@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Stockpicker\Adapter;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\RequestException;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Error\AdapterError;
 use Stockpicker\Error\NotFound;
@@ -15,9 +18,10 @@ use Stockpicker\Store\Instrument;
  * Avanza source adapter. Endpoints are unofficial (`_api/...`) and may change
  * without notice — every response is schema-checked at this boundary (AD-7).
  *
- * Verified 2026-09-08:
+ * Verified 2026-09-09:
  *  - POST _api/search/filtered-search  → hits[].orderBookId (no ISIN in the hit)
- *  - GET  _api/market-guide/stock/{id} → isin, keyIndicators.numberOfOwners
+ *  - GET  _api/market-guide/stock/{id} → isin, keyIndicators.numberOfOwners (int),
+ *      keyIndicators.marketCapital.value, quote.last, historicalClosingPrices.oneDay
  */
 final class AvanzaAdapter implements SourceAdapter
 {
@@ -39,20 +43,112 @@ final class AvanzaAdapter implements SourceAdapter
         try {
             return $this->withOneRetry(fn (): string => $this->lookupOrderBookId($instrument));
         } catch (AdapterError $e) {
-            $this->logger->warning('avanza resolveId failed', [
-                'isin' => $instrument->isin,
-                'name' => $instrument->name,
-                'error' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
+            $this->warn('avanza resolveId failed', $instrument, $e);
 
             throw $e;
         }
     }
 
-    public function fetch(Instrument $instrument): mixed
+    public function fetch(Instrument $instrument): NormalizedRow
     {
-        throw new \LogicException('AvanzaAdapter::fetch() is implemented in Story 1.4');
+        if ($instrument->avanzaOrderbookId === null) {
+            throw new NotFound(sprintf('avanza: %s has no avanza_orderbook_id', $instrument->isin));
+        }
+
+        try {
+            return $this->withOneRetry(fn (): NormalizedRow => $this->fetchDatapoint($instrument));
+        } catch (AdapterError $e) {
+            $this->warn('avanza fetch failed', $instrument, $e);
+
+            throw $e;
+        }
+    }
+
+    private function fetchDatapoint(Instrument $instrument): NormalizedRow
+    {
+        $id = $instrument->avanzaOrderbookId ?? '';
+        $guide = $this->marketGuide($id, $instrument->isin);
+
+        $isin = $guide['isin'] ?? null;
+        if (!is_string($isin) || $isin === '') {
+            throw new SchemaMismatch(sprintf('avanza market-guide/stock/%s: "isin" missing', $id));
+        }
+        if ($isin !== $instrument->isin) {
+            throw new SchemaMismatch(sprintf(
+                'avanza market-guide/stock/%s: isin %s does not match expected %s',
+                $id,
+                $isin,
+                $instrument->isin,
+            ));
+        }
+
+        $owners = $guide['keyIndicators']['numberOfOwners'] ?? null;
+        if (!is_int($owners) || $owners < 0) {
+            throw new SchemaMismatch(sprintf(
+                'avanza market-guide/stock/%s: "keyIndicators.numberOfOwners" missing or not a non-negative int',
+                $id,
+            ));
+        }
+
+        return new NormalizedRow(
+            isin: $instrument->isin,
+            source: NormalizedRow::SOURCE_AVANZA,
+            numberOfOwners: $owners,
+            lastPrice: $this->lastPrice($guide),
+            marketCap: $this->marketCap($guide),
+            sourceTimestamp: null,
+            fetchedAt: new DateTimeImmutable('now', new DateTimeZone('UTC')),
+        );
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    private function marketGuide(string $orderBookId, string $isinForMessage): array
+    {
+        try {
+            return $this->requestJson(
+                $this->http,
+                'GET',
+                self::BASE_URI . self::STOCK_PATH . rawurlencode($orderBookId),
+                ['headers' => ['User-Agent' => self::USER_AGENT]],
+            );
+        } catch (SchemaMismatch $e) {
+            $previous = $e->getPrevious();
+            if ($previous instanceof RequestException && $previous->getResponse()?->getStatusCode() === 404) {
+                throw new NotFound(
+                    sprintf('avanza: orderbook %s not found (stale id for %s)', $orderBookId, $isinForMessage),
+                    0,
+                    $previous,
+                );
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * @param array<mixed> $guide
+     */
+    private function lastPrice(array $guide): ?float
+    {
+        foreach ([$guide['quote']['last'] ?? null, $guide['historicalClosingPrices']['oneDay'] ?? null] as $candidate) {
+            if (is_int($candidate) || is_float($candidate)) {
+                return (float) $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<mixed> $guide
+     */
+    private function marketCap(array $guide): ?float
+    {
+        $value = $guide['keyIndicators']['marketCapital']['value'] ?? null;
+
+        return (is_int($value) || is_float($value)) ? (float) $value : null;
     }
 
     private function lookupOrderBookId(Instrument $instrument): string
@@ -81,7 +177,13 @@ final class AvanzaAdapter implements SourceAdapter
             }
             $orderBookId = (string) $orderBookId;
 
-            if ($this->isinOf($orderBookId) === $instrument->isin) {
+            $guide = $this->marketGuide($orderBookId, $instrument->isin);
+            $isin = $guide['isin'] ?? null;
+            if (!is_string($isin) || $isin === '') {
+                throw new SchemaMismatch(sprintf('avanza market-guide/stock/%s: "isin" missing', $orderBookId));
+            }
+
+            if ($isin === $instrument->isin) {
                 return $orderBookId;
             }
         }
@@ -89,17 +191,13 @@ final class AvanzaAdapter implements SourceAdapter
         throw new NotFound(sprintf('avanza: no STOCK hit for %s (%s)', $instrument->isin, $instrument->name));
     }
 
-    private function isinOf(string $orderBookId): string
+    private function warn(string $message, Instrument $instrument, AdapterError $error): void
     {
-        $guide = $this->requestJson($this->http, 'GET', self::BASE_URI . self::STOCK_PATH . rawurlencode($orderBookId), [
-            'headers' => ['User-Agent' => self::USER_AGENT],
+        $this->logger->warning($message, [
+            'isin' => $instrument->isin,
+            'name' => $instrument->name,
+            'error' => $error::class,
+            'message' => $error->getMessage(),
         ]);
-
-        $isin = $guide['isin'] ?? null;
-        if (!is_string($isin) || $isin === '') {
-            throw new SchemaMismatch(sprintf('avanza market-guide/stock/%s: "isin" missing', $orderBookId));
-        }
-
-        return $isin;
     }
 }

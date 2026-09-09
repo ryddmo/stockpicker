@@ -51,7 +51,7 @@ final class NordnetAdapter implements SourceAdapter
         }
     }
 
-    public function fetch(Instrument $instrument): mixed
+    public function fetch(Instrument $instrument): NormalizedRow
     {
         throw new \LogicException('NordnetAdapter::fetch() is implemented in Story 1.5');
     }

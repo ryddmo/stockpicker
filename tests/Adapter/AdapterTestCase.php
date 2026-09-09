@@ -50,8 +50,12 @@ abstract class AdapterTestCase extends TestCase
         self::assertSame(0, $this->mock->count(), 'the adapter left mocked responses unconsumed');
     }
 
-    protected function instrument(string $isin = 'SE0015811963', string $name = 'Investor B'): Instrument
-    {
-        return new Instrument($isin, $name, 'LC', null, null, '2026-09-08', null);
+    protected function instrument(
+        string $isin = 'SE0015811963',
+        string $name = 'Investor B',
+        ?string $avanzaOrderbookId = null,
+        ?string $nordnetInstrumentId = null,
+    ): Instrument {
+        return new Instrument($isin, $name, 'LC', $avanzaOrderbookId, $nordnetInstrumentId, '2026-09-08', null);
     }
 }
