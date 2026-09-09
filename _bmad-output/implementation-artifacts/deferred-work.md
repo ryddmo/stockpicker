@@ -34,3 +34,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
   summary: A source stuck on `Transient` has no retry cap — the job ping-pongs `pending ↔ claimed` every slice until it eventually succeeds.
   evidence: `FetchRunner` reopens the job on any `Transient` with no attempt counter. Explicitly Epic 2 by the FR coverage map (FR9: exponential backoff, rate-limit-aware, retry caps — Story 2.4). `upsert` idempotency makes the re-store of an already-healthy source benign.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-8-minimal-korningslogg.md`
+  summary: Add the per-datum `owner_count_daily.ingest_run_id` link (spine ER diagram `ingest_run ||--o{ owner_count_daily`).
+  evidence: Story 1.8 keeps the körningslogg minimal — one appended summary row per run, `RunRepository` append-only, no change to `OwnerCountRepository::upsert()`. Story 1.6's spec flagged "Story 1.8 adds the run link" but the epic's 1.8 ACs only ask for the summary row. Home: Story 2.6 (full körningslogg) — add a nullable `ingest_run_id BIGINT UNSIGNED` column + FK, no backfill (NFR7: series starts empty); `RunRepository` gains `start()`/`finish()` and `FetchRunner` threads the id into each `upsert()`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-8-minimal-korningslogg.md`
+  summary: Add retention / pruning for `ingest_run` rows (one per slice, forever).
+  evidence: The `create_ingest_run` migration and `RunRepository` never delete. Same class of issue as the `work_queue` retention item; fold both into one cleanup step (Story 2.6 observability or a dedicated chore).

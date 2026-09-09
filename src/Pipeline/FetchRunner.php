@@ -15,6 +15,7 @@ use Stockpicker\Error\Transient;
 use Stockpicker\Store\InstrumentRepository;
 use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
+use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
 
 /**
@@ -23,9 +24,15 @@ use Stockpicker\Store\SettingsRepository;
  *   1. reopen stale `claimed` rows (a crashed earlier slice)
  *   2. atomically claim up to `batch_size` `pending` jobs for the run date
  *   3. per job, before it: if the timebox elapsed, reopen this slice's still
- *      -`claimed` jobs and return; otherwise attempt Avanza then Nordnet,
+ *      -`claimed` jobs and stop the loop; otherwise attempt Avanza then Nordnet,
  *      store each result via `OwnerCountRepository`, transition the job
- *   4. return `FetchRunnerResult` counts
+ *   4. append one `fetch` row to `ingest_run` via `RunRepository` (AD-11) and
+ *      return `FetchRunnerResult` counts
+ *
+ * `run()` has a single exit: the timebox path `break`s out of the job loop, so
+ * the run-log write and the result are built once at the bottom and the timebox
+ * slice is logged like any other. A throw from a repository call outside the
+ * loop is not caught and (correctly) aborts the slice without a row.
  *
  * Calls are strictly serial and throttled: between two calls to the *same*
  * source, wait `1 / rate.<source>` seconds via the injected sleeper (NFR3,
@@ -63,6 +70,7 @@ final class FetchRunner
         private readonly array $adapters,
         private readonly SettingsRepository $settings,
         private readonly LoggerInterface $logger,
+        private readonly RunRepository $runs,
         ?callable $sleep = null,
     ) {
         foreach (array_keys(self::SOURCES) as $source) {
@@ -107,7 +115,7 @@ final class FetchRunner
                     ++$reopened;
                 }
 
-                return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten);
+                break;
             }
 
             try {
@@ -195,6 +203,16 @@ final class FetchRunner
                 ++$failed;
             }
         }
+
+        $this->runs->record(
+            'fetch',
+            $runDate,
+            $now,
+            new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            $claimed,
+            $done,
+            $failed,
+        );
 
         return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten);
     }

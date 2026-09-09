@@ -14,7 +14,9 @@ use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
 use Stockpicker\Store\InstrumentRepository;
 use Stockpicker\Store\OwnerCountRepository;
+use Stockpicker\Store\IngestRun;
 use Stockpicker\Store\QueueRepository;
+use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
 use Stockpicker\Tests\Store\StoreTestCase;
 use Stockpicker\Tests\Support\FakeSourceAdapter;
@@ -73,6 +75,7 @@ final class FetchRunnerTest extends StoreTestCase
             ['avanza' => $this->avanza, 'nordnet' => $this->nordnet],
             new SettingsRepository($this->pdo),
             $this->logger(),
+            new RunRepository($this->pdo),
             function (float $seconds): void {
                 $this->waits[] = $seconds;
             },
@@ -81,7 +84,25 @@ final class FetchRunnerTest extends StoreTestCase
 
     private function enqueueAll(): void
     {
-        (new Enqueue(new QueueRepository($this->pdo), new InstrumentRepository($this->pdo)))->run(self::RUN_DATE);
+        (new Enqueue(
+            new QueueRepository($this->pdo),
+            new InstrumentRepository($this->pdo),
+            new RunRepository($this->pdo),
+        ))->run(self::RUN_DATE);
+    }
+
+    /**
+     * The `fetch` rows written to `ingest_run` for the run date (excludes the
+     * `enqueue` row `enqueueAll()` leaves), oldest first.
+     *
+     * @return list<IngestRun>
+     */
+    private function fetchLogRows(): array
+    {
+        return array_values(array_filter(
+            (new RunRepository($this->pdo))->forRunDate(self::RUN_DATE),
+            static fn (IngestRun $r): bool => $r->runType === 'fetch',
+        ));
     }
 
     private function row(string $source, string $isin, int $owners, ?DateTimeImmutable $sourceTs = null): NormalizedRow
@@ -129,6 +150,14 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(0, $result->failed);
         self::assertSame(0, $result->reopened);
         self::assertSame(2, $result->rowsWritten);
+
+        $log = $this->fetchLogRows();
+        self::assertCount(1, $log);
+        self::assertSame(self::RUN_DATE, $log[0]->runDate);
+        self::assertSame($result->claimed, $log[0]->instrumentCount);
+        self::assertSame($result->done, $log[0]->okCount);
+        self::assertSame($result->failed, $log[0]->failCount);
+        self::assertGreaterThanOrEqual($log[0]->startedAt, $log[0]->finishedAt);
     }
 
     public function testNullSourceIdSkipsThatSourceWithAWarningAndStillMarksDone(): void
@@ -162,6 +191,12 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(1, $result->failed);
         self::assertSame(0, $result->done);
         self::assertTrue($this->logHandler->hasWarningThatContains('source failed for job'));
+
+        $log = $this->fetchLogRows();
+        self::assertCount(1, $log);
+        self::assertSame(1, $log[0]->instrumentCount);
+        self::assertSame(0, $log[0]->okCount);
+        self::assertSame(1, $log[0]->failCount);
     }
 
     public function testSchemaMismatchAlsoFailsTheJob(): void
@@ -223,6 +258,13 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(0, $result->done);
         self::assertSame(2, $result->reopened);
         self::assertSame([], $this->avanza->fetchCalls);
+
+        // The timebox early-exit still leaves exactly one fetch row.
+        $log = $this->fetchLogRows();
+        self::assertCount(1, $log);
+        self::assertSame(2, $log[0]->instrumentCount);
+        self::assertSame(0, $log[0]->okCount);
+        self::assertSame(0, $log[0]->failCount);
     }
 
     public function testTimeboxHitMidSliceReopensTheRemainingJobs(): void
@@ -253,6 +295,14 @@ final class FetchRunnerTest extends StoreTestCase
             self::assertContains($this->queueStatus($isin), ['done', 'pending']);
         }
         self::assertSame('pending', $this->queueStatus('SE0000000003'), 'the last job never ran');
+
+        // Single exit: one fetch row whatever path the timebox took, counts
+        // matching the partial slice's result.
+        $log = $this->fetchLogRows();
+        self::assertCount(1, $log);
+        self::assertSame($result->claimed, $log[0]->instrumentCount);
+        self::assertSame($result->done, $log[0]->okCount);
+        self::assertSame($result->failed, $log[0]->failCount);
     }
 
     public function testStaleClaimedRowIsReopenedAtSliceStartThenClaimed(): void
@@ -309,6 +359,15 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(0, $result->failed);
         self::assertSame(0, $result->reopened);
         self::assertSame(0, $result->rowsWritten);
+
+        // An empty slice still writes one fetch row, all counts 0.
+        $log = (new RunRepository($this->pdo))->forRunDate(self::RUN_DATE);
+        self::assertCount(1, $log);
+        self::assertSame('fetch', $log[0]->runType);
+        self::assertSame(0, $log[0]->instrumentCount);
+        self::assertSame(0, $log[0]->okCount);
+        self::assertSame(0, $log[0]->failCount);
+        self::assertGreaterThanOrEqual($log[0]->startedAt, $log[0]->finishedAt);
     }
 
     public function testAvanzaRowIsDatedFromTheRunDateNotTheFetchClock(): void
@@ -353,6 +412,7 @@ final class FetchRunnerTest extends StoreTestCase
             ['avanza' => $this->avanza], // nordnet missing
             new SettingsRepository($this->pdo),
             $this->logger(),
+            new RunRepository($this->pdo),
         );
     }
 
@@ -382,6 +442,12 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(1, $result->failed);
         self::assertSame(1, $result->done);
         self::assertTrue($this->logHandler->hasErrorThatContains('unexpected error handling job'));
+
+        $run = (new RunRepository($this->pdo))->recent()[0];
+        self::assertSame('fetch', $run->runType);
+        self::assertSame(2, $run->instrumentCount);
+        self::assertSame(1, $run->okCount);
+        self::assertSame(1, $run->failCount);
     }
 
     public function testBatchSizeSettingCapsTheClaim(): void

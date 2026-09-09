@@ -63,6 +63,7 @@ final class MigrationTest extends TestCase
         self::assertTrue($this->tableExists('settings'));
         self::assertTrue($this->tableExists('owner_count_daily'));
         self::assertTrue($this->tableExists('work_queue'));
+        self::assertTrue($this->tableExists('ingest_run'));
 
         // Story 1.6 widened this column to hold the 36-char nnx UUID.
         self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
@@ -126,6 +127,25 @@ final class MigrationTest extends TestCase
             self::assertSame('23000', $e->getCode());
         }
 
+        // ingest_run (Story 1.8): surrogate BIGINT UNSIGNED id, the seven typed
+        // columns, unsigned counters. Append-only — no FK.
+        self::assertSame(['id'], $this->primaryKey('ingest_run'));
+        self::assertStringContainsString('bigint', $this->columnType('ingest_run', 'id'));
+        self::assertStringContainsString('unsigned', $this->columnType('ingest_run', 'id'));
+        self::assertSame('varchar(16)', $this->columnType('ingest_run', 'run_type'));
+        self::assertSame('date', $this->columnType('ingest_run', 'run_date'));
+        self::assertStringContainsString('datetime', $this->columnType('ingest_run', 'started_at'));
+        self::assertStringContainsString('datetime', $this->columnType('ingest_run', 'finished_at'));
+        foreach (['instrument_count', 'ok_count', 'fail_count'] as $col) {
+            self::assertStringContainsString('int', $this->columnType('ingest_run', $col));
+            self::assertStringContainsString('unsigned', $this->columnType('ingest_run', $col));
+        }
+        // Correlation-key index for forRunDate() / bin/show-runs.php --date.
+        self::assertSame(
+            ['run_date'],
+            $this->indexColumns('ingest_run', 'ix_ingest_run_run_date'),
+        );
+
         $settings = $this->pdo->query('SELECT `key`, `value` FROM settings')->fetchAll(PDO::FETCH_KEY_PAIR);
         self::assertSame([
             'batch_size' => '25',
@@ -147,6 +167,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('settings'));
         self::assertFalse($this->tableExists('owner_count_daily'));
         self::assertFalse($this->tableExists('work_queue'));
+        self::assertFalse($this->tableExists('ingest_run'));
     }
 
     /**
@@ -220,7 +241,7 @@ final class MigrationTest extends TestCase
     private function dropAll(): void
     {
         // owner_count_daily and work_queue first — FK to instrument.
-        foreach (['owner_count_daily', 'work_queue', 'instrument', 'settings', 'phinxlog'] as $table) {
+        foreach (['ingest_run', 'owner_count_daily', 'work_queue', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }
