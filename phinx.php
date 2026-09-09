@@ -9,6 +9,11 @@ declare(strict_types=1);
  * - production: DB credentials from config.php (Stockpicker\Config). Defined
  *   only when config.php loads; otherwise Phinx fails loudly that the
  *   environment is missing, rather than running against a fabricated DB.
+ *   Port is hardcoded 3306 — Loopia's MariaDB (mysql684.loopia.se) listens on
+ *   the default port, and config.php's db() contract carries no port key.
+ *   Run manually over SSH only: `vendor/bin/phinx migrate -e production`
+ *   (see docs/deploy.md); never from a cron endpoint or the deploy script
+ *   beyond its one explicit step.
  * - development: the MariaDB service from docker-compose.yml
  *   (docker compose up -d), reachable on 127.0.0.1:3306. Always available.
  * - testing: the same server, a throwaway database used by the PHPUnit

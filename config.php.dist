@@ -8,6 +8,10 @@
  *
  * For local development the db values point at the MariaDB service in
  * docker-compose.yml (docker compose up -d).
+ *
+ * On the Loopia server this file is created by hand and never rsynced — use the
+ * real database (mysql684.loopia.se / ryddmo_se / …) and a strong cron_token.
+ * See docs/deploy.md ("One-time setup", step C.2) for the full procedure.
  */
 
 return [

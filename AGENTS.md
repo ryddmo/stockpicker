@@ -37,15 +37,19 @@ plus the architecture spine.
 
 ## Running and verifying
 
-TODO — no application code yet (`composer.json`, `src/`). Deploy tooling exists (`bin/`,
-`docs/deploy.md`). Decided stack for when the rest lands:
-- Setup: `composer install`. Deps: `guzzlehttp/guzzle ^7.9`, `monolog/monolog ^3.11`,
-  `robmorgan/phinx ^0.16.12`.
-- Tests: PHPUnit — add `phpunit/phpunit` to `require-dev`, run `vendor/bin/phpunit`.
+App code, migrations, cron endpoints and deploy tooling are all in place (Epic 1 through
+Story 1.10). The first live Loopia deploy is a split-off follow-up (see
+`_bmad-output/implementation-artifacts/deferred-work.md`).
+- Setup: `composer install`. Deps: `guzzlehttp/guzzle ^7.9 || ^8.0`, `monolog/monolog ^3.11`,
+  `robmorgan/phinx ^0.16.12`; `phpunit/phpunit ^11` in `require-dev`.
+- Tests: `composer test` (PHPUnit). DB-backed tests self-skip without the docker-compose
+  MariaDB; `bin/deploy.sh` is guarded by `tests/DeployScriptTest.php` (no server needed).
 - Migrations: `vendor/bin/phinx migrate -e production` — run manually over SSH; never in a
   cron endpoint or the deploy beyond its explicit step.
-- Deploy: `bin/deploy.sh` — rsync source over SSH, then `composer install --no-dev` on the
-  server (not FTP, not a local `vendor/` upload). Runbook: `docs/deploy.md`.
+- Deploy: `bin/deploy.sh` — SSH-reachability + working-tree preflight, then rsync source
+  over SSH (`-az --delete`, `config.php` / `vendor/` excluded), `composer install --no-dev`
+  on the server, then the explicit `phinx migrate -e production` step (not FTP, not a local
+  `vendor/` upload). Flags: `--with-local-vendor`, `--no-migrate`. Runbook: `docs/deploy.md`.
 - Nightly work is triggered only by Loopia URL-cron (HTTP GET) — no CLI cron, one instance
   at a time, execution-time limit unknown (URL-cron runs in web-PHP context, whose
   `memory_limit` / `max_execution_time` are still unverified). No step may assume a single
