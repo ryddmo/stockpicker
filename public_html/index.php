@@ -3,15 +3,25 @@
 declare(strict_types=1);
 
 /**
- * Thin front controller. A hand-rolled path switch — no framework, no business
- * logic. Cron endpoints and the read view arrive in later stories.
+ * Thin front controller. A hand-rolled path switch — no framework or SQL.
  */
 
+use GuzzleHttp\Client;
 use Monolog\Level;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
+use Stockpicker\Adapter\AvanzaAdapter;
+use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Config;
 use Stockpicker\Logging;
+use Stockpicker\Pipeline\Enqueue;
+use Stockpicker\Pipeline\FetchRunner;
+use Stockpicker\Store\Database;
+use Stockpicker\Store\InstrumentRepository;
+use Stockpicker\Store\OwnerCountRepository;
+use Stockpicker\Store\QueueRepository;
+use Stockpicker\Store\RunRepository;
+use Stockpicker\Store\SettingsRepository;
 
 /** @var array{config: Config, logger: Logger} $services */
 try {
@@ -42,6 +52,77 @@ try {
             ]);
             break;
 
+        case '/cron/refill':
+        case '/cron/work':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            authorize_cron($services['config']);
+
+            if (count($_GET) !== 1 || !array_key_exists('token', $_GET)) {
+                send_json(400, ['error' => 'invalid request']);
+                break;
+            }
+
+            $pdo = Database::connect($services['config']);
+            $settings = new SettingsRepository($pdo);
+            $runAfter = $settings->get('run_after');
+            if ($runAfter === null) {
+                throw new \RuntimeException('missing required setting: run_after');
+            }
+
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm'));
+            $runAfterTime = cron_time($runAfter, $now);
+            if ($now < $runAfterTime) {
+                send_json(200, [
+                    'status' => 'window_closed',
+                    'run_date' => $now->format('Y-m-d'),
+                ]);
+                break;
+            }
+
+            $runDate = $now->format('Y-m-d');
+            $instruments = new InstrumentRepository($pdo);
+            $queue = new QueueRepository($pdo);
+            $runs = new RunRepository($pdo);
+
+            if ($path === '/cron/refill') {
+                $created = (new Enqueue($queue, $instruments, $runs))->run($runDate);
+                send_json(200, [
+                    'status' => 'ok',
+                    'run_date' => $runDate,
+                    'created' => $created,
+                ]);
+                break;
+            }
+
+            $http = new Client(['timeout' => 20, 'connect_timeout' => 10]);
+            $runner = new FetchRunner(
+                $queue,
+                $instruments,
+                new OwnerCountRepository($pdo),
+                [
+                    'avanza' => new AvanzaAdapter($http, $logger),
+                    'nordnet' => new NordnetAdapter($http, $logger),
+                ],
+                $settings,
+                $logger,
+                $runs,
+            );
+            $result = $runner->run($runDate, 75.0);
+            send_json(200, [
+                'status' => 'ok',
+                'run_date' => $runDate,
+                'claimed' => $result->claimed,
+                'done' => $result->done,
+                'failed' => $result->failed,
+                'reopened' => $result->reopened,
+                'rows_written' => $result->rowsWritten,
+            ]);
+            break;
+
         default:
             send_json(404, ['error' => 'not found']);
             break;
@@ -66,6 +147,24 @@ try {
         ));
     }
     send_json(500, ['error' => 'internal server error']);
+}
+
+function authorize_cron(Config $config): void
+{
+    $token = $_GET['token'] ?? null;
+    if (!is_string($token) || $token === '' || !hash_equals($config->cronToken(), $token)) {
+        send_json(403, ['error' => 'forbidden']);
+        exit;
+    }
+}
+
+function cron_time(string $runAfter, \DateTimeImmutable $now): \DateTimeImmutable
+{
+    if (!preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $runAfter, $matches)) {
+        throw new \RuntimeException('invalid setting: run_after');
+    }
+
+    return $now->setTime((int) $matches[1], (int) $matches[2]);
 }
 
 /**
