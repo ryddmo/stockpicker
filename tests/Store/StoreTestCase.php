@@ -63,15 +63,21 @@ abstract class StoreTestCase extends TestCase
     protected function tearDown(): void
     {
         if (isset($this->pdo)) {
-            $this->pdo->exec('DROP TABLE IF EXISTS instrument');
-            $this->pdo->exec('DROP TABLE IF EXISTS settings');
+            $this->dropSchema();
         }
+    }
+
+    private function dropSchema(): void
+    {
+        // owner_count_daily first — it has an FK to instrument.
+        $this->pdo->exec('DROP TABLE IF EXISTS owner_count_daily');
+        $this->pdo->exec('DROP TABLE IF EXISTS instrument');
+        $this->pdo->exec('DROP TABLE IF EXISTS settings');
     }
 
     private function createSchema(): void
     {
-        $this->pdo->exec('DROP TABLE IF EXISTS instrument');
-        $this->pdo->exec('DROP TABLE IF EXISTS settings');
+        $this->dropSchema();
 
         $this->pdo->exec(
             'CREATE TABLE instrument (
@@ -79,7 +85,7 @@ abstract class StoreTestCase extends TestCase
                 name VARCHAR(255) NOT NULL,
                 list VARCHAR(20) NOT NULL,
                 avanza_orderbook_id VARCHAR(32) NULL,
-                nordnet_instrument_id VARCHAR(32) NULL,
+                nordnet_instrument_id VARCHAR(64) NULL,
                 first_seen DATE NOT NULL,
                 last_seen DATE NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
@@ -89,6 +95,20 @@ abstract class StoreTestCase extends TestCase
             'CREATE TABLE settings (
                 `key` VARCHAR(64) NOT NULL PRIMARY KEY,
                 `value` VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $this->pdo->exec(
+            'CREATE TABLE owner_count_daily (
+                isin VARCHAR(12) NOT NULL,
+                source VARCHAR(16) NOT NULL,
+                as_of_date DATE NOT NULL,
+                number_of_owners INT UNSIGNED NOT NULL,
+                last_price DECIMAL(18,4) NULL,
+                market_cap DECIMAL(24,2) NULL,
+                fetched_at DATETIME NOT NULL,
+                PRIMARY KEY (isin, source, as_of_date),
+                CONSTRAINT fk_owner_count_daily_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
     }

@@ -25,6 +25,11 @@ final class Database
             $db['charset'],
         );
 
+        // NB: the mysql driver's CLIENT_FOUND_ROWS flag is left at its default
+        // (off), so rowCount() means "rows actually changed", not "rows matched".
+        // OwnerCountRepository::upsert() depends on that to tell an INSERT (1)
+        // from a no-op ON DUPLICATE KEY UPDATE (0); do not enable FOUND_ROWS.
+        // Guarded by OwnerCountRepositoryTest::testReWriteWithSameDataReturnsFalse…
         return new PDO($dsn, $db['user'], $db['pass'], [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

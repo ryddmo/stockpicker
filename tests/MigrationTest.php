@@ -54,13 +54,38 @@ final class MigrationTest extends TestCase
         }
     }
 
-    public function testMigrateCreatesBothTablesAndSeedsSettings(): void
+    public function testMigrateCreatesTheSchemaAndSeedsSettings(): void
     {
         [$code, $out] = $this->phinx('migrate', '-e', 'testing');
         self::assertSame(0, $code, $out);
 
         self::assertTrue($this->tableExists('instrument'));
         self::assertTrue($this->tableExists('settings'));
+        self::assertTrue($this->tableExists('owner_count_daily'));
+
+        // Story 1.6 widened this column to hold the 36-char nnx UUID.
+        self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
+
+        // The append-only / first-write-wins contract depends on this exact
+        // composite primary key and on number_of_owners being unsigned.
+        self::assertSame(['isin', 'source', 'as_of_date'], $this->primaryKey('owner_count_daily'));
+        self::assertStringContainsString('unsigned', $this->columnType('owner_count_daily', 'number_of_owners'));
+
+        // A duplicate (isin, source, as_of_date) must be rejected by the real schema.
+        $this->pdo->exec(
+            "INSERT INTO instrument (isin, name, list, first_seen)
+             VALUES ('SE0000000000', 'Test', 'LC', '2026-01-01')"
+        );
+        $ins = "INSERT INTO owner_count_daily
+                    (isin, source, as_of_date, number_of_owners, fetched_at)
+                VALUES ('SE0000000000', 'avanza', '2026-01-01', 100, '2026-01-01 00:00:00')";
+        $this->pdo->exec($ins);
+        try {
+            $this->pdo->exec($ins);
+            self::fail('the migrated schema allowed a duplicate composite key');
+        } catch (\PDOException $e) {
+            self::assertSame('23000', $e->getCode());
+        }
 
         $settings = $this->pdo->query('SELECT `key`, `value` FROM settings')->fetchAll(PDO::FETCH_KEY_PAIR);
         self::assertSame([
@@ -72,7 +97,7 @@ final class MigrationTest extends TestCase
         ], $this->sortByKey($settings));
     }
 
-    public function testRollbackDropsBothTables(): void
+    public function testRollbackDropsEverything(): void
     {
         self::assertSame(0, $this->phinx('migrate', '-e', 'testing')[0]);
 
@@ -81,6 +106,7 @@ final class MigrationTest extends TestCase
 
         self::assertFalse($this->tableExists('instrument'));
         self::assertFalse($this->tableExists('settings'));
+        self::assertFalse($this->tableExists('owner_count_daily'));
     }
 
     /**
@@ -110,9 +136,36 @@ final class MigrationTest extends TestCase
         return (int) $stmt->fetchColumn() === 1;
     }
 
+    private function columnType(string $table, string $column): string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COLUMN_TYPE FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = :t AND column_name = :c'
+        );
+        $stmt->execute(['t' => $table, 'c' => $column]);
+
+        return strtolower((string) $stmt->fetchColumn());
+    }
+
+    /**
+     * @return list<string> the PK columns in key order
+     */
+    private function primaryKey(string $table): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT column_name FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND table_name = :t AND index_name = 'PRIMARY'
+             ORDER BY seq_in_index"
+        );
+        $stmt->execute(['t' => $table]);
+
+        return array_map('strval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     private function dropAll(): void
     {
-        foreach (['instrument', 'settings', 'phinxlog'] as $table) {
+        // owner_count_daily first — FK to instrument.
+        foreach (['owner_count_daily', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }
