@@ -68,6 +68,30 @@ final class FrontControllerTest extends TestCase
         self::assertSame(['error' => 'not found'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
     }
 
+    public function testCronWithoutTokenReturns403BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/work');
+
+        self::assertSame(403, $status);
+        self::assertSame(['error' => 'forbidden'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testCronWithWrongTokenReturns403BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/refill?token=wrong-token');
+
+        self::assertSame(403, $status);
+        self::assertSame(['error' => 'forbidden'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testCronWithUnexpectedQueryParameterReturns400BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/work?token=test-token&unexpected=value');
+
+        self::assertSame(400, $status);
+        self::assertSame(['error' => 'invalid request'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function testMissingConfigReturns500AndLogsError(): void
     {
         // Remove the config only from this temp root.
