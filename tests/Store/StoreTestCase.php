@@ -17,10 +17,10 @@ use Stockpicker\Store\Database;
  * `composer test` green on a machine with no database.
  *
  * Tests use a dedicated `stockpicker_test` database (created via root) so they
- * never touch the schema the Phinx `development` environment manages. The two
- * tables are (re)created fresh per test from DDL that mirrors
- * db/migrations/20260908161500_create_instrument_and_settings.php — keep them
- * in step.
+ * never touch the schema the Phinx `development` environment manages. The
+ * tables are (re)created fresh per test from DDL that hand-mirrors the Phinx
+ * migrations in db/migrations/ — keep the two in step (the drift is a known
+ * deferred-work.md item).
  */
 abstract class StoreTestCase extends TestCase
 {
@@ -70,6 +70,8 @@ abstract class StoreTestCase extends TestCase
     private function dropSchema(): void
     {
         // owner_count_daily and work_queue first — both have an FK to instrument.
+        // ingest_run has no FK, so its drop order does not matter.
+        $this->pdo->exec('DROP TABLE IF EXISTS ingest_run');
         $this->pdo->exec('DROP TABLE IF EXISTS owner_count_daily');
         $this->pdo->exec('DROP TABLE IF EXISTS work_queue');
         $this->pdo->exec('DROP TABLE IF EXISTS instrument');
@@ -123,6 +125,22 @@ abstract class StoreTestCase extends TestCase
                 UNIQUE KEY uq_work_queue_isin_run_date (isin, run_date),
                 KEY ix_work_queue_status_run_date (status, run_date),
                 CONSTRAINT fk_work_queue_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
+        // Story 1.8 — mirrors db/migrations/20260909160000_create_ingest_run.php.
+        // No FK (the per-datum run link is deferred to Story 2.6).
+        $this->pdo->exec(
+            "CREATE TABLE ingest_run (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                run_type VARCHAR(16) NOT NULL,
+                run_date DATE NOT NULL,
+                started_at DATETIME NOT NULL,
+                finished_at DATETIME NOT NULL,
+                instrument_count INT UNSIGNED NOT NULL,
+                ok_count INT UNSIGNED NOT NULL,
+                fail_count INT UNSIGNED NOT NULL,
+                KEY ix_ingest_run_run_date (run_date)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
     }
