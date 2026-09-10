@@ -34,6 +34,7 @@ final class FrontControllerTest extends TestCase
         // Entry points: copy so __DIR__ resolves inside the temp root.
         copy(self::REPO_ROOT . '/bootstrap.php', $this->root . '/bootstrap.php');
         copy(self::REPO_ROOT . '/public_html/index.php', $this->root . '/public_html/index.php');
+        copy(self::REPO_ROOT . '/public_html/cron_helpers.php', $this->root . '/public_html/cron_helpers.php');
         copy(self::REPO_ROOT . '/public_html/.htaccess', $this->root . '/public_html/.htaccess');
 
         file_put_contents($this->root . '/config.php.dist', "<?php\nreturn " . var_export($this->configArray(), true) . ";\n");

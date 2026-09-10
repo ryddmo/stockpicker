@@ -18,6 +18,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
     {
         parent::setUp();
         $this->endpoint = new EndpointFixture();
+        $this->startEndpoint();
+    }
+
+    private function startEndpoint(): void
+    {
         $this->endpoint->start([
             'host' => getenv('STOCKPICKER_TEST_DB_HOST') ?: '127.0.0.1',
             'name' => getenv('STOCKPICKER_TEST_DB_NAME') ?: 'stockpicker_test',
@@ -27,36 +32,90 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         ]);
     }
 
+    private function seedMatchedUniverse(): void
+    {
+        $rows = [
+            ['SE0000001001', 'Alpha AB', 'LC', '1001'],
+            ['SE0000001002', 'Beta AB', 'MC', '1002'],
+            ['SE0000001003', 'Gamma AB', 'SC', '1003'],
+            ['SE0000001004', 'Delta AB', 'First North', '1004'],
+        ];
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO instrument (isin, name, list, avanza_orderbook_id, nordnet_instrument_id, first_seen)
+             VALUES (?, ?, ?, ?, ?, '2026-01-01')"
+        );
+        foreach ($rows as [$isin, $name, $list, $obId]) {
+            $stmt->execute([$isin, $name, $list, $obId, 'nx-' . $obId]);
+        }
+    }
+
     protected function tearDown(): void
     {
         $this->endpoint->stop();
         parent::tearDown();
     }
 
-    public function testRefillEnqueuesTodaysStockholmDate(): void
+    public function testRefillRunsUniverseSyncThenEnqueuesTheActiveUniverse(): void
     {
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->startUniverseSource('happy');
+        $this->startEndpoint();
+
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+
+        [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status']);
+        self::assertSame(4, $json['created'], 'Enqueue runs over allActive() after the sync');
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        self::assertSame($runDate, $json['run_date']);
+
+        self::assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(
+            $runDate,
+            $this->pdo->query('SELECT run_date FROM work_queue LIMIT 1')->fetchColumn(),
+        );
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'universe_sync'")->fetchColumn(),
+        );
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'enqueue'")->fetchColumn(),
+        );
+        self::assertSame(
+            4,
+            (int) $this->pdo->query("SELECT instrument_count FROM ingest_run WHERE run_type = 'universe_sync'")->fetchColumn(),
+        );
+    }
+
+    public function testRefillReturnsUniverseSyncFailedWhenTheListingIsUnreachable(): void
+    {
+        // The hermetic default env points the universe adapter at an
+        // unresolvable host -> listUniverse() raises, Enqueue is skipped.
         $this->seedInstrument();
         $this->setRunAfter('00:00');
 
         [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
         $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
 
-        self::assertSame(200, $status);
-        self::assertSame('ok', $json['status']);
-        self::assertSame(1, $json['created']);
-        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
-        self::assertSame($runDate, $json['run_date']);
-        self::assertSame($runDate, $this->pdo->query('SELECT run_date FROM work_queue')->fetchColumn());
-        self::assertSame($runDate, $this->pdo->query("SELECT run_date FROM ingest_run WHERE run_type = 'enqueue'")->fetchColumn());
-        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
-        self::assertSame(1, (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'enqueue'")->fetchColumn());
+        self::assertSame(200, $status, $body);
+        self::assertSame('universe_sync_failed', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
     public function testWorkRunsOneSliceAndReturnsCounts(): void
     {
         $this->seedInstrument();
         $this->setRunAfter('00:00');
-        $this->endpoint->get('/cron/refill?token=test-token');
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $this->pdo->prepare('INSERT INTO work_queue (isin, run_date) VALUES (?, ?)')
+            ->execute(['SE0000000001', $runDate]);
 
         [$status, $body] = $this->endpoint->get('/cron/work?token=test-token');
         $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);

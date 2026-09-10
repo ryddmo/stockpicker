@@ -70,6 +70,26 @@ final class EnqueueTest extends StoreTestCase
         self::assertSame(0, $runs[1]->failCount);
     }
 
+    public function testDelistedInstrumentsAreNotEnqueued(): void
+    {
+        $instruments = new InstrumentRepository($this->pdo);
+        InstrumentSeeder::seed($instruments);
+        $instruments->markInactive(InstrumentSeeder::LIST[0][0], '2026-09-08');
+
+        $enqueue = new Enqueue(
+            new QueueRepository($this->pdo),
+            $instruments,
+            new RunRepository($this->pdo),
+        );
+
+        $active = count(InstrumentSeeder::LIST) - 1;
+        self::assertSame($active, $enqueue->run(self::RUN_DATE));
+        self::assertSame(['pending' => $active], (new QueueRepository($this->pdo))->countByStatus(self::RUN_DATE));
+
+        $runs = (new RunRepository($this->pdo))->forRunDate(self::RUN_DATE);
+        self::assertSame($active, $runs[0]->instrumentCount);
+    }
+
     public function testAnotherRunDateGetsItsOwnJobs(): void
     {
         $enqueue = $this->enqueue();

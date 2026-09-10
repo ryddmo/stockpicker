@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Stockpicker\Adapter;
 
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\RequestException;
 use Psr\Log\LoggerInterface;
+use Stockpicker\Error\NotFound;
 use Stockpicker\Error\SchemaMismatch;
 
 /**
@@ -28,13 +30,24 @@ use Stockpicker\Error\SchemaMismatch;
  *    No `isin`, no cap-tier field — the label comes from which query returned the row.
  *  - per-list counts: LC 163, MC 141, SC 107, First North ~330 (~741 total)
  */
-final class AvanzaUniverseAdapter
+final class AvanzaUniverseAdapter implements UniverseLister
 {
     use HandlesTransientHttp;
 
     private const BASE_URI = 'https://www.avanza.se';
     private const STOCKS_PATH = '/_api/market-stock-filter/stocks';
+
+    /** Per-instrument ISIN lookup — the screener carries no ISIN (Story 2.2). */
+    private const STOCK_PATH = '/_api/market-guide/stock/';
     private const USER_AGENT = 'Mozilla/5.0 (compatible; stockpicker/1.x; personal use)';
+
+    /**
+     * Overridable only for the integration seam (`STOCKPICKER_AVANZA_UNIVERSE_BASE_URI`,
+     * or an explicit ctor argument): the front controller's `/cron/refill`
+     * happy-path test points it at a local canned server. Production leaves it
+     * at the real host.
+     */
+    private readonly string $baseUri;
 
     /** Safety ceiling on a single target-list response. */
     private const LIMIT = 5000;
@@ -54,7 +67,14 @@ final class AvanzaUniverseAdapter
     public function __construct(
         private readonly ClientInterface $http,
         private readonly LoggerInterface $logger,
+        ?string $baseUri = null,
     ) {
+        $envBaseUri = getenv('STOCKPICKER_AVANZA_UNIVERSE_BASE_URI');
+
+        $this->baseUri = rtrim(
+            $baseUri ?? ($envBaseUri !== false && $envBaseUri !== '' ? $envBaseUri : self::BASE_URI),
+            '/',
+        );
     }
 
     /**
@@ -122,6 +142,48 @@ final class AvanzaUniverseAdapter
     }
 
     /**
+     * One `GET market-guide/stock/{orderbookId}` (with a single retry on a
+     * transient failure) for the entry's ISIN. Request-shape mirrors
+     * AvanzaAdapter::marketGuide().
+     *
+     * @throws NotFound                     the orderbook id 404s (a stale / withdrawn id)
+     * @throws \Stockpicker\Error\Transient the call failed twice (connect / timeout / 429 / 5xx)
+     * @throws SchemaMismatch               an unexpected 4xx, or a response with no usable `isin`
+     */
+    public function resolveIsin(string $orderbookId): string
+    {
+        try {
+            $body = $this->withOneRetry(fn (): array => $this->requestJson(
+                $this->http,
+                'GET',
+                $this->baseUri . self::STOCK_PATH . rawurlencode($orderbookId),
+                ['headers' => ['User-Agent' => self::USER_AGENT]],
+            ));
+        } catch (SchemaMismatch $e) {
+            $previous = $e->getPrevious();
+            if ($previous instanceof RequestException && $previous->getResponse()?->getStatusCode() === 404) {
+                throw new NotFound(
+                    sprintf('avanza market-guide/stock/%s: orderbook not found', $orderbookId),
+                    0,
+                    $previous,
+                );
+            }
+
+            throw $e;
+        }
+
+        $isin = $body['isin'] ?? null;
+        if (!is_string($isin) || trim($isin) === '') {
+            throw $this->schemaMismatch(sprintf(
+                'avanza market-guide/stock/%s: "isin" missing or blank',
+                $orderbookId,
+            ));
+        }
+
+        return trim($isin);
+    }
+
+    /**
      * One POST for a target list, with a single retry on a transient failure.
      * An empty `stocks` array for a target list raises SchemaMismatch (never
      * "return nothing") so the all-four-lists guard is per-list.
@@ -133,7 +195,7 @@ final class AvanzaUniverseAdapter
         $body = $this->withOneRetry(fn (): array => $this->requestJson(
             $this->http,
             'POST',
-            self::BASE_URI . self::STOCKS_PATH,
+            $this->baseUri . self::STOCKS_PATH,
             [
                 // `sortBy` and `limit` are both required (the endpoint 400s without
                 // them). The result is re-sorted by orderbookId here; `name asc`
