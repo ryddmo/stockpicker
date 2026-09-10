@@ -8,6 +8,7 @@ use GuzzleHttp\Psr7\Response;
 use Psr\Log\AbstractLogger;
 use Stockpicker\Adapter\AvanzaUniverseAdapter;
 use Stockpicker\Adapter\UniverseEntry;
+use Stockpicker\Error\NotFound;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Error\Transient;
 
@@ -312,6 +313,73 @@ final class AvanzaUniverseAdapterTest extends AdapterTestCase
         self::assertCount(1, $this->logger->warnings);
         self::assertStringContainsString('duplicate orderbookId', $this->logger->warnings[0]['message']);
         $this->assertQueueDrained();
+    }
+
+    public function testResolveIsinReturnsTheIsinFromMarketGuide(): void
+    {
+        $this->queue([$this->json(['isin' => 'SE0000108656', 'name' => 'Ericsson B'])]);
+
+        self::assertSame('SE0000108656', $this->adapter()->resolveIsin('5479'));
+        $this->assertQueueDrained();
+        self::assertSame([], $this->logger->warnings);
+    }
+
+    public function testResolveIsinIssuesAGetToTheMarketGuidePath(): void
+    {
+        $this->queue([$this->json(['isin' => 'SE0015811963'])]);
+
+        $this->adapter()->resolveIsin('5247');
+
+        $request = $this->mock->getLastRequest();
+        self::assertNotNull($request);
+        self::assertSame('GET', $request->getMethod());
+        self::assertSame('/_api/market-guide/stock/5247', $request->getUri()->getPath());
+    }
+
+    public function testResolveIsin404RaisesNotFound(): void
+    {
+        $this->queue([new Response(404)]);
+
+        $this->expectException(NotFound::class);
+        $this->adapter()->resolveIsin('999999');
+    }
+
+    public function testResolveIsinBlankIsinRaisesSchemaMismatchAndWarns(): void
+    {
+        $this->queue([$this->json(['isin' => '   '])]);
+
+        try {
+            $this->adapter()->resolveIsin('5479');
+            self::fail('expected SchemaMismatch');
+        } catch (SchemaMismatch $e) {
+            self::assertStringContainsString('isin', $e->getMessage());
+        }
+
+        self::assertNotSame([], $this->logger->warnings);
+    }
+
+    public function testResolveIsinMissingIsinRaisesSchemaMismatch(): void
+    {
+        $this->queue([$this->json(['name' => 'Ericsson B'])]);
+
+        $this->expectException(SchemaMismatch::class);
+        $this->adapter()->resolveIsin('5479');
+    }
+
+    public function testResolveIsinRetriesOnceAfter429ThenSucceeds(): void
+    {
+        $this->queue([new Response(429), $this->json(['isin' => 'SE0000108656'])]);
+
+        self::assertSame('SE0000108656', $this->adapter()->resolveIsin('5479'));
+        $this->assertQueueDrained();
+    }
+
+    public function testResolveIsinRaisesTransientWhenTheRetryAlsoFails(): void
+    {
+        $this->queue([new Response(429), new Response(503)]);
+
+        $this->expectException(Transient::class);
+        $this->adapter()->resolveIsin('5479');
     }
 
     public function testPaginationOverflowRaisesSchemaMismatch(): void

@@ -15,9 +15,9 @@ use Stockpicker\Store\RunRepository;
  * a run date (AD-5). The only creator of `pending` rows.
  *
  * Idempotent per `(isin, run_date)`: a second call for the same date inserts
- * nothing and changes no existing row. In Epic 1 the universe is every
- * `InstrumentRepository::all()` row (the seed list); `last_seen` filtering is
- * Epic 2.
+ * nothing and changes no existing row. The universe is every active instrument
+ * (`InstrumentRepository::allActive()`, i.e. `last_seen IS NULL`) — a delisting
+ * from `UniverseSync` drops out of the nightly path immediately.
  *
  * Every `run()` appends one `enqueue` row to `ingest_run` via `RunRepository`
  * (AD-11) — including a re-run that creates nothing, because the run still
@@ -41,7 +41,7 @@ final class Enqueue
     {
         $startedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 
-        $universe = array_keys($this->instruments->all());
+        $universe = array_keys($this->instruments->allActive());
         $created = 0;
 
         foreach ($universe as $isin) {

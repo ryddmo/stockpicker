@@ -70,3 +70,16 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-avanza-universumadapter.md`
   summary: `bin/list-universe.php` is not documented in `docs/deploy.md` (its sibling `bin/resolve-ids.php` is).
   evidence: Story 2.1 review. Add a one-line entry to the deploy runbook's SSH-scripts section; pairs naturally with the Story 2.2 `docs/deploy.md` updates already deferred.
+
+## Deferred from: review pass 1 of story-2.2 (UniverseSync v2, 2026-09-10)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-universesync-daglig-avstamning-2.md`
+  summary: `ingest_run` semantics for `run_type='universe_sync'` rows overload `ok_count`/`fail_count` (a healthy index-review delisting of 30 names shows `fail_count=30`), and `changed` / `reactivated` / `ids_resolved` / `ids_failed` / `deferred` live only in a Monolog `info` line — convergence progress and churn history are not queryable. `universe.resolve_timebox`'s default (45) also lives only in `public_html/index.php`'s helper, not alongside `UniverseSync::DEFAULTS`.
+  evidence: Story 2.2 frozen "Never" defers all run-log enrichment (per-source counts, columns, alarm flag) to Story 2.6; the epic AC asks for added/removed/changed "in `ingest_run` (or a dedicated row)". Story 2.6 should give `universe_sync` runs a queryable churn breakdown (dedicated columns or a companion row) and reconsider the ok/fail overload; while there, consolidate the timebox default.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-universesync-daglig-avstamning-2.md`
+  summary: `EndpointFixture` has no canned Nordnet source, so `UniverseSync`'s step-5 Nordnet id-resolution pass — and a full new-instrument `/cron/refill` end-to-end (resolveIsin → insert → cacheAvanzaId → Nordnet lookup) — cannot be integration-tested without a live nordnet.se call.
+  evidence: Story 2.2 review pass 2. The Avanza universe seam (`STOCKPICKER_AVANZA_UNIVERSE_BASE_URI` + a canned `php -S` router) was added; Nordnet was left out of scope. A future test-hardening pass should give `NordnetAdapter` the same base-URI override and add a second canned router so the new-instrument path is covered end to end.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-universesync-daglig-avstamning-2.md`
+  summary: `instrument.avanza_orderbook_id` has no `UNIQUE` index, yet the entire `UniverseSync` reconciliation pivots on matching by that column and `setAvanzaId()` is an unconditional writer — two rows could end up sharing one orderbook id, and `$storedByObId` would then keep only one.
+  evidence: Story 2.2 review pass 2; the frozen "Never: no migration" blocked the safeguard in this story. Add a unique index in a hardening story (the column is nullable, so multiple NULLs remain allowed).

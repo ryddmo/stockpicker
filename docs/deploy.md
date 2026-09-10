@@ -107,8 +107,15 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
 
    | Path | Periodicity | Purpose |
    |---|---|---|
-   | `https://stockpicker.ryddmo.se/cron/refill?token=…` | **Varje timme** (hourly) | `Enqueue` (seed list in Epic 1) |
+   | `https://stockpicker.ryddmo.se/cron/refill?token=…` | **Varje timme** (hourly) | `UniverseSync` (reconcile `instrument` against the live Avanza listing, timeboxed by `universe.resolve_timebox`) then `Enqueue` over the active universe |
    | `https://stockpicker.ryddmo.se/cron/work?token=…` | **Var femte minut** | `FetchRunner`, one 75 s time-boxed slice |
+
+   A `/cron/refill` whose `UniverseSync` step fails — the Avanza listing is
+   unreachable / changed shape, or the run would delist more than
+   `universe.max_delist` names — returns HTTP 200 `{"status":"universe_sync_failed"}`,
+   writes **nothing**, and does **not** run `Enqueue`. The next hourly call retries,
+   so the loss is bounded to ≤ 1 h. A legitimate delisting larger than the cap
+   needs a one-run operator bump of `universe.max_delist` (see settings below).
 
    **Both endpoints are gated by `settings.run_after`** (default `18:30` Europe/Stockholm)
    — Story 1.9 design. A `/cron/refill` *before* 18:30 returns `window_closed` and
@@ -180,21 +187,41 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
 
 ### D. First deploy only — data bootstrap
 
-`/cron/refill` in Epic 1 runs only `Enqueue`; it does **not** populate the `instrument`
-table or the cached source ids. After the first `bin/deploy.sh` (so `vendor/` and the
-schema exist), run once over SSH:
+From Epic 2 Story 2.2 the nightly `/cron/refill` reconciles the whole `instrument`
+table against the live Avanza listing (`UniverseSync`), but its HTTP work is
+wall-clock-timeboxed (`universe.resolve_timebox`, default 45 s per pass) so a
+cold table converges over roughly **two weeks** of hourly passes. To finish it in
+one sitting, run the un-timeboxed bootstrap once over SSH after the first
+`bin/deploy.sh` (so `vendor/` and the schema exist):
 
 ```sh
 cd ~/stockpicker.ryddmo.se
-php bin/seed-instruments.php     # loads InstrumentSeeder::LIST → "20 inserted, 0 unchanged"
-php bin/resolve-ids.php          # resolves Avanza/Nordnet ids (live calls) → "36 resolved, 0 skipped, 4 failed"
+php bin/universe-sync.php   # full reconcile, NO timebox — resolves every ISIN + Nordnet id in one pass
 ```
 
-`resolve-ids` is idempotent and never overwrites a resolved id, so it is safe to re-run.
-On 2026-09-10 it left three large caps unresolved on the scraped endpoints (Handelsbanken A
-+ Nordea on Avanza, Epiroc A on both) — all `NotFound`, not `SchemaMismatch`; the ISINs
-are correct. `FetchRunner` skips a null-id source with a warning, so the pipe tolerates it.
-Proper symbology lands with Epic 2 Story 2.1 (Börsdata). See `deferred-work.md`.
+Expect **~45–50 min** for the full universe (~740 names, each costing one
+`market-guide` call for its ISIN plus a Nordnet id lookup, strictly serial and
+spaced by `settings.rate.avanza` / `settings.rate.nordnet`). It prints the churn
+counts (`added / removed / changed / reactivated / ids resolved / ids failed /
+deferred / active`) and writes one `run_type='universe_sync'` `ingest_run` row.
+Idempotent and safe to re-run; check progress with `php bin/show-runs.php` and
+`php bin/list-universe.php` (a read-only spot-check of the live listing).
+
+`bin/seed-instruments.php` still loads the small `InstrumentSeeder::LIST` dev
+universe for **local** development. On production those seed rows (and any row
+whose `avanza_orderbook_id` is still NULL) are **not** delisted by the first real
+`UniverseSync` — they are adopted once their resolved ISIN matches a listing
+entry, and otherwise linger active until then.
+
+`bin/resolve-ids.php` is **legacy / dev-only** now: `UniverseSync` owns Avanza-id
+caching (the id comes straight from the listing) and re-attempts every missing
+Nordnet id each run. For a name whose Nordnet ISIN search keeps failing
+(Handelsbanken A, Nordea, Epiroc A are the known ones), re-running `resolve-ids`
+just repeats a call `UniverseSync` already logged — hand-cache it instead:
+
+```sh
+mysql … -e "UPDATE instrument SET nordnet_instrument_id = '<nnx-uuid>' WHERE isin = '<isin>'"
+```
 
 ---
 
@@ -286,6 +313,16 @@ The five migrations in `db/migrations/`, in order:
 
 `owner_count_daily` and `ingest_run` are append-only (NFR7) and are never rolled back.
 
+**Optional `settings` keys (no migration seeds them — absent → the built-in default):**
+
+| Key | Default | Effect |
+|---|---|---|
+| `universe.resolve_timebox` | `45` (seconds) | wall-clock budget for `UniverseSync`'s two HTTP passes (ISIN + Nordnet id) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed. |
+| `universe.max_delist` | `25` | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
+
+A present-but-unusable value (non-numeric, zero, negative) is ignored with one
+`warning` and the default is used — same rule as `batch_size` / `rate.*`.
+
 ---
 
 ## Verifying a deploy
@@ -317,6 +354,12 @@ Then check `ingest_run` for a fresh row:
 ```sh
 ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && php bin/show-runs.php'
 ```
+
+Note: a `universe_sync` `ingest_run` row is read differently from `fetch` /
+`enqueue` rows — its `ok_count` is additions (incl. reactivations) and its
+`fail_count` is **delistings**, not failures. The `changed` / `reactivated` /
+`ids_resolved` / `ids_failed` / `deferred` breakdown is in the `universe sync
+complete` log line (a queryable churn breakdown is Story 2.6).
 
 ---
 
@@ -351,6 +394,7 @@ There is no automated rollback. Options, simplest first:
 | 400 on a cron call | a query parameter other than `token` is present — the endpoints accept `token` and nothing else |
 | `/cron/work` returns `window_closed` | `settings.run_after` is later than now (Europe/Stockholm) — expected outside the run window |
 | `/cron/refill` created nothing all evening | scheduled before `run_after` (18:30) — it returns `window_closed` and enqueues nothing. Run it hourly, not at 00:00 |
+| `/cron/refill` returns `{"status":"universe_sync_failed"}` | the Avanza listing was unreachable / changed shape, or the run would delist > `universe.max_delist` names. No rows changed, `Enqueue` skipped. Check the log `warning`/`error` line; the next hourly call retries. A genuine large delisting needs a one-run `universe.max_delist` bump |
 | `deploy: cannot reach 'loopia-stockpicker'` | SSH alias/key wrong, or SSH not enabled in Kundzon — the preflight aborted before rsync |
 | Migrations fail with access denied | wrong `db.user` (copy the `@…`-suffixed string verbatim from Kundzon), wrong password, or DB user lacks rights |
 | `composer` not found over SSH | use `php composer.phar …`, or deploy with `--with-local-vendor` |

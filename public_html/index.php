@@ -11,17 +11,22 @@ use Monolog\Level;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Stockpicker\Adapter\AvanzaAdapter;
+use Stockpicker\Adapter\AvanzaUniverseAdapter;
 use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Config;
+use Stockpicker\Error\AdapterError;
 use Stockpicker\Logging;
 use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
+use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
 use Stockpicker\Store\InstrumentRepository;
 use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+
+require_once __DIR__ . '/cron_helpers.php';
 
 /** @var array{config: Config, logger: Logger} $services */
 try {
@@ -89,6 +94,29 @@ try {
             $runs = new RunRepository($pdo);
 
             if ($path === '/cron/refill') {
+                $http = new Client(['timeout' => 20, 'connect_timeout' => 10]);
+                $sync = new UniverseSync(
+                    new AvanzaUniverseAdapter($http, $logger),
+                    new NordnetAdapter($http, $logger),
+                    $instruments,
+                    $settings,
+                    $runs,
+                    $logger,
+                );
+
+                try {
+                    $sync->run($runDate, universe_resolve_timebox($settings->get('universe.resolve_timebox')));
+                } catch (AdapterError $e) {
+                    // UniverseSync already logged the cause at warning/error; just
+                    // note the endpoint outcome and skip Enqueue.
+                    $logger->debug('cron/refill: universe sync failed, skipping enqueue', ['error' => $e::class]);
+                    send_json(200, [
+                        'status' => 'universe_sync_failed',
+                        'run_date' => $runDate,
+                    ]);
+                    break;
+                }
+
                 $created = (new Enqueue($queue, $instruments, $runs))->run($runDate);
                 send_json(200, [
                     'status' => 'ok',
