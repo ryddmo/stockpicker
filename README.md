@@ -14,7 +14,7 @@ architecture spine under `_bmad-output/planning-artifacts/architecture/`.
 ```
 public_html/     thin front controller (index.php) + .htaccess — subdomain docroot
 src/
-  Adapter/       SourceAdapter + BorsdataAdapter, AvanzaAdapter, NordnetAdapter
+  Adapter/       SourceAdapter + AvanzaAdapter, NordnetAdapter, AvanzaUniverseAdapter
   Pipeline/      UniverseSync, Enqueue, FetchRunner, Normalizer, Deriver
   Store/         PDO repositories — the only path to the database
   Error/         SchemaMismatch, NotFound, Transient

@@ -4,10 +4,10 @@ type: architecture-spine
 purpose: build-substrate
 altitude: feature
 paradigm: 'pipes-and-filters med ports-and-adapters för källor'
-scope: 'Stockpicker v1 — nattlig datainsamlingsmotor: universum från Börsdata, ägarantal från Avanza och Nordnet, tidsserielagring och härledda mått'
+scope: 'Stockpicker v1 — nattlig datainsamlingsmotor: universum från Avanzas listning, ägarantal från Avanza och Nordnet, tidsserielagring och härledda mått'
 status: final
 created: '2026-09-08'
-updated: '2026-09-08'
+updated: '2026-09-10'
 binds: [K1, K1b, K2, K3, K4, K5, K6, K7, K8, K9, K10, K11, K12]
 sources:
   - '../briefs/brief-stockpicker-2026-09-08/brief.md'
@@ -16,6 +16,10 @@ companions: []
 ---
 
 # Architecture Spine — Stockpicker
+
+> _2026-09-10: universumkällan bytt Börsdata → Avanzas publika listning (Börsdatas API
+> kräver betald Pro). `BorsdataAdapter` → `AvanzaUniverseAdapter`. Se
+> `sprint-change-proposal-2026-09-10.md`._
 
 ## Design Paradigm
 
@@ -27,9 +31,10 @@ Nattkörningen är en kedja av filter med tydligt in/ut-kontrakt mellan varje st
 universe-sync → enqueue → fetch → normalize → upsert → derive
 ```
 
-Varje extern källa (Börsdata, Avanza, Nordnet) når systemet bara genom en adapter
-bakom `SourceAdapter`-porten. Pipeline-kärnan känner aldrig HTTP, endpoint-vägar eller
-källspecifika fältnamn.
+Varje extern källa (Avanza, Nordnet) når systemet bara genom en adapter i `src/Adapter/`
+— ägarsiffror bakom `SourceAdapter`-porten, universumlistningen genom en egen
+adapterklass. Pipeline-kärnan känner aldrig HTTP, endpoint-vägar eller källspecifika
+fältnamn.
 
 Lagermappning:
 
@@ -37,7 +42,7 @@ Lagermappning:
 | --- | --- | --- |
 | Front controller | `public_html/` | Tar emot cron-anrop, autentiserar token, startar pipeline-steg. Ingen affärslogik. |
 | Pipeline | `src/Pipeline/` | Filtren: `UniverseSync`, `Enqueue`, `FetchRunner`, `Normalizer`, `Deriver`. |
-| Adapter | `src/Adapter/` | `SourceAdapter`-interface + `BorsdataAdapter`, `AvanzaAdapter`, `NordnetAdapter`. |
+| Adapter | `src/Adapter/` | `SourceAdapter`-interface + `AvanzaAdapter`, `NordnetAdapter`; universumadaptern `AvanzaUniverseAdapter` (egen klass). |
 | Store | `src/Store/` | PDO-repositories. Enda vägen till databasen. |
 
 ## Invariants & Rules
@@ -48,7 +53,7 @@ graph TD
     P --> A[Adapter]
     P --> S[Store]
     A --> S
-    A -.->|HTTP| EXT[Börsdata / Avanza / Nordnet]
+    A -.->|HTTP| EXT[Avanza / Nordnet]
     S --> DB[(MariaDB)]
 ```
 
@@ -78,8 +83,9 @@ Inget lager beror uppåt. Store beror inte på pipeline eller adapter.
 
 - **Binds:** `instrument`, `owner_count_daily`, `Deriver`
 - **Prevents:** dubbla skribenter på samma rad och kapplöpning mellan källor.
-- **Rule:** `instrument`-tabellen skrivs bara av `UniverseSync` (via `BorsdataAdapter`) —
-  inklusive uppslag och cachning av Avanza `orderbookId` och Nordnet `nnx_instrument_id`.
+- **Rule:** `instrument`-tabellen skrivs bara av `UniverseSync` (via
+  `AvanzaUniverseAdapter`) — inklusive cachning av Avanza `orderbookId` (ur listningen)
+  och uppslag + cachning av Nordnet `nnx_instrument_id`.
   `FetchRunner` slår aldrig upp ett saknat id lat; ett instrument utan id hoppas över och
   loggas tills nästa `UniverseSync`. `owner_count_daily` är källindelad —
   `AvanzaAdapter`-flödet skriver bara rader med `source = 'avanza'`, Nordnet bara sina.
@@ -160,7 +166,7 @@ Inget lager beror uppåt. Store beror inte på pipeline eller adapter.
 
 | Concern | Convention |
 | --- | --- |
-| Adapternamn | `<Källa>Adapter` i `src/Adapter/`, implementerar `SourceAdapter` |
+| Adapternamn | `<Källa>Adapter` i `src/Adapter/`; ägaradaptrar implementerar `SourceAdapter`, universumadaptern (`AvanzaUniverseAdapter`) är en egen klass med `listUniverse()` |
 | Pipeline-steg | Verb-substantiv-klass i `src/Pipeline/` (`UniverseSync`, `FetchRunner`) |
 | Tabeller & kolumner | `snake_case`, singular tabellnamn (`instrument`, `owner_count_daily`, `work_queue`, `ingest_run`, `settings`) |
 | Instrumentidentitet | ISIN är naturlig nyckel överallt; Avanza/Nordnet-id är cachade attribut på `instrument` |
@@ -189,7 +195,7 @@ stockpicker/
   public_html/
     index.php          # front controller: /cron/refill, /cron/work, (senare) UI
   src/
-    Adapter/           # SourceAdapter, BorsdataAdapter, AvanzaAdapter, NordnetAdapter
+    Adapter/           # SourceAdapter, AvanzaAdapter, NordnetAdapter, AvanzaUniverseAdapter
     Pipeline/          # UniverseSync, Enqueue, FetchRunner, Normalizer, Deriver
     Store/             # InstrumentRepository, OwnerCountRepository, QueueRepository, RunRepository, SettingsRepository
     Error/             # SchemaMismatch, NotFound, Transient
@@ -278,7 +284,7 @@ URL-cronens exekveringstidsgräns och minsta intervall.
 
 | Krav | Lever i | Styrs av |
 | --- | --- | --- |
-| K1 Universum (Börsdata) | `BorsdataAdapter`, `UniverseSync` | AD-1, AD-3 |
+| K1 Universum (Avanza-listning) | `AvanzaUniverseAdapter`, `UniverseSync` | AD-1, AD-3 |
 | K1b Daglig universumavstämning | `UniverseSync`, `Enqueue` | AD-3, AD-11 |
 | K2 Daglig hämtning | `FetchRunner`, käll-adaptrar | AD-1, AD-2, AD-5 |
 | K3 Konfigurerbar körtid | `settings`-tabell, front controller | AD-8 |

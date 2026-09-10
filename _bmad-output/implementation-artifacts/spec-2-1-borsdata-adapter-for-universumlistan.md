@@ -10,6 +10,13 @@ context:
   - _bmad-output/implementation-artifacts/epic-2-context.md
 ---
 
+> **SUPERSEDED 2026-09-10.** Börsdata's API requires a paid Pro subscription (no free
+> tier), so this adapter never went to production. Replaced by Story 2.1 v2 —
+> `AvanzaUniverseAdapter`. `UniverseEntry` (source-agnostic) is carried forward; the
+> `BorsdataAdapter`, `Config::borsdataApiKey()`, `config.php.dist` borsdata section,
+> `bin/show-universe.php`, and the two Börsdata test files are removed by the v2 build.
+> See `../planning-artifacts/sprint-change-proposal-2026-09-10.md`.
+
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
 
 ## Intent
