@@ -105,6 +105,22 @@ final class FetchRunnerTest extends StoreTestCase
         ));
     }
 
+    /**
+     * The context of the single `fetchrunner: slice complete` info line.
+     *
+     * @return array<string, mixed>
+     */
+    private function sliceCompleteContext(): array
+    {
+        foreach ($this->logHandler->getRecords() as $record) {
+            if ($record['message'] === 'fetchrunner: slice complete') {
+                return $record['context'];
+            }
+        }
+
+        self::fail('no "fetchrunner: slice complete" info line was logged');
+    }
+
     private function row(string $source, string $isin, int $owners, ?DateTimeImmutable $sourceTs = null): NormalizedRow
     {
         return new NormalizedRow(
@@ -303,6 +319,18 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame($result->claimed, $log[0]->instrumentCount);
         self::assertSame($result->done, $log[0]->okCount);
         self::assertSame($result->failed, $log[0]->failCount);
+
+        // The `slice complete` info line fires exactly once on the timebox-break
+        // path too, with `by_source` reflecting only the jobs that actually ran.
+        $sliceCompleteLines = array_filter(
+            $this->logHandler->getRecords(),
+            static fn ($r): bool => $r['message'] === 'fetchrunner: slice complete',
+        );
+        self::assertCount(1, $sliceCompleteLines);
+        $context = $this->sliceCompleteContext();
+        self::assertSame($result->bySource, $context['by_source']);
+        self::assertSame($result->done, $result->bySource['avanza']['ok']);
+        self::assertSame($result->done, $result->bySource['nordnet']['ok']);
     }
 
     public function testStaleClaimedRowIsReopenedAtSliceStartThenClaimed(): void
@@ -443,6 +471,11 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(1, $result->done);
         self::assertTrue($this->logHandler->hasErrorThatContains('unexpected error handling job'));
 
+        // Job 1's raw \RuntimeException from fetch() matched no typed catch and
+        // incremented no bucket; only job 2's success shows for either source.
+        self::assertSame(['ok' => 1, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0], $result->bySource['avanza']);
+        self::assertSame(['ok' => 1, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0], $result->bySource['nordnet']);
+
         $run = (new RunRepository($this->pdo))->recent()[0];
         self::assertSame('fetch', $run->runType);
         self::assertSame(2, $run->instrumentCount);
@@ -509,6 +542,186 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(2, $result->claimed);
         self::assertSame([2.0, 2.0], $this->waits);
         self::assertTrue($this->logHandler->hasWarningThatContains('unusable setting value'));
+    }
+
+    public function testASourceDownForTheWholeSliceStillLandsTheOtherSourceForEveryJob(): void
+    {
+        $isins = ['SE0000000001', 'SE0000000002', 'SE0000000003'];
+        $this->seedInstruments(array_map(
+            static fn (string $i): array => [$i, 'a-' . $i, 'nx-' . $i],
+            $isins,
+        ));
+        $this->enqueueAll();
+        $ts = new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'));
+        foreach ($isins as $i => $isin) {
+            $this->avanza->fetchResponses[] = new \Stockpicker\Error\Transient('avanza: HTTP 503');
+            $this->nordnet->fetchResponses[] = $this->row('nordnet', $isin, 2000 + $i, $ts);
+        }
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        foreach ($isins as $isin) {
+            self::assertSame('pending', $this->queueStatus($isin), 'every job reopened by the transient source');
+        }
+        self::assertSame(3, $this->ownerRowCount(), 'every nordnet row is written despite avanza being down');
+        self::assertSame(['SE0000000001', 'SE0000000002', 'SE0000000003'], $this->nordnet->fetchCalls);
+        self::assertSame(3, $result->claimed);
+        self::assertSame(0, $result->done);
+        self::assertSame(3, $result->reopened);
+        self::assertSame(0, $result->failed);
+        self::assertSame(
+            ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 3],
+            $result->bySource['avanza'],
+        );
+        self::assertSame(
+            ['ok' => 3, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
+            $result->bySource['nordnet'],
+        );
+        self::assertSame($result->bySource, $this->sliceCompleteContext()['by_source']);
+    }
+
+    public function testBothSourcesTransientForOneJobReopensItWithNoRowAndCountsEachBucket(): void
+    {
+        $this->seedInstruments([['SE0000000001', 'a-1', 'nx-1']]);
+        $this->enqueueAll();
+        $this->avanza->fetchResponses = [new \Stockpicker\Error\Transient('avanza: HTTP 503')];
+        $this->nordnet->fetchResponses = [new \Stockpicker\Error\Transient('nordnet: HTTP 503')];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame('pending', $this->queueStatus('SE0000000001'));
+        self::assertSame(0, $this->ownerRowCount(), 'no row written for the job');
+        self::assertSame(['SE0000000001'], $this->nordnet->fetchCalls, 'the second source is still attempted');
+        self::assertSame(1, $result->reopened);
+        self::assertSame(0, $result->done);
+        self::assertSame(0, $result->failed);
+        $transientOnly = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 1];
+        self::assertSame($transientOnly, $result->bySource['avanza']);
+        self::assertSame($transientOnly, $result->bySource['nordnet']);
+    }
+
+    public function testSchemaMismatchAndNotFoundLandInSeparateBuckets(): void
+    {
+        $this->seedInstruments([
+            ['SE0000000001', 'a-1', 'nx-1'],
+            ['SE0000000002', 'a-2', 'nx-2'],
+        ]);
+        $this->enqueueAll();
+        $ts = new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'));
+        // job 1: avanza SchemaMismatch, nordnet ok. job 2: avanza NotFound, nordnet ok.
+        $this->avanza->fetchResponses = [
+            new \Stockpicker\Error\SchemaMismatch('avanza: field gone'),
+            new \Stockpicker\Error\NotFound('avanza: stale id'),
+        ];
+        $this->nordnet->fetchResponses = [
+            $this->row('nordnet', 'SE0000000001', 2000, $ts),
+            $this->row('nordnet', 'SE0000000002', 2100, $ts),
+        ];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame('failed', $this->queueStatus('SE0000000001'));
+        self::assertSame('failed', $this->queueStatus('SE0000000002'));
+        self::assertSame(2, $this->ownerRowCount(), 'the working source is still stored for both jobs');
+        self::assertSame(2, $result->failed);
+        self::assertSame(
+            ['ok' => 0, 'not_found' => 1, 'schema_mismatch' => 1, 'transient' => 0],
+            $result->bySource['avanza'],
+        );
+        self::assertSame(
+            ['ok' => 2, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
+            $result->bySource['nordnet'],
+        );
+    }
+
+    public function testTransientFromOneSourceAndNotFoundFromTheOtherOnTheSameJob(): void
+    {
+        // Reachable only now the `break` on Transient is gone: both sources are
+        // attempted, one is transient and one is a hard miss.
+        $this->seedInstruments([['SE0000000001', 'a-1', 'nx-1']]);
+        $this->enqueueAll();
+        $this->avanza->fetchResponses = [new \Stockpicker\Error\Transient('avanza: HTTP 503')];
+        $this->nordnet->fetchResponses = [new \Stockpicker\Error\NotFound('nordnet: stale id')];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        // Any Transient wins the job-state precedence: reopened, not failed.
+        self::assertSame('pending', $this->queueStatus('SE0000000001'));
+        self::assertSame(1, $result->reopened);
+        self::assertSame(0, $result->failed);
+        self::assertSame(0, $result->done);
+        self::assertSame(1, $result->bySource['avanza']['transient']);
+        self::assertSame(1, $result->bySource['nordnet']['not_found']);
+        self::assertSame(0, $result->bySource['avanza']['not_found']);
+        self::assertSame(0, $result->bySource['nordnet']['transient']);
+    }
+
+    public function testOneNotFoundMidSliceLeavesEarlierJobsDoneAndSplitsTheBuckets(): void
+    {
+        // I/O matrix row 1: job 1 both ok -> done; job 2 avanza NotFound,
+        // nordnet ok -> failed (nordnet row still written).
+        $this->seedInstruments([
+            ['SE0000000001', 'a-1', 'nx-1'],
+            ['SE0000000002', 'a-2', 'nx-2'],
+        ]);
+        $this->enqueueAll();
+        $ts = new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'));
+        $this->avanza->fetchResponses = [
+            $this->row('avanza', 'SE0000000001', 1000),
+            new \Stockpicker\Error\NotFound('avanza: stale id'),
+        ];
+        $this->nordnet->fetchResponses = [
+            $this->row('nordnet', 'SE0000000001', 2000, $ts),
+            $this->row('nordnet', 'SE0000000002', 2100, $ts),
+        ];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame('done', $this->queueStatus('SE0000000001'));
+        self::assertSame('failed', $this->queueStatus('SE0000000002'));
+        self::assertSame(3, $this->ownerRowCount(), 'job 2 nordnet row is still written');
+        self::assertSame(1, $result->done);
+        self::assertSame(1, $result->failed);
+        self::assertSame(
+            ['ok' => 1, 'not_found' => 1, 'schema_mismatch' => 0, 'transient' => 0],
+            $result->bySource['avanza'],
+        );
+        self::assertSame(
+            ['ok' => 2, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
+            $result->bySource['nordnet'],
+        );
+    }
+
+    public function testCleanSliceLogsSliceCompleteWithTheFullBreakdown(): void
+    {
+        $this->seedInstruments([['SE0000000001', '5479', 'nx-1']]);
+        $this->enqueueAll();
+        $this->avanza->fetchResponses = [$this->row('avanza', 'SE0000000001', 1000)];
+        $this->nordnet->fetchResponses = [
+            $this->row('nordnet', 'SE0000000001', 2000, new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'))),
+        ];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame(['ok' => 1, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0], $result->bySource['avanza']);
+        self::assertSame(['ok' => 1, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0], $result->bySource['nordnet']);
+
+        $context = $this->sliceCompleteContext();
+        self::assertSame(self::RUN_DATE, $context['run_date']);
+        self::assertSame($result->bySource, $context['by_source']);
+        self::assertSame(1, $context['claimed']);
+        self::assertSame(1, $context['done']);
+        self::assertSame(0, $context['failed']);
+        self::assertSame(0, $context['reopened']);
+    }
+
+    public function testEmptyQueueStillLogsSliceCompleteWithAllZeroBuckets(): void
+    {
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        $zero = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+        self::assertSame(['avanza' => $zero, 'nordnet' => $zero], $result->bySource);
+        self::assertSame(['avanza' => $zero, 'nordnet' => $zero], $this->sliceCompleteContext()['by_source']);
     }
 
     public function testPeakMemoryStaysWellUnderTheWebPhpLimitForAFullBatch(): void

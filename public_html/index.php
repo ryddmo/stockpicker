@@ -148,6 +148,7 @@ try {
                 'failed' => $result->failed,
                 'reopened' => $result->reopened,
                 'rows_written' => $result->rowsWritten,
+                'by_source' => $result->bySource,
             ]);
             break;
 
