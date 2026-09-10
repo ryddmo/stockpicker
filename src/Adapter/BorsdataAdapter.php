@@ -92,7 +92,18 @@ final class BorsdataAdapter
 
         $out = [];
         $typesOnTargetMarkets = [];
-        foreach ($this->instruments() as $raw) {
+        $dropped = ['non_object' => 0, 'bad_isin' => 0, 'empty_name' => 0];
+        foreach ($this->instruments() as $i => $raw) {
+            if (!is_array($raw)) {
+                ++$dropped['non_object'];
+                $this->logger->warning('borsdata: dropping non-object entry in /v1/instruments', [
+                    'index' => $i,
+                    'type' => get_debug_type($raw),
+                ]);
+
+                continue;
+            }
+
             $marketId = $raw['marketId'] ?? null;
             $label = (is_int($marketId) || is_string($marketId)) ? ($labels[(string) $marketId] ?? null) : null;
             if ($label === null) {
@@ -110,6 +121,7 @@ final class BorsdataAdapter
 
             $isin = $raw['isin'] ?? null;
             if (!is_string($isin) || !preg_match('/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/', $isin)) {
+                ++$dropped['bad_isin'];
                 $this->logger->warning('borsdata: dropping instrument with blank/malformed isin', [
                     'insId' => $raw['insId'] ?? null,
                     'name' => $raw['name'] ?? null,
@@ -121,6 +133,7 @@ final class BorsdataAdapter
 
             $name = $raw['name'] ?? null;
             if (!is_string($name) || trim($name) === '') {
+                ++$dropped['empty_name'];
                 $this->logger->warning('borsdata: dropping instrument with empty name', [
                     'insId' => $raw['insId'] ?? null,
                     'isin' => $isin,
@@ -148,6 +161,7 @@ final class BorsdataAdapter
             'kept_instrument_types' => self::EQUITY_TYPE_IDS,
             'types_on_target_markets' => $typesOnTargetMarkets,
             'counts' => $counts,
+            'dropped' => $dropped,
             'total' => count($out),
         ]);
 
@@ -233,7 +247,11 @@ final class BorsdataAdapter
     }
 
     /**
-     * @return list<array<mixed>> the `instruments` array
+     * The raw `instruments` array from `/v1/instruments`. Per-element validation
+     * (non-object rows, then market / type / isin / name) happens in
+     * buildUniverse() so all drop accounting lives in one place.
+     *
+     * @return list<mixed>
      */
     private function instruments(): array
     {
@@ -246,20 +264,6 @@ final class BorsdataAdapter
             throw new SchemaMismatch('borsdata /v1/instruments: "instruments" missing or not a list');
         }
 
-        $rows = [];
-        foreach ($instruments as $i => $instrument) {
-            if (is_array($instrument)) {
-                $rows[] = $instrument;
-
-                continue;
-            }
-
-            $this->logger->warning('borsdata: dropping non-object entry in /v1/instruments', [
-                'index' => $i,
-                'type' => get_debug_type($instrument),
-            ]);
-        }
-
-        return $rows;
+        return array_values($instruments);
     }
 }

@@ -113,6 +113,45 @@ final class BorsdataAdapterTest extends AdapterTestCase
         $this->assertQueueDrained();
     }
 
+    // --- Verification aid: the `borsdata: universe built` info record --------
+
+    public function testLogsTheUniverseBuiltInfoRecordWithTheMarketMapTypesCountsAndDrops(): void
+    {
+        $handler = new TestHandler();
+        $this->queue([
+            $this->json($this->markets()),
+            $this->json($this->instruments([
+                $this->rawInstrument(['isin' => 'SE0015811963', 'instrument' => 0, 'marketId' => 7]),  // kept: LC
+                $this->rawInstrument(['isin' => 'SE0011844091', 'instrument' => 1, 'marketId' => 8]),  // kept: MC (pref)
+                $this->rawInstrument(['isin' => 'SE0000000002', 'instrument' => 3, 'marketId' => 9]),  // excluded type on a target market
+                $this->rawInstrument(['isin' => 'bad', 'instrument' => 0, 'marketId' => 1]),           // dropped: malformed isin
+            ])),
+        ]);
+
+        $this->adapter($handler)->listUniverse();
+
+        $built = null;
+        foreach ($handler->getRecords() as $record) {
+            if ($record->message === 'borsdata: universe built') {
+                $built = $record->context;
+            }
+        }
+
+        self::assertNotNull($built, 'expected a "borsdata: universe built" info record');
+        self::assertSame(
+            ['1' => UniverseEntry::LIST_FIRST_NORTH, '7' => UniverseEntry::LIST_LC, '8' => UniverseEntry::LIST_MC, '9' => UniverseEntry::LIST_SC],
+            $built['markets'],
+        );
+        self::assertContains(3, $built['types_on_target_markets'], 'the excluded type id must still be reported');
+        self::assertSame(['LC' => 1, 'MC' => 1], [
+            'LC' => $built['counts'][UniverseEntry::LIST_LC] ?? 0,
+            'MC' => $built['counts'][UniverseEntry::LIST_MC] ?? 0,
+        ]);
+        self::assertSame(1, $built['dropped']['bad_isin']);
+        self::assertSame(0, $built['dropped']['non_object']);
+        $this->assertQueueDrained();
+    }
+
     // --- Row 2: non-target market --------------------------------------------
 
     public function testExcludesNonTargetMarketsAndNonEquityTypesSilently(): void
