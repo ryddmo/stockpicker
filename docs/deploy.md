@@ -343,6 +343,13 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/cron/wor
 
 # a real slice (before run_after → "window_closed"; after → does work)
 curl -sS "https://stockpicker.ryddmo.se/cron/work?token=<real>"
+# after run_after, expect e.g.:
+# {"status":"ok","run_date":"2026-09-10","claimed":20,"done":18,"failed":1,"reopened":1,
+#  "rows_written":35,
+#  "by_source":{"avanza":{"ok":19,"not_found":1,"schema_mismatch":0,"transient":0},
+#               "nordnet":{"ok":18,"not_found":0,"schema_mismatch":0,"transient":1}}}
+# `by_source` is the per-source slice tally (Story 2.3): a non-zero `schema_mismatch`
+# means an endpoint changed shape; `transient` counts reopened-for-retry hits.
 ```
 
 If you can't verify from outside, prove the pipe over loopback on the server instead —

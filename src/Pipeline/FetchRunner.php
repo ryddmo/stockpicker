@@ -108,6 +108,14 @@ final class FetchRunner
         $rowsWritten = 0;
         $lastCalled = ['avanza' => false, 'nordnet' => false];
 
+        // Per-source slice tally, one bucket per source so a source that is
+        // never called still reports all-zero. Independent of the per-job
+        // done/failed/reopened counts.
+        $bySource = [];
+        foreach (array_keys(self::SOURCES) as $source) {
+            $bySource[$source] = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+        }
+
         foreach ($jobs as $index => $job) {
             if (microtime(true) - $start >= $timeboxSeconds) {
                 foreach (array_slice($jobs, $index) as $leftover) {
@@ -154,21 +162,27 @@ final class FetchRunner
 
                     try {
                         $row = $this->adapters[$source]->fetch($instrument);
+                        ++$bySource[$source]['ok'];
                         if ($this->ownerCounts->upsert($row, $job->runDate)) {
                             ++$rowsWritten;
                         }
                     } catch (Transient $e) {
+                        // A Transient from one source no longer skips the other
+                        // (Story 2.3): attempt every source with a cached id and
+                        // write whatever lands; the job is still reopened below.
                         $sawTransient = true;
+                        ++$bySource[$source]['transient'];
                         $this->logger->warning('fetchrunner: transient from source, job will be retried', [
                             'isin' => $instrument->isin,
                             'source' => $source,
                             'run_date' => $job->runDate,
                             'message' => $e->getMessage(),
                         ]);
-
-                        break;
                     } catch (NotFound | SchemaMismatch $e) {
+                        // SchemaMismatch is tallied separately from NotFound — it
+                        // is the endpoint-shape-changed signal Story 2.6 alarms on.
                         $failingSources[] = $source;
+                        ++$bySource[$source][$e instanceof SchemaMismatch ? 'schema_mismatch' : 'not_found'];
                         $this->logger->warning('fetchrunner: source failed for job', [
                             'isin' => $instrument->isin,
                             'source' => $source,
@@ -214,7 +228,17 @@ final class FetchRunner
             $failed,
         );
 
-        return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten);
+        $this->logger->info('fetchrunner: slice complete', [
+            'run_date' => $runDate,
+            'by_source' => $bySource,
+            'claimed' => $claimed,
+            'done' => $done,
+            'failed' => $failed,
+            'reopened' => $reopened,
+            'rows_written' => $rowsWritten,
+        ]);
+
+        return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten, $bySource);
     }
 
     private function intSetting(string $key): int
