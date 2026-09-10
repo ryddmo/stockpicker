@@ -7,15 +7,25 @@ there is no CI deploy.
 
 Domain: **`ryddmo.se`**, app subdomain **`stockpicker.ryddmo.se`**.
 
+**App root is `~/stockpicker.ryddmo.se/`.** When you add a subdomain in Kundzon,
+Loopia creates `~/<subdomain>/public_html/` and serves it from there; it does **not**
+let you re-point an existing subdomain at another directory ("Peka om" is not offered
+for a self-created subdomain). So the code lives in the subdomain-named folder, not a
+generic `~/stockpicker/`. `bin/deploy.sh` defaults `STOCKPICKER_REMOTE_DIR` accordingly.
+
 ```
-local checkout ──rsync -az --delete over SSH──▶ ~/stockpicker/ on Loopia
+local checkout ──rsync -az --delete over SSH──▶ ~/stockpicker.ryddmo.se/ on Loopia
                                                    │
                                                    ├─ composer install --no-dev   (on the server)
                                                    ├─ vendor/bin/phinx migrate     (manual, over SSH)
                                                    └─ public_html/  ◀── stockpicker.ryddmo.se docroot
-                                               config.php lives in ~/stockpicker/, above the
-                                               docroot, never in git
+                                               config.php lives in ~/stockpicker.ryddmo.se/,
+                                               above the docroot, never in git
 ```
+
+First production deploy completed **2026-09-10** — pipe proven end-to-end against the
+live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
+`owner_count_daily` rows written, 0 failed). Measured values are in "Open items" below.
 
 ---
 
@@ -30,21 +40,18 @@ local checkout ──rsync -az --delete over SSH──▶ ~/stockpicker/ on Loop
 | `composer` + `composer.phar` | present, `/usr/local/bin/` |
 | `php` | 8.5.9 CLI, `/usr/local/bin/php`, `memory_limit` 1024M |
 | PHP extensions | `pdo_mysql`, `curl`, `mbstring`, `json` loaded |
-| Home layout | one folder per domain (e.g. `ryddmo.se/`), **no shared `public_html/`** |
+| Home layout | one folder per domain (e.g. `ryddmo.se/`), **no shared `public_html/`** — a subdomain gets `~/<subdomain>/public_html/` |
 | MariaDB | database + user created in Kundzon (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11.19) |
 
-**Still to confirm on the first deploy** (these are the split-off deferred item for
-Story 1.10 — fill the blanks in "Open items" at the bottom as you measure them):
+**Confirmed on the first deploy 2026-09-10** (measured values in "Open items"):
 
-- [ ] Web PHP version for `stockpicker.ryddmo.se`, and its `memory_limit` /
-      `max_execution_time` — **URL-cron runs in the web context, not the CLI**, so the
-      1024M CLI limit does not apply. Target: `memory_limit` >= 256M (NFR8). If the real
-      limit is lower, drop `batch_size` (and the `/cron/work` time-box) in the `settings`
-      table to fit.
-- [ ] URL-cron **maximum execution time** per call and **minimum interval** (we want
-      `/cron/work` roughly every 5 min; its slice is time-boxed to 75 s in
-      `public_html/index.php`).
-- [ ] `stockpicker.ryddmo.se` document root can be pointed at `~/stockpicker/public_html/`.
+- [x] Web PHP for `stockpicker.ryddmo.se` = **8.4 / Apache 2.4**, `memory_limit` **256M**,
+      `max_execution_time` **180 s**. `memory_limit` meets the NFR8 target, so
+      `batch_size` 25 and the 75 s `/cron/work` time-box are left as-is.
+- [x] URL-cron **minimum interval is 5 min** ("Var femte minut" is offered), well under
+      the 180 s per-call limit. `http://` → `https://` is a 301 at Loopia's nginx LB.
+- [x] Subdomain docroot: `~/stockpicker.ryddmo.se/public_html/` (Loopia-created, not
+      re-pointable — see the app-root note above).
 - [x] MariaDB database + user created in Kundzon (`ryddmo_se` on `mysql684.loopia.se`).
 
 ---
@@ -80,42 +87,48 @@ Story 1.10 — fill the blanks in "Open items" at the bottom as you measure them
 ### B. Loopia Kundzon
 
 1. **SSH/SFTP** — activate it, upload the contents of `~/.ssh/stockpicker-loopia.pub`.
-2. **Subdomain** — create `stockpicker.ryddmo.se` and set its **document root** to
-   `~/stockpicker/public_html/`.
-3. **PHP version** — set the subdomain to PHP **8.3 or newer**. Note the version and its
-   `memory_limit` / `max_execution_time` (measure with the probe in step C, or read
-   Kundzon's PHP settings).
+2. **Subdomain** — add `stockpicker.ryddmo.se` under **"Domännamn → Subdomäner"** and
+   set its configuration to **"Hemsida hos Loopia" → Unix → PHP 8.3+/Apache 2.4**. Loopia
+   creates `~/stockpicker.ryddmo.se/public_html/` as the docroot (fixed — not
+   re-pointable) and, once web config is enabled, flips the subdomain's DNS `A` record to
+   the shared web IP automatically (it may take 10–30 min for the vhost to serve;
+   until then you get Loopia's "Parked at Loopia" page).
+3. **SSL** — Kundzon → **SSL** → add the **free Let's Encrypt** certificate for
+   `stockpicker.ryddmo.se`. Issuance runs in a batch and can take 15–60 min after the
+   subdomain is serving real content. Once the cert is live, tick **"Tvinga SSL"** in the
+   subdomain settings (belt-and-braces — Loopia's LB already 301s `http`→`https`).
 4. **Database** — a MariaDB database and a user with full rights on it already exist
-   (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11). Have host / name / user /
-   password ready for `config.php`.
-5. **URL-cron** — create **two** scheduled jobs, both calling `stockpicker.ryddmo.se`
-   over HTTPS with the shared token as the only query parameter:
+   (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11). **Copy the username verbatim from
+   Kundzon → Databaser** — it has an `@…` suffix and is not guessable. Have host / name /
+   user / password ready for `config.php`.
+5. **URL-cron** — Kundzon → **"Schemaläggning (cron)"** → create **two** jobs, both
+   calling `stockpicker.ryddmo.se` over HTTPS with the shared token as the **only** query
+   parameter (the endpoints return 400 on any extra param):
 
-   | Path | Schedule | Purpose |
+   | Path | Periodicity | Purpose |
    |---|---|---|
-   | `https://stockpicker.ryddmo.se/cron/refill?token=…` | daily, 00:00 | `UniverseSync` (seed list in Epic 1) + `Enqueue` |
-   | `https://stockpicker.ryddmo.se/cron/work?token=…` | every 5 min | `FetchRunner`, one 75 s time-boxed slice |
+   | `https://stockpicker.ryddmo.se/cron/refill?token=…` | **Varje timme** (hourly) | `Enqueue` (seed list in Epic 1) |
+   | `https://stockpicker.ryddmo.se/cron/work?token=…` | **Var femte minut** | `FetchRunner`, one 75 s time-boxed slice |
+
+   **Both endpoints are gated by `settings.run_after`** (default `18:30` Europe/Stockholm)
+   — Story 1.9 design. A `/cron/refill` *before* 18:30 returns `window_closed` and
+   enqueues nothing, so it must **not** be scheduled at 00:00. Loopia's cron timezone is
+   not exposed and DST shifts a fixed time, so refill runs **hourly**: the first call
+   after 18:30 enqueues, later calls are idempotent (`created: 0`). Outside the window
+   every call returns HTTP 200 `{"status":"window_closed"}` and does no work.
 
    `/cron/derive` is **not registered yet** — it stays a 404 until Story 3.2 ships the
    `Deriver` endpoint. Add a third URL-cron job (daily, after the queue drains) then.
 
-   The token is compared with `hash_equals` against `config.php`. `run_after` in the
-   `settings` table (default `18:30` Europe/Stockholm) gates the actual work window, so
-   the cron schedule itself never needs to change — outside the window the endpoints
-   return `{"status":"window_closed"}` and do nothing.
+   Leave **"E-postadress för utmatning"** empty. Confirm **"Aktiv körning"** is ticked.
 
 ### C. Loopia shell (over SSH)
 
-1. Create the app directory **above** the web root:
-
-   ```sh
-   mkdir -p ~/stockpicker
-   ```
-
-   After the first deploy the tree is:
+1. The app directory `~/stockpicker.ryddmo.se/` and its `public_html/` are created by
+   Loopia when you add the subdomain (step B.2). After the first deploy the tree is:
 
    ```
-   ~/stockpicker/
+   ~/stockpicker.ryddmo.se/
      public_html/     ← stockpicker.ryddmo.se docroot (front controller + .htaccess only)
      src/
      db/migrations/   ← five migrations, see "Database migrations" below
@@ -132,25 +145,56 @@ Story 1.10 — fill the blanks in "Open items" at the bottom as you measure them
    satisfy (`db`, `cron_token`, optional `log_path`):
 
    ```sh
-   cp ~/stockpicker/config.php.dist ~/stockpicker/config.php
-   nano ~/stockpicker/config.php     # real DB creds (mysql684.loopia.se / ryddmo_se / …) + a strong cron_token
-   chmod 600 ~/stockpicker/config.php
+   cp ~/stockpicker.ryddmo.se/config.php.dist ~/stockpicker.ryddmo.se/config.php
+   nano ~/stockpicker.ryddmo.se/config.php   # real DB creds + a strong cron_token
+   chmod 600 ~/stockpicker.ryddmo.se/config.php
+   ```
+
+   **The file must be `<?php return [ ... ];`** — a config with no `return` makes
+   `require` yield `int(1)` and phinx fails with *"config.php … must return an array, got
+   int"*. Verify before deploying:
+
+   ```sh
+   php -r 'var_dump(is_array(require "/home/…/stockpicker.ryddmo.se/config.php"));'  # want: bool(true)
    ```
 
    `config.php.dist`'s defaults are for local Docker development — every value must be
-   replaced on the server. Keep a copy of the working file as `config.php.bak` (see
+   replaced on the server. `db.user` is the exact `@…`-suffixed string from Kundzon →
+   Databaser. Use a password with no `'` `\` `$` (they break the single-quoted PHP string
+   or get mangled in `nano`). Keep a copy of the working file as `config.php.bak` (see
    Rollback).
 
-3. (Optional) Probe the **web** PHP limits for the subdomain, then remove the probe:
+3. Probe the **web** PHP limits for the subdomain. The Loopia shell cannot `curl` its own
+   public hostname (hairpin NAT returns empty), so fetch the probe from **outside** the
+   server or with `curl --resolve`:
 
    ```sh
    printf '<?php echo "mem=",ini_get("memory_limit")," time=",ini_get("max_execution_time")," ver=",PHP_VERSION,"\n";' \
-     > ~/stockpicker/public_html/_probe.php
+     > ~/stockpicker.ryddmo.se/public_html/_probe.php
+   # from your laptop:
    curl -s https://stockpicker.ryddmo.se/_probe.php
-   rm ~/stockpicker/public_html/_probe.php
+   rm ~/stockpicker.ryddmo.se/public_html/_probe.php
    ```
 
-   Record the numbers in "Open items" below.
+   Measured 2026-09-10: `mem=256M time=180 ver=8.4` — recorded in "Open items" below.
+
+### D. First deploy only — data bootstrap
+
+`/cron/refill` in Epic 1 runs only `Enqueue`; it does **not** populate the `instrument`
+table or the cached source ids. After the first `bin/deploy.sh` (so `vendor/` and the
+schema exist), run once over SSH:
+
+```sh
+cd ~/stockpicker.ryddmo.se
+php bin/seed-instruments.php     # loads InstrumentSeeder::LIST → "20 inserted, 0 unchanged"
+php bin/resolve-ids.php          # resolves Avanza/Nordnet ids (live calls) → "36 resolved, 0 skipped, 4 failed"
+```
+
+`resolve-ids` is idempotent and never overwrites a resolved id, so it is safe to re-run.
+On 2026-09-10 it left three large caps unresolved on the scraped endpoints (Handelsbanken A
++ Nordea on Avanza, Epiroc A on both) — all `NotFound`, not `SchemaMismatch`; the ISINs
+are correct. `FetchRunner` skips a null-id source with a warning, so the pipe tolerates it.
+Proper symbology lands with Epic 2 Story 2.1 (Börsdata). See `deferred-work.md`.
 
 ---
 
@@ -166,10 +210,12 @@ What it does:
 
 1. **Preflight** (before anything is written): echoes the commit being deployed and
    whether the working tree is clean, then probes SSH to `loopia-stockpicker` with
-   `BatchMode=yes`. If the host is unreachable it aborts here — no partial deploy.
-2. `rsync -az --delete` the **source** to `loopia-stockpicker:~/stockpicker/`. `--delete`
-   makes the server tree mirror the checkout (removed files do not linger); the safety is
-   the exclude list, which always covers:
+   `BatchMode=yes` (`ConnectTimeout=10`, `ServerAlive*` bounds a post-connect stall at
+   ~15 s). If the host is unreachable it aborts here — no partial deploy.
+2. `rsync -az --delete` the **source** to `loopia-stockpicker:~/stockpicker.ryddmo.se/`
+   (override with `STOCKPICKER_REMOTE_DIR`). `--delete` makes the server tree mirror the
+   checkout (removed files do not linger); the safety is the exclude list, which always
+   covers:
 
    `.git/`, `.github/`, `_bmad-output/`, `_bmad/`, `docs/`, `tests/`, `config.php`,
    `.env`, `*.pub`, `stockpicker-loopia`, `.DS_Store`, and — unless
@@ -177,10 +223,12 @@ What it does:
 
    So a routine deploy **never** deletes or overwrites `config.php` or `vendor/` on the
    server.
-3. `ssh … "cd stockpicker && composer install --no-dev --optimize-autoloader"` (falls
-   back to `php composer.phar …`) — builds `vendor/` against Loopia's PHP.
-4. `ssh … "cd stockpicker && vendor/bin/phinx migrate -e production"` — applies pending
-   migrations. Skipped with `--no-migrate`.
+3. `ssh … "cd stockpicker.ryddmo.se && composer install --no-dev --optimize-autoloader"`
+   (falls back to `php composer.phar …`) — builds `vendor/` against Loopia's PHP.
+4. `ssh … "cd stockpicker.ryddmo.se && vendor/bin/phinx migrate -e production"` — applies
+   pending migrations. Skipped with `--no-migrate`. **Take a `mysqldump` first** (see
+   "Database migrations") unless the DB is empty — MariaDB DDL is not transactional, so a
+   migration that fails partway leaves the schema half-applied.
 
 Flags:
 
@@ -196,9 +244,9 @@ rsync -az --delete \
   --exclude '.git/' --exclude '.github/' --exclude 'vendor/' --exclude 'config.php' \
   --exclude '.env' --exclude '*.pub' --exclude 'stockpicker-loopia' --exclude '.DS_Store' \
   --exclude '_bmad-output/' --exclude '_bmad/' --exclude 'docs/' --exclude 'tests/' \
-  ./ loopia-stockpicker:stockpicker/
-ssh loopia-stockpicker 'cd stockpicker && composer install --no-dev --optimize-autoloader'
-ssh loopia-stockpicker 'cd stockpicker && vendor/bin/phinx migrate -e production'
+  ./ loopia-stockpicker:stockpicker.ryddmo.se/
+ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && composer install --no-dev --optimize-autoloader'
+ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && vendor/bin/phinx migrate -e production'
 ```
 
 ---
@@ -210,8 +258,21 @@ in `phinx.php` via `Stockpicker\Config::db()`, port `3306` — Loopia's MariaDB 
 `mysql684.loopia.se`). Migrations are **never** run from a cron endpoint or automatically
 inside the deploy beyond the one explicit step above.
 
-- Apply: `ssh loopia-stockpicker 'cd stockpicker && vendor/bin/phinx migrate -e production'`
-- Status: `ssh loopia-stockpicker 'cd stockpicker && vendor/bin/phinx status -e production'`
+- **Back up first** (skip only when the DB is empty). On the Loopia shell:
+
+  ```sh
+  cd ~/stockpicker.ryddmo.se
+  eval "$(php -r '$c=require "config.php"; printf("H=%s U=%s P=%s N=%s", $c["db"]["host"],$c["db"]["user"],$c["db"]["pass"],$c["db"]["name"]);')"
+  mysqldump -h"$H" -u"$U" -p"$P" "$N" > ~/pre-migrate-$(date +%F).sql
+  ```
+
+- Apply: `ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && vendor/bin/phinx migrate -e production'`
+- Status: `ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && vendor/bin/phinx status -e production'`
+
+MariaDB DDL is **not transactional** — if a migration aborts midway (the 2026-09-10
+first deploy hit *"must return an array, got int"* from a malformed `config.php` before
+any DDL ran, but a later schema change could fail after a partial apply) the schema is
+left half-migrated and must be reconciled by hand against the table above.
 
 The five migrations in `db/migrations/`, in order:
 
@@ -229,6 +290,10 @@ The five migrations in `db/migrations/`, in order:
 
 ## Verifying a deploy
 
+Run these **from your laptop**, not the Loopia shell — the server cannot reach its own
+public hostname (hairpin NAT returns empty). Add `-k` while the Let's Encrypt cert is
+still issuing.
+
 ```sh
 # health check — front controller + .htaccess routing under real Apache
 curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/            # expect 200
@@ -243,10 +308,14 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/cron/wor
 curl -sS "https://stockpicker.ryddmo.se/cron/work?token=<real>"
 ```
 
+If you can't verify from outside, prove the pipe over loopback on the server instead —
+`php -S 127.0.0.1:8877 -t public_html &` then `curl 127.0.0.1:8877/cron/…` — this is how
+the 2026-09-10 first deploy was verified before the web vhost had propagated.
+
 Then check `ingest_run` for a fresh row:
 
 ```sh
-ssh loopia-stockpicker 'cd stockpicker && php bin/show-runs.php'
+ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && php bin/show-runs.php'
 ```
 
 ---
@@ -260,9 +329,11 @@ There is no automated rollback. Options, simplest first:
    so an older codebase never runs migrations against the current schema.
 2. **Schema:** `vendor/bin/phinx rollback -e production -t <target>` — only for a
    reversible migration. `owner_count_daily` and `ingest_run` are append-only and are
-   never rolled back.
+   never rolled back. For an irreversible break, restore the `~/pre-migrate-*.sql` dump
+   taken before `phinx migrate`.
 3. `config.php` is not under version control — keep the last working copy on the server as
-   `~/stockpicker/config.php.bak` (it is excluded from rsync, so it survives a deploy).
+   `~/stockpicker.ryddmo.se/config.php.bak` (it is excluded from rsync, so it survives a
+   deploy).
 
 ---
 
@@ -271,26 +342,36 @@ There is no automated rollback. Options, simplest first:
 | Symptom | Likely cause |
 |---|---|
 | 500 on every route | `.htaccess` in `public_html/` missing or not routing to `index.php`; or `config.php` absent / unreadable |
-| 404 on `/` too | subdomain docroot not pointed at `~/stockpicker/public_html/` |
+| 404 on `/` too | subdomain docroot not pointed at `~/stockpicker.ryddmo.se/public_html/` |
+| "Parked at Loopia" page on every route | subdomain has DNS but no **web configuration** (Kundzon → Subdomäner → "Hemsida hos Loopia"), or the vhost has not propagated yet (10–30 min after enabling) |
+| phinx: *"config.php … must return an array, got int"* | `config.php` has no top-level `return` — `require` yields `int(1)`. Must be `<?php return [ ... ];` |
+| `curl` from the Loopia shell to the public hostname returns empty | hairpin NAT — the server can't reach its own external IP. Test from your laptop, `curl --resolve`, or loopback `php -S` |
+| cert warning / `ssl_verify` != 0 | Let's Encrypt not issued yet (batch runs 15–60 min after you enable it in Kundzon → SSL) |
 | 403 on a cron call you expected to work | token mismatch with `config.php`, or URL-cron not sending the query string — check the job URL in Kundzon |
 | 400 on a cron call | a query parameter other than `token` is present — the endpoints accept `token` and nothing else |
 | `/cron/work` returns `window_closed` | `settings.run_after` is later than now (Europe/Stockholm) — expected outside the run window |
+| `/cron/refill` created nothing all evening | scheduled before `run_after` (18:30) — it returns `window_closed` and enqueues nothing. Run it hourly, not at 00:00 |
 | `deploy: cannot reach 'loopia-stockpicker'` | SSH alias/key wrong, or SSH not enabled in Kundzon — the preflight aborted before rsync |
-| Migrations fail with access denied | DB user lacks rights, or `config.php` creds wrong |
+| Migrations fail with access denied | wrong `db.user` (copy the `@…`-suffixed string verbatim from Kundzon), wrong password, or DB user lacks rights |
 | `composer` not found over SSH | use `php composer.phar …`, or deploy with `--with-local-vendor` |
 | Slice killed mid-run | web `max_execution_time` shorter than the 75 s time-box — lower `batch_size` and the time-box |
 | Out-of-memory in a slice | web `memory_limit` < what a slice needs — lower `batch_size` |
 
 ---
 
-## Open items to confirm on the first deploy
+## Open items — closed on the first deploy (2026-09-10)
 
-Copy this into the PR description for the first-deploy follow-up and tick as verified:
-
-- [ ] Web PHP version = ______  `memory_limit` = ______  `max_execution_time` = ______
-- [ ] URL-cron max execution time = ______  min interval = ______
-- [ ] Subdomain docroot successfully set to `~/stockpicker/public_html/`
-- [ ] MariaDB database reachable from the app; `config.php` in place and `chmod 600`
-- [ ] Both URL-cron jobs (`/cron/refill`, `/cron/work`) registered and firing
-- [ ] Loopia URL-cron sends a usable `User-Agent` and follows the query string
-- [ ] `batch_size` / `/cron/work` time-box tuned against the measured web-PHP `memory_limit`
+- [x] Web PHP version = **8.4**  `memory_limit` = **256M**  `max_execution_time` = **180 s**
+- [x] URL-cron max execution time ≥ 180 s  min interval = **5 min** ("Var femte minut")
+- [x] Subdomain docroot = `~/stockpicker.ryddmo.se/public_html/` (Loopia-created, fixed)
+- [x] MariaDB reachable from the app; `config.php` in place and `chmod 600`
+- [x] Both URL-cron jobs registered — `refill` hourly, `work` every 5 min. **Firing to be
+      confirmed on the first automated run after 18:30 on 2026-09-10.**
+- [x] `http://` → `https://` is a 301 at Loopia's nginx LB; `Tvinga SSL` to be ticked once
+      the Let's Encrypt cert issues
+- [x] `batch_size` 25 / 75 s time-box left as-is — `memory_limit` 256M meets the NFR8 target
+- [ ] Loopia URL-cron `User-Agent` / query-string passthrough — verify from the log after
+      the first automated run (job URL shows verbatim `?token=…` in Kundzon, so no extra
+      params are appended)
+- [ ] Three large caps unresolved by `bin/resolve-ids.php` — tracked in `deferred-work.md`
+      for Epic 2 Story 2.1
