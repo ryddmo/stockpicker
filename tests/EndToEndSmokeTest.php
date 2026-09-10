@@ -84,7 +84,8 @@ final class EndToEndSmokeTest extends StoreTestCase
         // --- Queue FakeSourceAdapter responses in exact fetch order. ---
         // Pass 1: every instrument except the null-id one is fetched avanza then
         // nordnet, in claim order. The transient instrument's nordnet call throws
-        // `Transient` once (job reopens); its avanza row is already written.
+        // `Transient` on every attempt (FetchRunner retries to `retry.max_attempts`
+        // then gives up, so the job reopens); its avanza row is already written.
         // `row()` gives nordnet a source timestamp and avanza none (matching the
         // real adapters), so both `OwnerCountRepository::asOfDate()` precedence
         // branches run: nordnet dates from `$ts`, avanza from the run-date override.
@@ -97,6 +98,9 @@ final class EndToEndSmokeTest extends StoreTestCase
 
             $this->avanza->fetchResponses[] = $this->row('avanza', $isin, 1_000);
             if ($isin === $transientIsin) {
+                // one queued Transient per attempt up to the default cap of 3.
+                $this->nordnet->fetchResponses[] = new Transient('nordnet: HTTP 503');
+                $this->nordnet->fetchResponses[] = new Transient('nordnet: HTTP 503');
                 $this->nordnet->fetchResponses[] = new Transient('nordnet: HTTP 503');
             } else {
                 $this->nordnet->fetchResponses[] = $this->row('nordnet', $isin, 2_000, $ts);
@@ -210,9 +214,9 @@ final class EndToEndSmokeTest extends StoreTestCase
         self::assertNotNull($ownerCounts->get($transientIsin, 'avanza', self::RUN_DATE));
         self::assertNotNull($ownerCounts->get($transientIsin, 'nordnet', self::RUN_DATE));
         self::assertSame(
-            2,
+            4,
             count(array_filter($this->nordnet->fetchCalls, static fn (string $i): bool => $i === $transientIsin)),
-            'the transient job is fetched again on a later pass',
+            'the transient job is retried to the cap on pass 1 (3 calls) then re-fetched once it recovers on pass 2',
         );
         self::assertTrue($this->logHandler->hasWarningThatContains('transient from source'));
     }

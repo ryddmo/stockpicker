@@ -319,6 +319,18 @@ The five migrations in `db/migrations/`, in order:
 |---|---|---|
 | `universe.resolve_timebox` | `45` (seconds) | wall-clock budget for `UniverseSync`'s two HTTP passes (ISIN + Nordnet id) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed. |
 | `universe.max_delist` | `25` | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
+| `retry.max_attempts` | `3` | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry. |
+| `retry.backoff_base` | `1.0` (seconds) | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`. |
+| `retry.backoff_max` | `20.0` (seconds) | ceiling for a single backoff sleep. |
+
+**429 (rate-limit) handling (Story 2.4, not operator-tunable):** when a source
+returns HTTP 429, that retry's backoff is multiplied by 4 (still capped at
+`retry.backoff_max`) and the source's in-memory call rate is halved — larger
+same-source spacing — for the rest of that slice, floored at
+`settings.rate.<source> / 8`. Nothing is written to `settings`; the next slice
+restarts from `settings.rate.<source>`. `Retry-After` headers are not read. The
+`/cron/work` `by_source` tally gains `retried` (backoff retries taken) and
+`rate_limited` (429s seen) per source.
 
 A present-but-unusable value (non-numeric, zero, negative) is ignored with one
 `warning` and the default is used — same rule as `batch_size` / `rate.*`.
@@ -346,10 +358,12 @@ curl -sS "https://stockpicker.ryddmo.se/cron/work?token=<real>"
 # after run_after, expect e.g.:
 # {"status":"ok","run_date":"2026-09-10","claimed":20,"done":18,"failed":1,"reopened":1,
 #  "rows_written":35,
-#  "by_source":{"avanza":{"ok":19,"not_found":1,"schema_mismatch":0,"transient":0},
-#               "nordnet":{"ok":18,"not_found":0,"schema_mismatch":0,"transient":1}}}
-# `by_source` is the per-source slice tally (Story 2.3): a non-zero `schema_mismatch`
-# means an endpoint changed shape; `transient` counts reopened-for-retry hits.
+#  "by_source":{"avanza":{"ok":19,"not_found":1,"schema_mismatch":0,"transient":0,"retried":0,"rate_limited":0},
+#               "nordnet":{"ok":18,"not_found":0,"schema_mismatch":0,"transient":1,"retried":2,"rate_limited":1}}}
+# `by_source` is the per-source slice tally (Story 2.3 / 2.4): a non-zero `schema_mismatch`
+# means an endpoint changed shape; `transient` counts jobs whose fetch retries were all
+# exhausted (reopened for the next pass); `retried` is backoff retries taken; `rate_limited`
+# is HTTP 429s seen (each widens that backoff and lowers the source's rate for the slice).
 ```
 
 If you can't verify from outside, prove the pipe over loopback on the server instead —

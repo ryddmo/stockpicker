@@ -7,6 +7,7 @@ namespace Stockpicker\Adapter;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
+use Stockpicker\Error\RateLimited;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Error\Transient;
 
@@ -23,7 +24,8 @@ trait HandlesTransientHttp
      *
      * @return array<mixed> the decoded JSON body
      *
-     * @throws Transient      connection error, timeout, HTTP 429 or 5xx
+     * @throws RateLimited    HTTP 429 (a Transient subtype)
+     * @throws Transient      connection error, timeout, or HTTP 5xx
      * @throws SchemaMismatch any other non-2xx, or a body that is not a JSON array/object
      */
     private function requestJson(ClientInterface $http, string $method, string $uri, array $options = []): array
@@ -35,7 +37,11 @@ trait HandlesTransientHttp
         } catch (RequestException $e) {
             $status = $e->getResponse()?->getStatusCode() ?? 0;
 
-            if ($status === 429 || $status >= 500) {
+            if ($status === 429) {
+                throw new RateLimited(sprintf('%s %s: HTTP 429 (rate limited)', $method, $uri), 0, $e);
+            }
+
+            if ($status >= 500) {
                 throw new Transient(sprintf('%s %s: HTTP %d', $method, $uri, $status), 0, $e);
             }
 

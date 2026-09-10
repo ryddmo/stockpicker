@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Adapter\SourceAdapter;
 use Stockpicker\Error\NotFound;
+use Stockpicker\Error\RateLimited;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Error\Transient;
 use Stockpicker\Store\InstrumentRepository;
@@ -36,9 +37,16 @@ use Stockpicker\Store\SettingsRepository;
  *
  * Calls are strictly serial and throttled: between two calls to the *same*
  * source, wait `1 / rate.<source>` seconds via the injected sleeper (NFR3,
- * AD-9). No exponential backoff (Story 2.4). All source access is through the
- * `SourceAdapter` port and acts only on `NormalizedRow` / the typed errors
- * (AD-2). Owner-count rows are written only via `OwnerCountRepository::upsert()`.
+ * AD-9). On a `Transient` from `fetch()` the runner retries per source per job
+ * with exponential backoff (`retry.backoff_base * 2^(n-1)` s, clamped to
+ * `retry.backoff_max`) up to `retry.max_attempts` total attempts, every backoff
+ * sleep gated by the slice timebox (Story 2.4). A `RateLimited` (HTTP 429)
+ * widens that retry's backoff (×4) and halves the in-memory call rate for that
+ * source (floored at `base / 8`) for the rest of the slice. A source still
+ * `Transient` after the loop reopens the whole job exactly as before. All
+ * source access is through the `SourceAdapter` port and acts only on
+ * `NormalizedRow` / the typed errors (AD-2). Owner-count rows are written only
+ * via `OwnerCountRepository::upsert()`.
  */
 final class FetchRunner
 {
@@ -52,7 +60,18 @@ final class FetchRunner
         'queue.stale_after' => 900,
         'rate.avanza' => 0.5,
         'rate.nordnet' => 0.5,
+        'retry.max_attempts' => 3,
+        'retry.backoff_base' => 1.0,
+        'retry.backoff_max' => 20.0,
     ];
+
+    /**
+     * A `RateLimited` (429) widens that retry's backoff by this factor and
+     * halves the runtime call rate for the source, floored at `base / 8` (≤ 3
+     * halvings). Structural, not operator knobs.
+     */
+    private const RATE_LIMIT_BACKOFF_FACTOR = 4.0;
+    private const RATE_LIMIT_RATE_FLOOR_DIVISOR = 8.0;
 
     /** @var callable(float): void */
     private $sleep;
@@ -97,6 +116,16 @@ final class FetchRunner
             'avanza' => $this->floatSetting('rate.avanza'),
             'nordnet' => $this->floatSetting('rate.nordnet'),
         ];
+        // The base rate each slice restarts from — a 429 only lowers the runtime
+        // `$rate` copy, floored at `$baseRate / 8`; `settings.rate.<source>` is
+        // never written.
+        $baseRate = $rate;
+
+        // At least one attempt — a fractional or zero setting must never read
+        // as "make no calls".
+        $maxAttempts = max(1, $this->intSetting('retry.max_attempts'));
+        $backoffBase = $this->floatSetting('retry.backoff_base');
+        $backoffMax = $this->floatSetting('retry.backoff_max');
 
         $reopened = $this->queue->reopenStale($staleAfter, $now, $runDate);
 
@@ -113,7 +142,14 @@ final class FetchRunner
         // done/failed/reopened counts.
         $bySource = [];
         foreach (array_keys(self::SOURCES) as $source) {
-            $bySource[$source] = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+            $bySource[$source] = [
+                'ok' => 0,
+                'not_found' => 0,
+                'schema_mismatch' => 0,
+                'transient' => 0,
+                'retried' => 0,
+                'rate_limited' => 0,
+            ];
         }
 
         foreach ($jobs as $index => $job) {
@@ -156,40 +192,98 @@ final class FetchRunner
                     }
 
                     if ($lastCalled[$source]) {
-                        ($this->sleep)($rate[$source] > 0 ? 1.0 / $rate[$source] : 0.0);
+                        // Same-source spacing, gated by the slice budget: after a
+                        // 429 has reduced the rate this can be as long as
+                        // `1 / (base_rate / 8)`, which must not run past the
+                        // timebox.
+                        $spacing = $rate[$source] > 0 ? 1.0 / $rate[$source] : 0.0;
+                        if ($spacing > 0 && (microtime(true) - $start) + $spacing < $timeboxSeconds) {
+                            ($this->sleep)($spacing);
+                        }
                     }
                     $lastCalled[$source] = true;
 
-                    try {
-                        $row = $this->adapters[$source]->fetch($instrument);
-                        ++$bySource[$source]['ok'];
-                        if ($this->ownerCounts->upsert($row, $job->runDate)) {
-                            ++$rowsWritten;
+                    // Retry loop, per source per job (Story 2.4). On Transient:
+                    // sleep backoff(attempt) via the injected seam and call
+                    // fetch() again, up to retry.max_attempts, always bounded by
+                    // the slice timebox. A RateLimited (429) widens that backoff
+                    // and halves the runtime rate for the rest of the slice.
+                    $attempt = 0;
+                    while (true) {
+                        ++$attempt;
+                        try {
+                            $row = $this->adapters[$source]->fetch($instrument);
+                            ++$bySource[$source]['ok'];
+                            if ($this->ownerCounts->upsert($row, $job->runDate)) {
+                                ++$rowsWritten;
+                            }
+
+                            break;
+                        } catch (RateLimited $e) {
+                            ++$bySource[$source]['rate_limited'];
+                            $rate[$source] = max(
+                                $baseRate[$source] / self::RATE_LIMIT_RATE_FLOOR_DIVISOR,
+                                $rate[$source] / 2.0,
+                            );
+                            $wait = min($backoffMax, $this->backoff($attempt, $backoffBase) * self::RATE_LIMIT_BACKOFF_FACTOR);
+                            $this->logger->warning('fetchrunner: rate limited by source, widening backoff and reducing rate', [
+                                'isin' => $instrument->isin,
+                                'source' => $source,
+                                'run_date' => $job->runDate,
+                                'attempt' => $attempt,
+                                'error' => $e::class,
+                                'new_rate' => $rate[$source],
+                                'message' => $e->getMessage(),
+                            ]);
+                        } catch (Transient $e) {
+                            $wait = min($backoffMax, $this->backoff($attempt, $backoffBase));
+                        } catch (NotFound | SchemaMismatch $e) {
+                            // Not retryable. SchemaMismatch is tallied separately
+                            // from NotFound — the endpoint-shape-changed signal
+                            // Story 2.6 alarms on.
+                            $failingSources[] = $source;
+                            ++$bySource[$source][$e instanceof SchemaMismatch ? 'schema_mismatch' : 'not_found'];
+                            $this->logger->warning('fetchrunner: source failed for job', [
+                                'isin' => $instrument->isin,
+                                'source' => $source,
+                                'run_date' => $job->runDate,
+                                'error' => $e::class,
+                                'message' => $e->getMessage(),
+                            ]);
+
+                            break;
                         }
-                    } catch (Transient $e) {
-                        // A Transient from one source no longer skips the other
-                        // (Story 2.3): attempt every source with a cached id and
-                        // write whatever lands; the job is still reopened below.
-                        $sawTransient = true;
-                        ++$bySource[$source]['transient'];
+
+                        // Shared Transient / RateLimited retry-or-give-up
+                        // decision: the slice budget always wins.
+                        if ($attempt >= $maxAttempts
+                            || (microtime(true) - $start) + $wait >= $timeboxSeconds
+                        ) {
+                            $sawTransient = true;
+                            ++$bySource[$source]['transient'];
+                            $this->logger->warning('fetchrunner: source exhausted fetch retries, job reopened', [
+                                'isin' => $instrument->isin,
+                                'source' => $source,
+                                'run_date' => $job->runDate,
+                                'attempts' => $attempt,
+                            ]);
+
+                            break;
+                        }
+
+                        // A retry is actually going to happen — log it once, here,
+                        // not on the final failed attempt.
                         $this->logger->warning('fetchrunner: transient from source, job will be retried', [
                             'isin' => $instrument->isin,
                             'source' => $source,
                             'run_date' => $job->runDate,
-                            'message' => $e->getMessage(),
-                        ]);
-                    } catch (NotFound | SchemaMismatch $e) {
-                        // SchemaMismatch is tallied separately from NotFound — it
-                        // is the endpoint-shape-changed signal Story 2.6 alarms on.
-                        $failingSources[] = $source;
-                        ++$bySource[$source][$e instanceof SchemaMismatch ? 'schema_mismatch' : 'not_found'];
-                        $this->logger->warning('fetchrunner: source failed for job', [
-                            'isin' => $instrument->isin,
-                            'source' => $source,
-                            'run_date' => $job->runDate,
+                            'attempt' => $attempt,
                             'error' => $e::class,
                             'message' => $e->getMessage(),
                         ]);
+
+                        ($this->sleep)($wait);
+                        ++$bySource[$source]['retried'];
                     }
                 }
 
@@ -239,6 +333,16 @@ final class FetchRunner
         ]);
 
         return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten, $bySource);
+    }
+
+    /**
+     * The un-clamped exponential backoff for a given attempt:
+     * `backoff_base * 2^(n-1)` seconds. The caller clamps to `retry.backoff_max`
+     * (and, for a 429, multiplies by the rate-limit factor first).
+     */
+    private function backoff(int $attempt, float $base): float
+    {
+        return $base * (2 ** ($attempt - 1));
     }
 
     private function intSetting(string $key): int
