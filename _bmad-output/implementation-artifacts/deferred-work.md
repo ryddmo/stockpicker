@@ -58,3 +58,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-borsdata-adapter-for-universumlistan.md`
   summary: MOOT 2026-09-10 — Börsdata universe source dropped (paid Pro subscription required, no free tier). The live `bin/show-universe.php` run, the `EQUITY_TYPE_IDS` / market-name pinning, the listing-status filter question, and the `docs/deploy.md` `borsdata.api_key` item all fall away.
   evidence: Course correction 2026-09-10 (see `_bmad-output/planning-artifacts/sprint-change-proposal-2026-09-10.md`). Story 2.1 v2 (`AvanzaUniverseAdapter`) replaces the Börsdata adapter and carries its own live-verification step against the real Avanza listing response — including a delisted/non-tradable spot-check.
+
+## Deferred from: code review of story-2.1 (Avanza universe adapter, 2026-09-10)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-avanza-universumadapter.md`
+  summary: No test asserts the four outgoing `market-stock-filter/stocks` POSTs — path, body, and the `marketPlaces` value per label are unverified in the suite.
+  evidence: Every `AvanzaUniverseAdapterTest` case queues responses into `MockHandler`, which ignores the request. A wrong path → 404 → `SchemaMismatch`; a wrong `marketPlaces` value → empty list → `SchemaMismatch` — so a request-side regression fails loudly, not silently, and this matches the repo convention (`AvanzaAdapterTest` / `NordnetAdapterTest` assert only on responses). Add a Guzzle history-middleware assertion if request-shape regressions become a concern.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-avanza-universumadapter.md`
+  summary: No test proves a mid-sequence target-list failure (LC + MC succeed, then SC throws) discards the already-built entries rather than returning a two-thirds universe.
+  evidence: The behaviour is already correct — `$out` is a local in `listUniverse()` and `queryList()`'s throw is uncaught, so a failure anywhere yields nothing. Only the explicit test is missing; add one that queues [LC ok, MC ok, SC 503×2] and asserts `Transient` with no partial return.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-avanza-universumadapter.md`
+  summary: `bin/list-universe.php` is not documented in `docs/deploy.md` (its sibling `bin/resolve-ids.php` is).
+  evidence: Story 2.1 review. Add a one-line entry to the deploy runbook's SSH-scripts section; pairs naturally with the Story 2.2 `docs/deploy.md` updates already deferred.

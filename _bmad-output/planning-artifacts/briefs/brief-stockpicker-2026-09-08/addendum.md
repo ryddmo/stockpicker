@@ -18,14 +18,41 @@ sina egna webbplatser. Endpoint-vägar och fältnamn kan ändras utan förvarnin
 
 - Samma inofficiella endpoint-klass som Avanzas ägarsiffror (`www.avanza.se/_api/...`),
   ingen autentisering, normal `User-Agent`-header.
-- Avanzas webbplats har en aktielistning / screener som räknar upp Stockholmsbörsens
-  aktier per lista. **Exakt endpoint-väg och filtersyntax är overifierad** och ska
-  fastställas mot ett faktiskt svar i Story 2.1 (samma metod som för `market-guide` och
-  `stocklist`: fånga ett riktigt svar, validera schema, dokumentera här).
+- **Verifierad mot live-API 2026-09-10** (Story 2.1). Endpoint:
+
+  ```
+  POST https://www.avanza.se/_api/market-stock-filter/stocks
+  Content-Type: application/json
+
+  {"filter":{"sectors":[],"marketPlaces":["<ett värde>"]},
+   "limit":5000,"offset":0,"sortBy":{"field":"name","order":"asc"}}
+  ```
+
+  `limit` och `sortBy` är båda obligatoriska (endpointen ger 400 utan dem). Ett anrop per
+  mållista. Svaret bär `totalNumberOfOrderbooks` = antal träffar för filtret — om
+  `stocks`-arrayen är kortare har servern trunkerat sidan (adaptern kastar `SchemaMismatch`).
+  `marketPlaces`-värde → normaliserad etikett:
+
+  | `marketPlaces` | Etikett |
+  |----------------|---------|
+  | `se.xsto.large cap stockholm` | `LC` |
+  | `se.xsto.mid cap stockholm` | `MC` |
+  | `se.xsto.small cap stockholm` | `SC` |
+  | `se.fnse` | `First North` |
+
+  `se.xsto.xterna listan` (1 orderbook), Spotlight, NGM och utländska listor anropas inte.
+
+- **Svarsform** (verifierad 2026-09-10): `{ stocks: [ { orderbookId (sträng),
+  companyId, type: "STOCK", name, shortName, currency, countryCode: "SE",
+  marketPlaceCode: "XSTO", numberOfOwners, marketCap, … } ], pagination, sortBy,
+  totalNumberOfOrderbooks, filterOptions }`.
+  - **Inget `isin`-fält** i screener-svaret. **Inget cap-tier-fält** — etiketten kommer
+    från vilken av de fyra frågorna som returnerade raden.
   - `GET /_api/market-guide/stock/{orderbookId}` bär redan `isin`, `name` och
-    `marketList` (t.ex. `"Large Cap Stockholm"`) — fälten finns Avanza-sidan.
-- Mappa Avanzas listetikett → `LC | MC | SC | First North`; filtrera bort Spotlight, NGM,
-  utländska listor och icke-aktier (ETF:er, index, certifikat).
+    `marketList` — ISIN slås upp per instrument där i Story 2.2, inte här.
+- Antal per lista 2026-09-10: LC 163, MC 141, SC 107, First North ~330 (~741 totalt).
+- Om någon av de fyra mållistorna kommer tillbaka tom → `SchemaMismatch`, ingen lista alls
+  (en tyst tom cap-tier skulle få Story 2.2 att massavlista den).
 - Avanza `orderbookId` kommer **direkt ur listningen** — inget separat id-uppslag mot
   Avanza behövs längre. Endast Nordnet `nnx_instrument_id` slås upp per nytt bolag.
 
