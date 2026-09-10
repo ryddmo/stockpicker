@@ -10,6 +10,7 @@ use GuzzleHttp\Psr7\Response;
 use Psr\Log\NullLogger;
 use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Error\NotFound;
+use Stockpicker\Error\RateLimited;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Error\Transient;
 
@@ -222,25 +223,35 @@ final class NordnetAdapterTest extends AdapterTestCase
         $this->adapter()->fetch($this->instrument());
     }
 
-    public function testFetchRetriesOnceThenSucceeds(): void
+    public function testFetchThrowsTransientOnTheFirstFailure(): void
     {
+        // FetchRunner (Story 2.4) owns the fetch retry now, so fetch() no longer
+        // wraps fetchDatapoint() in withOneRetry() — it throws on the first 5xx
+        // and never makes a second attempt.
         $this->queue([
             new Response(503),
             $this->json(['results' => [$this->fetchResult()]]),
         ]);
 
-        self::assertSame(69611, $this->adapter()->fetch($this->resolved())->numberOfOwners);
-        $this->assertQueueDrained();
+        try {
+            $this->adapter()->fetch($this->resolved());
+            self::fail('expected a Transient');
+        } catch (Transient) {
+            self::assertSame(1, $this->mock->count(), 'fetch() made exactly one attempt');
+        }
     }
 
-    public function testFetchThrowsTransientWhenBothAttemptsFail(): void
+    public function testFetchThrowsRateLimitedOnA429(): void
     {
-        $this->queue([
-            new Response(503),
-            new ConnectException('timeout', new Request('GET', 'stocklist')),
-        ]);
+        $this->queue([new Response(429)]);
 
-        $this->expectException(Transient::class);
-        $this->adapter()->fetch($this->resolved());
+        try {
+            $this->adapter()->fetch($this->resolved());
+            self::fail('expected a RateLimited');
+        } catch (RateLimited $e) {
+            // RateLimited is a Transient subtype, so withOneRetry()'s
+            // catch (Transient) and FetchRunner's retry loop both still cover it.
+            self::assertInstanceOf(Transient::class, $e);
+        }
     }
 }

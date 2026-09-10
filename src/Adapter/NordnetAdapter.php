@@ -56,8 +56,11 @@ final class NordnetAdapter implements SourceAdapter
             throw new NotFound(sprintf('nordnet: %s has no nordnet_instrument_id', $instrument->isin));
         }
 
+        // No withOneRetry here: FetchRunner (Story 2.4) owns every fetch retry,
+        // so fetch() throws Transient on the first failure. withOneRetry stays
+        // on resolveId().
         try {
-            return $this->withOneRetry(fn (): NormalizedRow => $this->fetchDatapoint($instrument));
+            return $this->fetchDatapoint($instrument);
         } catch (AdapterError $e) {
             $this->warn('nordnet fetch failed', $instrument, $e);
 

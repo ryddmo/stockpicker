@@ -19,7 +19,10 @@ namespace Stockpicker\Pipeline;
  *                 so a never-called source still reports all-zero:
  *                 `ok` (a `fetch()` returned, upsert or not), `not_found`,
  *                 `schema_mismatch` (counted separately — the endpoint-shape
- *                 signal Story 2.6 alarms on), `transient`. Independent of the
+ *                 signal Story 2.6 alarms on), `transient` (one per job whose
+ *                 fetch retries were all exhausted → job reopened `pending`),
+ *                 `retried` (backoff retries actually taken for that source this
+ *                 slice) and `rate_limited` (HTTP 429s seen). Independent of the
  *                 per-job `done` / `failed` / `reopened` counts above. `ok`
  *                 counts a `fetch()` that returned even if the following
  *                 `upsert()` then throws — that job still ends `failed` via the
@@ -28,7 +31,7 @@ namespace Stockpicker\Pipeline;
 final readonly class FetchRunnerResult
 {
     /**
-     * @param array<string, array{ok: int, not_found: int, schema_mismatch: int, transient: int}> $bySource
+     * @param array<string, array{ok: int, not_found: int, schema_mismatch: int, transient: int, retried: int, rate_limited: int}> $bySource
      */
     public function __construct(
         public int $claimed,

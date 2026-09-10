@@ -127,7 +127,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, $json['failed']);
         self::assertSame(0, $json['reopened']);
         self::assertSame(0, $json['rows_written']);
-        $zero = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+        $zero = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0, 'retried' => 0, 'rate_limited' => 0];
         self::assertSame(['avanza' => $zero, 'nordnet' => $zero], $json['by_source']);
         $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
         self::assertSame($runDate, $json['run_date']);

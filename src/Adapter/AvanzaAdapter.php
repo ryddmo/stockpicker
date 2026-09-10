@@ -55,8 +55,11 @@ final class AvanzaAdapter implements SourceAdapter
             throw new NotFound(sprintf('avanza: %s has no avanza_orderbook_id', $instrument->isin));
         }
 
+        // No withOneRetry here: FetchRunner (Story 2.4) owns every fetch retry,
+        // so fetch() throws Transient on the first failure. withOneRetry stays
+        // on resolveId().
         try {
-            return $this->withOneRetry(fn (): NormalizedRow => $this->fetchDatapoint($instrument));
+            return $this->fetchDatapoint($instrument);
         } catch (AdapterError $e) {
             $this->warn('avanza fetch failed', $instrument, $e);
 
