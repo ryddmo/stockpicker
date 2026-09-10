@@ -367,18 +367,18 @@ So that pipen täcker alla bolag på LC/MC/SC och First North, inte bara seed-li
 
 **Acceptance Criteria:**
 
-**Given** Avanzas publika aktielistning (samma inofficiella endpoint-klass som ägarsiffrorna, ingen nyckel)
+**Given** Avanzas publika aktiescreener (samma inofficiella endpoint-klass som ägarsiffrorna, ingen nyckel)
 **When** `AvanzaUniverseAdapter::listUniverse()` anropas
-**Then** returneras alla aktier på Nasdaq Stockholm Large/Mid/Small Cap och First North med `isin`, `name`, listetikett och Avanza `orderbookId`
-**And** listetiketten mappas till `LC | MC | SC | First North` och icke-mål (Spotlight, NGM, utländska listor, icke-aktier) filtreras bort
+**Then** returneras alla aktier på Nasdaq Stockholm Large/Mid/Small Cap och First North Stockholm med `name`, listetikett och Avanza `orderbookId` — ISIN finns inte i listningen och slås upp per instrument i Story 2.2
+**And** listetiketten mappas till `LC | MC | SC | First North`; endast de fyra mållistorna efterfrågas
 
-**Given** ett Avanza-svar med förändrad form
+**Given** ett Avanza-svar med förändrad form (saknat eller typfelaktigt fält, eller en tom mållista)
 **When** adaptern validerar det
 **Then** returneras `SchemaMismatch` och ingen partiell lista sparas
 
-**Given** att exakt endpoint-väg och filtersyntax är overifierad
-**When** adaptern implementeras
-**Then** fångas ett riktigt svar en gång, schemat dokumenteras i addendum, och testfixtures speglar det verkliga svaret
+**Given** att endpoint-vägen och filtersyntaxen fastställs i implementationen
+**When** Story 2.1 är klar
+**Then** är den riktiga endpointen, request-formen och svarsschemat dokumenterade i addendum, och testfixtures speglar ett riktigt svar
 
 ### Story 2.2: UniverseSync — daglig avstämning
 
@@ -390,7 +390,7 @@ So that tillkomna, avnoterade och listbytande bolag hanteras automatiskt.
 
 **Given** en lagrad instrumentlista och en färsk lista från Avanza
 **When** `UniverseSync` körs
-**Then** läggs nya ISIN till med `first_seen` satt, Avanza `orderbookId` cachas ur listningen och Nordnet-id slås upp (per Story 1.3)
+**Then** läggs nya instrument till med `first_seen` satt — ISIN slås upp via Avanzas `market-guide/stock/{orderbookId}`, Avanza `orderbookId` cachas ur listningen, och Nordnet-id slås upp (per Story 1.3)
 **And** ISIN som saknas i Avanza-svaret får `last_seen` satt och markeras inaktiva (raderas inte)
 **And** listbyten uppdaterar `instrument.list`
 
