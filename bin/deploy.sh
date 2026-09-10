@@ -9,14 +9,17 @@
 #
 # Config via env (defaults shown):
 #   STOCKPICKER_SSH_HOST=loopia-stockpicker   # ~/.ssh/config Host alias
-#   STOCKPICKER_REMOTE_DIR=stockpicker        # path under $HOME on Loopia
+#   STOCKPICKER_REMOTE_DIR=stockpicker.ryddmo.se  # path under $HOME on Loopia
 #
 # bash-3.2 compatible (macOS /bin/bash).
 
 set -euo pipefail
 
 SSH_HOST="${STOCKPICKER_SSH_HOST:-loopia-stockpicker}"
-REMOTE_DIR="${STOCKPICKER_REMOTE_DIR:-stockpicker}"
+# Loopia creates ~/<subdomain>/public_html/ when the subdomain is added and does
+# not let you re-point an existing subdomain at another directory, so the app
+# root has to be the subdomain-named folder. See docs/deploy.md.
+REMOTE_DIR="${STOCKPICKER_REMOTE_DIR:-stockpicker.ryddmo.se}"
 
 usage() {
   cat >&2 <<'EOF'
@@ -28,7 +31,7 @@ usage: bin/deploy.sh [--with-local-vendor] [--no-migrate]
 
 Config via env:
   STOCKPICKER_SSH_HOST     ssh host / ~/.ssh/config alias  (default: loopia-stockpicker)
-  STOCKPICKER_REMOTE_DIR   path under $HOME on Loopia      (default: stockpicker)
+  STOCKPICKER_REMOTE_DIR   path under $HOME on Loopia      (default: stockpicker.ryddmo.se)
 
 See docs/deploy.md for the full runbook.
 EOF
@@ -51,7 +54,8 @@ cd "$(dirname "$0")/.."
 echo "==> Preflight"
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  commit="$(git rev-parse --short HEAD)"
+  # `|| echo` so an unborn HEAD (fresh repo, zero commits) does not abort under set -e.
+  commit="$(git rev-parse --short HEAD 2>/dev/null || echo '(unknown)')"
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
   echo "    commit:  ${commit} (${branch})"
   if [ -n "$(git status --porcelain)" ]; then
@@ -66,7 +70,11 @@ else
 fi
 
 echo "    ssh:     probing ${SSH_HOST} ..."
-if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" 'true' >/dev/null 2>&1; then
+# ConnectTimeout bounds only the TCP connect; ServerAlive* bounds a post-connect
+# stall (banner/auth hang) at ~15s without needing `timeout` (absent on macOS).
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+        "$SSH_HOST" 'true' >/dev/null 2>&1; then
   echo "deploy: cannot reach '${SSH_HOST}' over SSH -- aborting before any rsync --delete." >&2
   echo "        Check ~/.ssh/config, the deploy key, and that SSH is enabled in Kundzon." >&2
   exit 1
