@@ -30,10 +30,10 @@ datainsamlingen redan gått ett tag.
 
 - **CAP-1 — Universum**
   - **intent:** Systemet håller en aktuell lista över svenska bolag på Nasdaq Stockholm
-    Large/Mid/Small Cap och First North, hämtad från Börsdata och avstämd varje natt
-    (tillkomna, avnoterade, listbytande bolag).
-  - **success:** Instrumentlistan speglar Börsdatas motsvarande listor inom ett dygn;
-    varje avstämning loggar antal tillkomna/borttagna/ändrade.
+    Large/Mid/Small Cap och First North, hämtad från Avanzas publika aktielistning och
+    avstämd varje natt (tillkomna, avnoterade, listbytande bolag).
+  - **success:** Instrumentlistan speglar Avanzas listning av Stockholmsbörsen inom ett
+    dygn; varje avstämning loggar antal tillkomna/borttagna/ändrade.
 
 - **CAP-2 — Daglig hämtning**
   - **intent:** För varje aktivt instrument hämtar systemet en gång per dygn ägarantal
@@ -101,8 +101,7 @@ datainsamlingen redan gått ett tag.
 - Allt presentations- och analyslager: webbgränssnitt, grafer, dashboards, notiser.
 - Automatiska köp-/säljsignaler eller en regelmotor.
 - Icke-svenska marknader; instrument som inte är aktier (fonder, ETF:er, index).
-- Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet
-  (Börsdata används enbart för att definiera universumet).
+- Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet.
 - Realtids- eller intradagsdata.
 - Molninfrastruktur, fleranvändarstöd, hög tillgänglighet.
 - Att fastställa definitionen av "tillfällig topp" nu — uppskjuten tills det finns
@@ -118,8 +117,9 @@ körningsloggen — inte som tyst dataförlust.
 
 ## Assumptions
 
-- Börsdatas gratisnivå ger hela universumet (LC/MC/SC + First North) med listetikett
-  och ISIN. Behöver verifieras mot faktiskt API-utfall.
+- Avanzas publika aktielistning ger hela universumet (LC/MC/SC + First North) med
+  listetikett, ISIN och `orderbookId`. Endpoint-väg, filtersyntax och täckning behöver
+  verifieras mot faktiskt API-utfall (Story 2.1).
 - Loopias URL-cron tillåter ett körningspass på flera minuter (deras egen dokumentation
   antyder det), men den exakta gränsen är okänd — arkitekturen (CAP-5) är byggd för att
   vara robust oavsett.

@@ -26,14 +26,6 @@ return [
     // Shared secret for the /cron/* endpoints, compared with hash_equals().
     'cron_token' => 'change-me',
 
-    // Börsdata REST API key (https://borsdata.se, "Mina sidor" -> API). Used
-    // only to define the tradable Swedish universe (Story 2.1 BorsdataAdapter),
-    // never for owner counts. A universe sync is ~2 calls/night; the free tier
-    // caps at 100 calls / 10 s.
-    'borsdata' => [
-        'api_key' => 'change-me',
-    ],
-
     // Log file, relative to the project root or absolute. Must be outside public_html/.
     'log_path' => 'var/log/stockpicker.log',
 ];

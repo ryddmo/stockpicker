@@ -1,13 +1,13 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-08 against 731166a. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-10 against 3bdb599. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## stockpicker
 
 Personal nightly data-collection engine: builds a per-day time series of Avanza and Nordnet
 owner counts for Swedish Nasdaq Stockholm (LC/MC/SC) and First North stocks. PHP 8.3+
-(Loopia's shell runs 8.5), MariaDB 10.11, Composer, no framework; Guzzle, Monolog, Phinx.
-Runs entirely on Loopia shared hosting. v1 is the collection engine only — no UI or
-analysis layer. The canonical contract is `_bmad-output/specs/spec-stockpicker/SPEC.md`
+(Loopia's shell runs 8.5, web-PHP 8.4), MariaDB 10.11, Composer, no framework; Guzzle,
+Monolog, Phinx. Runs entirely on Loopia shared hosting. v1 is the collection engine only —
+no UI or analysis layer. The canonical contract is `_bmad-output/specs/spec-stockpicker/SPEC.md`
 plus the architecture spine.
 
 ## Policy
@@ -28,22 +28,25 @@ plus the architecture spine.
   `_bmad-output/planning-artifacts/architecture/architecture-stockpicker-2026-09-08/ARCHITECTURE-SPINE.md`
   — read the spine's invariants (AD-1…AD-11) before implementing a story.
 - Epics and stories: `_bmad-output/planning-artifacts/epics.md`
-- Source endpoint paths, field names, and auth headers:
-  `_bmad-output/planning-artifacts/briefs/brief-stockpicker-2026-09-08/addendum.md`
-- Planned layout: `public_html/` thin front controller (`/cron/refill`, `/cron/work`,
+- Source endpoint paths, field names, auth headers:
+  `_bmad-output/planning-artifacts/briefs/brief-stockpicker-2026-09-08/addendum.md` —
+  includes the Avanza universe-listing endpoint + schema once Story 2.1 verifies it
+  against a live response (unverified until then).
+- Layout: `public_html/` thin front controller (`/cron/refill`, `/cron/work`,
   `/cron/derive`); `src/{Adapter,Pipeline,Store,Error}/`; `bin/` for SSH-run scripts;
   `db/migrations/` (Phinx); `config.php` outside webroot.
 - Deploying to Loopia: `docs/deploy.md` — SSH/subdomain/DB setup, `bin/deploy.sh`, prerequisites.
 
 ## Running and verifying
 
-App code, migrations, cron endpoints and deploy tooling are all in place (Epic 1 through
-Story 1.10). The first live Loopia deploy is a split-off follow-up (see
-`_bmad-output/implementation-artifacts/deferred-work.md`).
+Epic 1 is done and deployed — the pipe runs unattended on Loopia against the ~20-ISIN seed
+list (first production run 2026-09-10). Epic 2 (live universe from Avanza's listing +
+hardening) is in progress.
 - Setup: `composer install`. Deps: `guzzlehttp/guzzle ^7.9 || ^8.0`, `monolog/monolog ^3.11`,
   `robmorgan/phinx ^0.16.12`; `phpunit/phpunit ^11` in `require-dev`.
 - Tests: `composer test` (PHPUnit). DB-backed tests self-skip without the docker-compose
-  MariaDB; `bin/deploy.sh` is guarded by `tests/DeployScriptTest.php` (no server needed).
+  MariaDB and phpunit does not fail on skips — a green run can hide skipped integration
+  tests; `bin/deploy.sh` is guarded by `tests/DeployScriptTest.php` (no server needed).
 - Migrations: `vendor/bin/phinx migrate -e production` — run manually over SSH; never in a
   cron endpoint or the deploy beyond its explicit step.
 - Deploy: `bin/deploy.sh` — SSH-reachability + working-tree preflight, then rsync source
@@ -51,15 +54,16 @@ Story 1.10). The first live Loopia deploy is a split-off follow-up (see
   on the server, then the explicit `phinx migrate -e production` step (not FTP, not a local
   `vendor/` upload). Flags: `--with-local-vendor`, `--no-migrate`. Runbook: `docs/deploy.md`.
 - Nightly work is triggered only by Loopia URL-cron (HTTP GET) — no CLI cron, one instance
-  at a time, execution-time limit unknown (URL-cron runs in web-PHP context, whose
-  `memory_limit` / `max_execution_time` are still unverified). No step may assume a single
-  invocation finishes it.
+  at a time. Web-PHP context: `memory_limit` 256M, `max_execution_time` 180s, URL-cron
+  minimum interval 5 min (measured 2026-09-10). No step may assume a single invocation
+  finishes it.
 
 ## Conventions that differ from defaults
 
-- All external source access goes through a `SourceAdapter` implementation in
-  `src/Adapter/`. No `curl`/Guzzle, no source URL, no source-specific parsing anywhere
-  else. (AD-1)
+- All external HTTP lives in `src/Adapter/` — owner-count sources behind the `SourceAdapter`
+  port, the universe listing in its own adapter class (`AvanzaUniverseAdapter`,
+  `listUniverse()`, not a `SourceAdapter`). No `curl`/Guzzle, source URL, or source-specific
+  parsing anywhere else. (AD-1)
 - All DB access goes through PDO repositories in `src/Store/` — no SQL in pipeline or
   adapter code, no ORM. (consistency convention)
 - One writer per table: `instrument` is written only by `UniverseSync`; each source's flow

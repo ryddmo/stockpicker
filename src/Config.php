@@ -107,24 +107,6 @@ final class Config
     }
 
     /**
-     * Börsdata REST API key, read from `config.php` (`borsdata.api_key`), which
-     * lives above the web root (AD-8). Used only by the universe/symbology
-     * BorsdataAdapter. A missing or empty key throws here, before the adapter is
-     * ever built.
-     */
-    public function borsdataApiKey(): string
-    {
-        $borsdata = $this->data['borsdata'] ?? null;
-        $key = \is_array($borsdata) ? ($borsdata['api_key'] ?? null) : null;
-
-        if (!\is_string($key) || $key === '') {
-            throw new RuntimeException('config.php is missing a non-empty "borsdata" => "api_key"');
-        }
-
-        return $key;
-    }
-
-    /**
      * Absolute path to the log file. A relative log_path is resolved against
      * the project root; the default is var/log/stockpicker.log.
      */

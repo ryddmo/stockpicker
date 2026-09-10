@@ -2,7 +2,7 @@
 title: "Product Brief: Stockpicker"
 status: draft
 created: 2026-09-08
-updated: 2026-09-08
+updated: 2026-09-10
 ---
 
 # Product Brief: Stockpicker
@@ -96,7 +96,7 @@ inloggning, ingen fleranvändarhantering, ingen SLA.
 ## Scope
 
 **Ingår i v1 (datainsamling):** hela insamlingskedjan för svenska bolag på Large/Mid/Small
-Cap + First North — daglig universumavstämning mot Börsdata, nattlig hämtning av ägarantal
+Cap + First North — daglig universumavstämning mot Avanzas listning, nattlig hämtning av ägarantal
 och kringdata från Avanza och Nordnet, instrumentmatchning via ISIN, tidsserielagring,
 härledda mått, robust felhantering och schemakontroll. Se kravavsnittet K1–K12 för
 detaljer.
@@ -106,8 +106,7 @@ detaljer.
 - All presentation: webbgränssnitt, grafer, dashboards, notiser.
 - Automatiska köp-/säljsignaler eller regelmotor.
 - Andra marknader än svenska, andra instrument än aktier (fonder, ETF:er, index).
-- Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet
-  (Börsdata används enbart för att definiera universumet, inte för ägarsiffror).
+- Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet.
 - Realtidsdata, intradagsdata.
 - Fleranvändarstöd, autentisering, molndrift, hög tillgänglighet.
 
@@ -117,15 +116,18 @@ Kravunderlag för den tekniska beskrivningen. Detaljerade endpoint-, fält- och
 schemauppgifter ligger i `addendum.md`.
 
 **K1 — Universum.** Systemet ska underhålla en aktuell lista över instrument i
-universumet (svenska LC/MC/SC + First North). Källa är **Börsdatas API** (gratisnivå),
-som ger instrumenten med listtillhörighet och ISIN. Universumet lagras, inte hårdkodas.
+universumet (svenska LC/MC/SC + First North). Källa är **Avanzas publika listning** av
+Stockholmsbörsens aktier (samma inofficiella endpoint-klass som ägarsiffrorna, se
+addendum), som ger instrumenten med listtillhörighet, ISIN och Avanzas `orderbookId`.
+Universumet lagras, inte hårdkodas.
 
 **K1b — Daglig universumavstämning.** Första steget i det nattliga jobbet ska stämma av
-den lagrade instrumentlistan mot Börsdata: bolag som tillkommit läggs till, bolag som
-avnoterats markeras som borta (raderas inte — historiken behålls), bolag som bytt lista
-uppdateras. För varje nytt bolag slås Avanza `orderbookId` och Nordnet
-`nnx_instrument_id` upp en gång (via respektive sök-endpoint, nyckel ISIN) och cachas i
-`instrument`-tabellen. Avstämningen loggas (antal tillkomna/borttagna/ändrade).
+den lagrade instrumentlistan mot Avanzas listning: bolag som tillkommit läggs till, bolag
+som avnoterats markeras som borta (raderas inte — historiken behålls), bolag som bytt
+lista uppdateras. För varje nytt bolag tas Avanza `orderbookId` direkt ur listningen och
+Nordnet `nnx_instrument_id` slås upp en gång (via Nordnets sök-endpoint, nyckel ISIN);
+båda cachas i `instrument`-tabellen. Avstämningen loggas (antal
+tillkomna/borttagna/ändrade).
 
 **K2 — Daglig hämtning.** För varje aktivt instrument i universumet ska jobbet, efter
 universumavstämningen, en gång per dygn hämta: Avanza `numberOfOwners`, Nordnet
@@ -186,12 +188,16 @@ plattformsbeslut ligger i arkitektur-spinen.
 > _Uppdaterad 2026-09-08: infrastrukturvalet (Loopia, MariaDB, URL-cron) fastställdes i
 > arkitektur-spinen efter att briefen skrevs; tidigare formulering ("SQLite på laptop")
 > är ersatt._
+>
+> _Uppdaterad 2026-09-10: universumkällan bytt från Börsdatas API till Avanzas publika
+> listning — Börsdatas API kräver betald Pro-prenumeration (ingen gratisnivå). Se
+> sprint-change-proposal-2026-09-10.md._
 
 ## Öppna frågor
 
-- **Börsdata-API:ets täckning och nivå:** att gratisnivån verkligen ger hela universumet
-  (LC/MC/SC + First North) med listetikett och ISIN behöver verifieras mot faktiskt
-  API-utfall.
+- **Avanza-listningens täckning och form:** att Avanzas publika listning ger hela
+  universumet (LC/MC/SC + First North) med listetikett, ISIN och `orderbookId`, och exakt
+  endpoint-väg/filter, behöver verifieras mot faktiskt API-utfall (görs i Story 2.1).
 - **Nordnets uppdateringstakt:** endast ~daglig enligt research, exakt tid odokumenterad.
   Hanteras genom konfigurerbar körtid (K3) — provas fram i drift.
 - **Endpoint-stabilitet:** Avanza- och Nordnet-endpointsen för ägarantal är inofficiella

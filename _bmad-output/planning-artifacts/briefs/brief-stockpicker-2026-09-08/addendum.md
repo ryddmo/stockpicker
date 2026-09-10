@@ -2,7 +2,7 @@
 title: "Stockpicker — Addendum: teknisk detalj för datahämtning"
 status: draft
 created: 2026-09-08
-updated: 2026-09-08
+updated: 2026-09-10
 ---
 
 # Addendum — teknisk detalj för datahämtning
@@ -11,31 +11,36 @@ Underlag till den tekniska beskrivningen. Allt nedan bygger på research gjord
 2026-09-08 mot de publika, inofficiella endpoints som Avanza och Nordnet använder på
 sina egna webbplatser. Endpoint-vägar och fältnamn kan ändras utan förvarning.
 
-## Källa: Börsdata (universum)
+## Källa: Avanza — universum (listning)
 
-**Roll:** definierar *vilka* bolag som ingår — inte ägarsiffror.
+**Roll:** definierar *vilka* bolag som ingår — inte ägarsiffror. (Bytt från Börsdatas API
+2026-09-10; Börsdatas API kräver betald Pro-prenumeration, ingen gratisnivå.)
 
-- API-wiki: https://github.com/Borsdata-Sweden/API/wiki
-- Gratisnivå finns; nyckel krävs (konto på borsdata.se). Anropstak på gratisnivån —
-  verifiera aktuell gräns; universumavstämning är ett fåtal anrop per natt.
-- Relevanta endpoints (verifiera exakta vägar mot wiki):
-  - instrument-lista med `marketId` / `branschId` / listtillhörighet
-  - `markets` / `branches` för att mappa listetikett → LC / MC / SC / First North
-  - varje instrument bär ISIN, namn, ticker.
-- Filtrera till Nasdaq Stockholm LC/MC/SC + First North Growth Market (Stockholm).
+- Samma inofficiella endpoint-klass som Avanzas ägarsiffror (`www.avanza.se/_api/...`),
+  ingen autentisering, normal `User-Agent`-header.
+- Avanzas webbplats har en aktielistning / screener som räknar upp Stockholmsbörsens
+  aktier per lista. **Exakt endpoint-väg och filtersyntax är overifierad** och ska
+  fastställas mot ett faktiskt svar i Story 2.1 (samma metod som för `market-guide` och
+  `stocklist`: fånga ett riktigt svar, validera schema, dokumentera här).
+  - `GET /_api/market-guide/stock/{orderbookId}` bär redan `isin`, `name` och
+    `marketList` (t.ex. `"Large Cap Stockholm"`) — fälten finns Avanza-sidan.
+- Mappa Avanzas listetikett → `LC | MC | SC | First North`; filtrera bort Spotlight, NGM,
+  utländska listor och icke-aktier (ETF:er, index, certifikat).
+- Avanza `orderbookId` kommer **direkt ur listningen** — inget separat id-uppslag mot
+  Avanza behövs längre. Endast Nordnet `nnx_instrument_id` slås upp per nytt bolag.
 
 **Universumavstämning (nattjobbets steg 1)**
 
-1. Hämta aktuell instrumentlista från Börsdata, filtrerad till målslistorna.
+1. Hämta aktuell aktielistning från Avanza, filtrerad till mållistorna.
 2. Diffa mot lagrad `instrument`-tabell:
-   - nytt ISIN → lägg till rad, sätt `first_seen`, slå upp Avanza/Nordnet-id.
-   - ISIN saknas i Börsdata-svaret → sätt `last_seen`, markera inaktiv (radera inte).
+   - nytt ISIN → lägg till rad, sätt `first_seen`, cacha Avanza `orderbookId` ur svaret,
+     slå upp Nordnet `nnx_instrument_id`.
+   - ISIN saknas i Avanza-svaret → sätt `last_seen`, markera inaktiv (radera inte).
    - listbyte → uppdatera `list`.
 3. Logga antal tillkomna / borttagna / ändrade i `ingest_run`.
 4. Fortsätt till ägardatahämtning (K2) för aktiva instrument.
 
-Avanza/Nordnet-id slås upp en gång per nytt bolag (nyckel ISIN) och cachas — inte varje
-natt.
+Nordnet-id slås upp en gång per nytt bolag (nyckel ISIN) och cachas — inte varje natt.
 
 ## Källa: Avanza
 
@@ -177,8 +182,7 @@ Uppdelningen är fastställd i arkitektur-spinen (AD-8): hemligheter i `config.p
 `public_html/`, aldrig i versionshantering; drift-parametrar i `settings`-tabellen, lästa
 vid varje körning.
 
-- **`config.php`** (hemligt, utanför webroot): MariaDB-anslutningsuppgifter, cron-token,
-  Börsdata API-nyckel
+- **`config.php`** (hemligt, utanför webroot): MariaDB-anslutningsuppgifter, cron-token
 - **`settings`-tabell** (ändras utan deploy): `run_after` (kör-inte-före-tid, klockslag i
   `Europe/Stockholm` — justeras för att prova fram Nordnets uppdateringstid),
   `rate.avanza` / `rate.nordnet` (anrop/s) och backoff-parametrar, `batch_size`,

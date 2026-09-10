@@ -17,7 +17,7 @@ addendum till implementerbara stories för v1: den nattliga datainsamlingsmotorn
 
 ### Functional Requirements
 
-FR1: Systemet håller en aktuell lista över svenska bolag på Nasdaq Stockholm Large/Mid/Small Cap och First North, hämtad från Börsdata och avstämd varje natt (tillkomna, avnoterade, listbytande bolag); varje avstämning loggar antal ändrade.
+FR1: Systemet håller en aktuell lista över svenska bolag på Nasdaq Stockholm Large/Mid/Small Cap och First North, hämtad från Avanzas publika aktielistning och avstämd varje natt (tillkomna, avnoterade, listbytande bolag); varje avstämning loggar antal ändrade.
 FR2: En gång per dygn hämtar systemet ägarantal och kringdata (namn, ISIN, lista, senaste kurs, börsvärde) från både Avanza och Nordnet för varje aktivt instrument.
 FR3: Vid universumavstämning slår systemet upp och cachar varje nytt instruments Avanza `orderbookId` och Nordnet `nnx_instrument_id` via respektive sök-endpoint, med ISIN som nyckel; uppslag sker aldrig lat i hämtningssteget.
 FR4: All hämtad data lagras append-only som en tidsserie, idempotent per `(isin, source, as_of_date)`, källindelad; ingen befintlig rad skrivs över.
@@ -58,7 +58,7 @@ NFR9: Hemligheter (DB-uppgifter, cron-token) ligger i `config.php` utanför webr
 - **Deploy (Story 1.10):** rsync över SSH, inte FTP. Källkod (utan `vendor/`) synkas till `~/stockpicker/`; `composer install --no-dev --optimize-autoloader` körs på servern (lokalt byggt `vendor/` är fallback); `config.php` kopieras manuellt en gång, utanför docroot; migrationer körs manuellt via SSH (`vendor/bin/phinx migrate`); subdomän med docroot `~/stockpicker/public_html/`; Loopias tre URL-cron-jobb registreras i Kundzon. Runbook i `docs/deploy.md`.
 - **Härledda mått:** MariaDB window functions; SQL-vy vs materialiserad tabell avgörs vid implementation.
 - **Loggning:** Monolog till fil; `warning` för schemaavvikelse, `error` för oväntat undantag.
-- **Öppna frågor att hantera i drift:** Börsdatas gratisnivå-täckning overifierad; Nordnets uppdateringstid okänd; web-PHP:ns `memory_limit`/`max_execution_time` och URL-cronens tidsgräns + minsta intervall ännu okänt (Kundzon + probe i Story 1.10). Verifierat 2026-09-08: SSH, `rsync`, server-`composer`, `pdo_mysql`/`curl` finns.
+- **Öppna frågor att hantera i drift:** Avanza-listningens endpoint-väg/filter och täckning overifierad (fastställs i Story 2.1); Nordnets uppdateringstid okänd; web-PHP:ns `memory_limit`/`max_execution_time` och URL-cronens tidsgräns + minsta intervall ännu okänt (Kundzon + probe i Story 1.10). Verifierat 2026-09-08: SSH, `rsync`, server-`composer`, `pdo_mysql`/`curl` finns.
 
 ### UX Design Requirements
 
@@ -66,7 +66,7 @@ Ingen UX — inget användargränssnitt i v1.
 
 ### FR Coverage Map
 
-FR1: Epic 2 - Live universum-avstämning mot Börsdata (Epic 1 kör mot en hårdkodad seed-lista)
+FR1: Epic 2 - Live universum-avstämning mot Avanzas listning (Epic 1 kör mot en hårdkodad seed-lista)
 FR2: Epic 1 - Daglig hämtning från Avanza (Story 1.4) och Nordnet (Story 1.5), separat
 FR3: Epic 1 - Id-uppslag och cachning (mot seed-listans ISIN i Epic 1)
 FR4: Epic 1 - Append-only tidsserielagring, idempotent
@@ -90,7 +90,7 @@ system. Efter epicen finns riktig data på disk och pipen kör oövervakad mot s
 **NFRs covered:** NFR1, NFR2, NFR4, NFR8, NFR9 (Story 1.10 realiserar NFR1/NFR2-driftsättningen; NFR8 verifieras i Story 1.7)
 
 ### Epic 2: Live universum + överleva en månad oövervakad
-Byt seed-listan mot den riktiga Börsdata-synken: FR1, daglig avstämning, churn-loggning. Och rustningen: delfel förlorar inte en natt (FR8), övergående fel återförsöks med backoff (FR9), fastnade `claimed`-jobb återöppnas, körningsloggen får lyckade/misslyckade per källa och schemaavvikelser, schemaändringar blir larm — inte bara en loggrad. Ordnad story-lista: live universum först, sedan härdningsstories utifrån vad de första veckorna faktiskt kastar. Återkopplingsgränsen ligger inuti den här epicen.
+Byt seed-listan mot den riktiga universum-synken (Avanzas listning): FR1, daglig avstämning, churn-loggning. Och rustningen: delfel förlorar inte en natt (FR8), övergående fel återförsöks med backoff (FR9), fastnade `claimed`-jobb återöppnas, körningsloggen får lyckade/misslyckade per källa och schemaavvikelser, schemaändringar blir larm — inte bara en loggrad. Ordnad story-lista: live universum först, sedan härdningsstories utifrån vad de första veckorna faktiskt kastar. Återkopplingsgränsen ligger inuti den här epicen.
 **FRs covered:** FR1, FR8, FR9, FR12 (fullt), FR13 (fullt)
 
 ### Epic 3: Härledda mått
@@ -354,24 +354,31 @@ So that jag ser riktiga rader dyka upp och vet att kedjan håller innan jag lita
 
 ## Epic 2: Live universum + överleva en månad oövervakad
 
-Seed-listan byts mot den riktiga Börsdata-synken, och pipen härdas för trettio nätters oövervakad drift. Ordnad story-lista: live universum först, sedan härdning.
+Seed-listan byts mot den riktiga universum-synken mot Avanzas listning, och pipen härdas för trettio nätters oövervakad drift. Ordnad story-lista: live universum först, sedan härdning.
 
-### Story 2.1: Börsdata-adapter för universumlistan
+### Story 2.1: Avanza-universumadapter (listning)
+
+_(Ersätter den tidigare Börsdata-varianten av Story 2.1, mergad 2026-09-10 men aldrig
+driftsatt — Börsdatas API kräver betald Pro-prenumeration.)_
 
 As en operatör,
-I want att hela det svenska universumet hämtas från Börsdata,
+I want att hela det svenska universumet hämtas från Avanzas publika aktielistning,
 So that pipen täcker alla bolag på LC/MC/SC och First North, inte bara seed-listan.
 
 **Acceptance Criteria:**
 
-**Given** en giltig Börsdata API-nyckel i `settings` eller `config.php`
-**When** `BorsdataAdapter::listUniverse()` anropas
-**Then** returneras alla instrument på Nasdaq Stockholm Large/Mid/Small Cap och First North Growth Market med `isin`, `name` och listetikett
-**And** listetiketten mappas till `LC | MC | SC | First North`
+**Given** Avanzas publika aktielistning (samma inofficiella endpoint-klass som ägarsiffrorna, ingen nyckel)
+**When** `AvanzaUniverseAdapter::listUniverse()` anropas
+**Then** returneras alla aktier på Nasdaq Stockholm Large/Mid/Small Cap och First North med `isin`, `name`, listetikett och Avanza `orderbookId`
+**And** listetiketten mappas till `LC | MC | SC | First North` och icke-mål (Spotlight, NGM, utländska listor, icke-aktier) filtreras bort
 
-**Given** ett Börsdata-svar med förändrad form
+**Given** ett Avanza-svar med förändrad form
 **When** adaptern validerar det
 **Then** returneras `SchemaMismatch` och ingen partiell lista sparas
+
+**Given** att exakt endpoint-väg och filtersyntax är overifierad
+**When** adaptern implementeras
+**Then** fångas ett riktigt svar en gång, schemat dokumenteras i addendum, och testfixtures speglar det verkliga svaret
 
 ### Story 2.2: UniverseSync — daglig avstämning
 
@@ -381,10 +388,10 @@ So that tillkomna, avnoterade och listbytande bolag hanteras automatiskt.
 
 **Acceptance Criteria:**
 
-**Given** en lagrad instrumentlista och en färsk Börsdata-lista
+**Given** en lagrad instrumentlista och en färsk lista från Avanza
 **When** `UniverseSync` körs
-**Then** läggs nya ISIN till med `first_seen` satt och id-uppslag mot Avanza/Nordnet triggas (per Story 1.3)
-**And** ISIN som saknas i Börsdata-svaret får `last_seen` satt och markeras inaktiva (raderas inte)
+**Then** läggs nya ISIN till med `first_seen` satt, Avanza `orderbookId` cachas ur listningen och Nordnet-id slås upp (per Story 1.3)
+**And** ISIN som saknas i Avanza-svaret får `last_seen` satt och markeras inaktiva (raderas inte)
 **And** listbyten uppdaterar `instrument.list`
 
 **Given** `UniverseSync` har körts
