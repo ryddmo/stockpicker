@@ -10,8 +10,10 @@ use Stockpicker\Store\DerivedMetricsRepository;
  * Thin filter exposing `owner_count_metrics` (Story 3.1) to the rest of the
  * pipeline. Read-only, stateless — no SQL of its own, no `ingest_run` row
  * (there is nothing to "run": the view has no execution to log). Today it
- * only delegates; Story 3.2/3.3 decide whether it grows logic of its own,
- * but this is the settled name/shape they build on (epic-3-context.md).
+ * only delegates. Story 3.2 settled that `/cron/derive` does not call this
+ * class at all (it only logs that the stage ran) — this remains unused by
+ * the endpoint. Story 3.3 still decides whether it grows logic of its own;
+ * this is the settled name/shape it builds on (epic-3-context.md).
  */
 final class Deriver
 {

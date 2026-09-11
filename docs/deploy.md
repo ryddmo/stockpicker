@@ -108,14 +108,15 @@ the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
    (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11). **Copy the username verbatim from
    Kundzon → Databaser** — it has an `@…` suffix and is not guessable. Have host / name /
    user / password ready for `config.php`.
-5. **URL-cron** — Kundzon → **"Schemaläggning (cron)"** → create **two** jobs, both
+5. **URL-cron** — Kundzon → **"Schemaläggning (cron)"** → create **three** jobs, all
    calling `stockpicker.ryddmo.se` over HTTPS with the shared token as the **only** query
    parameter (the endpoints return 400 on any extra param):
 
-   | Path                                                | Periodicity              | Purpose                                                                                                                                                  |
-   | --------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `https://stockpicker.ryddmo.se/cron/refill?token=…` | **Varje timme** (hourly) | `UniverseSync` (reconcile `instrument` against the live Avanza listing, timeboxed by `universe.resolve_timebox`) then `Enqueue` over the active universe |
-   | `https://stockpicker.ryddmo.se/cron/work?token=…`   | **Var femte minut**      | `FetchRunner`, one 75 s time-boxed slice                                                                                                                 |
+   | Path                                                 | Periodicity              | Purpose                                                                                                                                                  |
+   | ----------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `https://stockpicker.ryddmo.se/cron/refill?token=…`  | **Varje timme** (hourly) | `UniverseSync` (reconcile `instrument` against the live Avanza listing, timeboxed by `universe.resolve_timebox`) then `Enqueue` over the active universe |
+   | `https://stockpicker.ryddmo.se/cron/work?token=…`    | **Var femte minut**      | `FetchRunner`, one 75 s time-boxed slice                                                                                                                 |
+   | `https://stockpicker.ryddmo.se/cron/derive?token=…`  | **Daily**, after the queue drains (e.g. once nightly `/cron/work` slices are done) | Logs a `derive` `ingest_run` row over the active universe; `owner_count_metrics` is a plain SQL view (Story 3.1) so there is nothing to materialize |
 
    A `/cron/refill` whose `UniverseSync` step fails — the Avanza listing is
    unreachable / changed shape, or the run would delist more than
@@ -124,15 +125,16 @@ the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
    so the loss is bounded to ≤ 1 h. A legitimate delisting larger than the cap
    needs a one-run operator bump of `universe.max_delist` (see settings below).
 
-   **Both endpoints are gated by `settings.run_after`** (default `18:30` Europe/Stockholm)
+   **All three endpoints are gated by `settings.run_after`** (default `18:30` Europe/Stockholm)
    — Story 1.9 design. A `/cron/refill` _before_ 18:30 returns `window_closed` and
    enqueues nothing, so it must **not** be scheduled at 00:00. Loopia's cron timezone is
    not exposed and DST shifts a fixed time, so refill runs **hourly**: the first call
    after 18:30 enqueues, later calls are idempotent (`created: 0`). Outside the window
    every call returns HTTP 200 `{"status":"window_closed"}` and does no work.
 
-   `/cron/derive` is **not registered yet** — it stays a 404 until Story 3.2 ships the
-   `Deriver` endpoint. Add a third URL-cron job (daily, after the queue drains) then.
+   `/cron/derive` is registered as the third job above (Story 3.2). It is gated by the
+   same `settings.run_after` window as `refill`/`work`; before 18:30 it returns
+   `window_closed` and writes no `ingest_run` row.
 
    Leave **"E-postadress för utmatning"** empty. Confirm **"Aktiv körning"** is ticked.
 
@@ -439,8 +441,9 @@ There is no automated rollback. Options, simplest first:
 - [x] URL-cron max execution time ≥ 180 s min interval = **5 min** ("Var femte minut")
 - [x] Subdomain docroot = `~/stockpicker.ryddmo.se/public_html/` (Loopia-created, fixed)
 - [x] MariaDB reachable from the app; `config.php` in place and `chmod 600`
-- [x] Both URL-cron jobs registered — `refill` hourly, `work` every 5 min. **Firing to be
-      confirmed on the first automated run after 18:30 on 2026-09-10.**
+- [x] All three URL-cron jobs registered — `refill` hourly, `work` every 5 min, `derive`
+      daily after the queue drains. **Firing to be confirmed on the first automated run
+      after 18:30 on 2026-09-10.**
 - [x] `http://` → `https://` is a 301 at Loopia's nginx LB; `Tvinga SSL` to be ticked once
       the Let's Encrypt cert issues
 - [x] `batch_size` 25 / 75 s time-box left as-is — `memory_limit` 256M meets the NFR8 target

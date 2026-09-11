@@ -93,6 +93,38 @@ final class FrontControllerTest extends TestCase
         self::assertSame(['error' => 'invalid request'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
     }
 
+    public function testDeriveWithoutTokenReturns403BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/derive');
+
+        self::assertSame(403, $status);
+        self::assertSame(['error' => 'forbidden'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testDeriveWithWrongTokenReturns403BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/derive?token=wrong-token');
+
+        self::assertSame(403, $status);
+        self::assertSame(['error' => 'forbidden'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testDeriveWithUnexpectedQueryParameterReturns400BeforeOpeningDatabase(): void
+    {
+        [$status, $body] = $this->get('/cron/derive?token=test-token&unexpected=value');
+
+        self::assertSame(400, $status);
+        self::assertSame(['error' => 'invalid request'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testDeriveWithNonGetMethodReturns405(): void
+    {
+        [$status, $body] = $this->post('/cron/derive?token=test-token');
+
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function testMissingConfigReturns500AndLogsError(): void
     {
         // Remove the config only from this temp root.
@@ -181,9 +213,29 @@ final class FrontControllerTest extends TestCase
     /**
      * @return array{0: int, 1: string}
      */
+    private function post(string $path): array
+    {
+        return $this->request('POST', $path);
+    }
+
+    /**
+     * @return array{0: int, 1: string}
+     */
     private function get(string $path): array
     {
-        $ctx = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 5]]);
+        return $this->request('GET', $path);
+    }
+
+    /**
+     * @return array{0: int, 1: string}
+     */
+    private function request(string $method, string $path): array
+    {
+        $options = ['ignore_errors' => true, 'timeout' => 5];
+        if ($method !== 'GET') {
+            $options['method'] = $method;
+        }
+        $ctx = stream_context_create(['http' => $options]);
         $body = file_get_contents($this->base . $path, false, $ctx);
         $status = 0;
         foreach ($http_response_header ?? [] as $header) {
