@@ -73,6 +73,12 @@ final class MigrationTest extends TestCase
         self::assertSame(['isin', 'source', 'as_of_date'], $this->primaryKey('owner_count_daily'));
         self::assertStringContainsString('unsigned', $this->columnType('owner_count_daily', 'number_of_owners'));
 
+        // Story 3.1 — the derived-metrics view exists and is queryable against
+        // the real server (window functions, CTEs, STDDEV_SAMP), before any
+        // fixture rows below give it something to compute.
+        self::assertTrue($this->tableExists('owner_count_metrics'));
+        self::assertSame([], $this->pdo->query('SELECT * FROM owner_count_metrics')->fetchAll());
+
         // A duplicate (isin, source, as_of_date) must be rejected by the real schema.
         $this->pdo->exec(
             "INSERT INTO instrument (isin, name, list, first_seen)
@@ -179,6 +185,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('owner_count_daily'));
         self::assertFalse($this->tableExists('work_queue'));
         self::assertFalse($this->tableExists('ingest_run'));
+        self::assertFalse($this->tableExists('owner_count_metrics'));
     }
 
     /**
@@ -251,7 +258,9 @@ final class MigrationTest extends TestCase
 
     private function dropAll(): void
     {
-        // owner_count_daily first — it references both instrument and ingest_run.
+        // The view first — it reads owner_count_daily. Story 3.1.
+        $this->pdo->exec('DROP VIEW IF EXISTS `owner_count_metrics`');
+        // owner_count_daily next — it references both instrument and ingest_run.
         foreach (['owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
