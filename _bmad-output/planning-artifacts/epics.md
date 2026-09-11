@@ -493,10 +493,15 @@ So that jag kan studera ägarutvecklingen över tid istället för bara råa niv
 **Given** en `owner_count_daily`-serie för `(isin, source)`
 **When** `Deriver` körs
 **Then** beräknas `delta_1d`, `pct_1d`, `sma_7`, `sma_30`, `sma_90`, `up_streak` och `spike_score` med MariaDB window functions
+**And** måtten beräknas separat per källa (Avanza, Nordnet) och slås aldrig ihop till ett
+kombinerat mått (beslutat 2026-09-11, jfr NFR6 — samma princip som `owner_count_daily` redan
+följer)
 
 **Given** valet mellan SQL-vy och materialiserad tabell
 **When** `Deriver` implementeras
-**Then** är valet dokumenterat och `Deriver` skriver aldrig till `owner_count_daily`
+**Then** används en SQL-vy (beslutat 2026-09-11 — ingen materialisering, ingen refresh-logik;
+`/cron/derive` behöver inte trigga någon ombyggnad) och `Deriver` skriver aldrig till
+`owner_count_daily`
 
 **Given** en instrument-källa med färre än 7 datapunkter
 **When** måtten beräknas
@@ -524,7 +529,8 @@ So that jag kan granska ett bolag inför ett köp.
 **Acceptance Criteria:**
 
 **Given** ett ISIN med insamlad historik
-**When** uttaget körs (skyddad läs-endpoint eller `bin/`-skript)
+**When** uttaget körs via ett `bin/`-skript över SSH (beslutat 2026-09-11 — inget nytt skyddat
+läs-endpoint; samma mönster och renderingsdisciplin som `bin/show-runs.php`)
 **Then** returneras hela serien per källa för hela den insamlade perioden, med de härledda måtten
 
 **Given** ett ISIN utan data
