@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-09-10 against 3bdb599. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-09-11 against a211411. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## stockpicker
 
@@ -28,25 +28,30 @@ plus the architecture spine.
   `_bmad-output/planning-artifacts/architecture/architecture-stockpicker-2026-09-08/ARCHITECTURE-SPINE.md`
   — read the spine's invariants (AD-1…AD-11) before implementing a story.
 - Epics and stories: `_bmad-output/planning-artifacts/epics.md`
-- Source endpoint paths, field names, auth headers:
-  `_bmad-output/planning-artifacts/briefs/brief-stockpicker-2026-09-08/addendum.md` —
-  includes the Avanza universe-listing endpoint + schema once Story 2.1 verifies it
-  against a live response (unverified until then).
-- Layout: `public_html/` thin front controller (`/cron/refill`, `/cron/work`,
-  `/cron/derive`); `src/{Adapter,Pipeline,Store,Error}/`; `bin/` for SSH-run scripts;
-  `db/migrations/` (Phinx); `config.php` outside webroot.
-- Deploying to Loopia: `docs/deploy.md` — SSH/subdomain/DB setup, `bin/deploy.sh`, prerequisites.
+- Source endpoint paths, field names, auth headers, incl. the verified Avanza
+  universe-listing endpoint + response schema (Story 2.1):
+  `_bmad-output/planning-artifacts/briefs/brief-stockpicker-2026-09-08/addendum.md`
+- Layout: `public_html/` thin front controller (currently `/cron/refill`, `/cron/work`);
+  `src/{Adapter,Pipeline,Store,Error}/`; `bin/` for SSH-run scripts; `db/migrations/`
+  (Phinx); `config.php` outside webroot.
+- Deploying to Loopia, and every tunable `settings.*` key with its default
+  (`retry.*`, `universe.*`, `queue.stale_after`, `alarm.email`, …): `docs/deploy.md`
+  (SSH/subdomain/DB setup, `bin/deploy.sh`, prerequisites).
 
 ## Running and verifying
 
-Epic 1 is done and deployed — the pipe runs unattended on Loopia against the ~20-ISIN seed
-list (first production run 2026-09-10). Epic 2 (live universe from Avanza's listing +
-hardening) is in progress.
+Epic 1 is done and deployed (Loopia, ~20-ISIN seed list, first run 2026-09-10). Epic 2
+(live Avanza-listing universe; fetch hardening — retry/backoff, stale-job recovery,
+per-source run log + schema-mismatch alarm) is implemented and merged to `main`, pending
+epic retro — **not yet deployed**: production still runs Epic 1's seed-list code until the
+next deploy.
 - Setup: `composer install`. Deps: `guzzlehttp/guzzle ^7.9 || ^8.0`, `monolog/monolog ^3.11`,
   `robmorgan/phinx ^0.16.12`; `phpunit/phpunit ^11` in `require-dev`.
 - Tests: `composer test` (PHPUnit). DB-backed tests self-skip without the docker-compose
   MariaDB and phpunit does not fail on skips — a green run can hide skipped integration
   tests; `bin/deploy.sh` is guarded by `tests/DeployScriptTest.php` (no server needed).
+- Inspect recent runs, per-source outcomes, and schema-mismatch alarms:
+  `php bin/show-runs.php --alarms` (SSH).
 - Migrations: `vendor/bin/phinx migrate -e production` — run manually over SSH; never in a
   cron endpoint or the deploy beyond its explicit step.
 - Deploy: `bin/deploy.sh` — SSH-reachability + working-tree preflight, then rsync source
@@ -78,6 +83,12 @@ hardening) is in progress.
 - `FetchRunner` claims queue jobs atomically and works a ~60–90s timebox; `work_queue`
   goes `pending → claimed → done | failed`, only `Enqueue` creates `pending`, only
   `FetchRunner` makes the other transitions. (AD-5)
+- `FetchRunner` owns all `fetch()` retry (exponential backoff, timeboxed) — an adapter's
+  `fetch()` must never wrap itself in `withOneRetry()`; only `resolveId()` and the
+  universe-listing calls keep the one-shot retry. (Story 2.4)
+- Stale `work_queue` recovery is run-date-aware: a `claimed` row stuck past
+  `queue.stale_after` reopens if it is today's run, or is marked `failed` (no backfill) if
+  from an earlier run — never left `claimed` forever. (Story 2.5)
 - ISIN is the natural key everywhere; Avanza/Nordnet ids are cached attributes on
   `instrument`. Tables `snake_case`, singular.
 - `as_of_date` is a calendar date in `Europe/Stockholm` (from the source timestamp when
