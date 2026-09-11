@@ -153,6 +153,50 @@ try {
             ]);
             break;
 
+        case '/cron/derive':
+            // View-based design (Story 3.1): owner_count_metrics is a plain SQL view, so
+            // there is nothing to materialize here. This deliberately never touches
+            // Deriver/DerivedMetricsRepository — it only logs that the stage ran.
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            authorize_cron($services['config']);
+
+            if (count($_GET) !== 1 || !array_key_exists('token', $_GET)) {
+                send_json(400, ['error' => 'invalid request']);
+                break;
+            }
+
+            $pdo = Database::connect($services['config']);
+            $settings = new SettingsRepository($pdo);
+            $runAfter = $settings->get('run_after');
+            if ($runAfter === null) {
+                throw new \RuntimeException('missing required setting: run_after');
+            }
+
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm'));
+            $runAfterTime = cron_time($runAfter, $now);
+            if ($now < $runAfterTime) {
+                send_json(200, [
+                    'status' => 'window_closed',
+                    'run_date' => $now->format('Y-m-d'),
+                ]);
+                break;
+            }
+
+            $runDate = $now->format('Y-m-d');
+            $count = count((new InstrumentRepository($pdo))->allActive());
+            (new RunRepository($pdo))->record('derive', $runDate, $now, $now, $count, $count, 0);
+
+            send_json(200, [
+                'status' => 'ok',
+                'run_date' => $runDate,
+                'instrument_count' => $count,
+            ]);
+            break;
+
         default:
             send_json(404, ['error' => 'not found']);
             break;

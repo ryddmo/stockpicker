@@ -175,6 +175,45 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    public function testDeriveWritesOneIngestRunRowAndReturnsCounts(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status']);
+        self::assertSame(4, $json['instrument_count']);
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        self::assertSame($runDate, $json['run_date']);
+
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'derive'")->fetchColumn(),
+        );
+        $row = $this->pdo->query("SELECT run_date, instrument_count, ok_count, fail_count, status FROM ingest_run WHERE run_type = 'derive'")->fetch();
+        self::assertSame($runDate, $row['run_date']);
+        self::assertSame(4, (int) $row['instrument_count']);
+        self::assertSame(4, (int) $row['ok_count']);
+        self::assertSame(0, (int) $row['fail_count']);
+        self::assertSame('completed', $row['status']);
+    }
+
+    public function testDeriveClosedWindowDoesNotWriteARun(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter($this->futureRunAfter());
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('window_closed', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
     public function testRefillClosedWindowDoesNotRunPipeline(): void
     {
         $this->seedInstrument();
@@ -212,6 +251,31 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(500, $status);
         self::assertSame(['error' => 'internal server error'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+    }
+
+    public function testDeriveMissingRunAfterReturnsGenericServerError(): void
+    {
+        $this->seedInstrument();
+        $this->pdo->exec("DELETE FROM settings WHERE `key` = 'run_after'");
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+
+        self::assertSame(500, $status);
+        self::assertSame(['error' => 'internal server error'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+        self::assertStringContainsString('unhandled exception in front controller', $this->endpoint->logContents());
+    }
+
+    public function testDeriveMalformedRunAfterReturnsGenericServerError(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('not-a-time');
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+
+        self::assertSame(500, $status);
+        self::assertSame(['error' => 'internal server error'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
     private function seedInstrument(): void
