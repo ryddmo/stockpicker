@@ -400,6 +400,50 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(1, $result->done);
     }
 
+    public function testCleanMultiJobSliceLeavesNoClaimedRows(): void
+    {
+        $this->seedInstruments([
+            ['SE0000000001', 'a-1', 'nx-1'],
+            ['SE0000000002', 'a-2', 'nx-2'],
+        ]);
+        $this->enqueueAll();
+        $ts = new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'));
+        $this->avanza->fetchResponses = [
+            $this->row('avanza', 'SE0000000001', 1000),
+            $this->row('avanza', 'SE0000000002', 1100),
+        ];
+        $this->nordnet->fetchResponses = [
+            $this->row('nordnet', 'SE0000000001', 2000, $ts),
+            $this->row('nordnet', 'SE0000000002', 2100, $ts),
+        ];
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame(2, $result->done);
+        self::assertSame(0, $result->staleFailed);
+        self::assertSame(0, (new QueueRepository($this->pdo))->countByStatus(self::RUN_DATE)['claimed'] ?? 0);
+    }
+
+    public function testPastRunDateStaleClaimIsFailedAndSurfaced(): void
+    {
+        $this->seedInstruments([['SE0000000001', 'a-1', 'nx-1']]);
+        $queue = new QueueRepository($this->pdo);
+        $queue->enqueue('SE0000000001', '2026-09-08');
+        $queue->claimBatch(
+            '2026-09-08',
+            1,
+            (new DateTimeImmutable('now', new DateTimeZone('UTC')))->sub(new \DateInterval('PT20M')),
+        );
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        self::assertSame(['failed' => 1], $queue->countByStatus('2026-09-08'));
+        self::assertSame(1, $result->staleFailed);
+        self::assertSame(0, $result->reopened);
+        self::assertSame(0, $result->claimed);
+        self::assertSame(1, $this->sliceCompleteContext()['stale_failed']);
+    }
+
     public function testSameSourceCallsAreSpacedButDifferentSourcesAreNot(): void
     {
         $this->seedInstruments([

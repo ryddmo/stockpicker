@@ -43,27 +43,36 @@ final class QueueRepository
     }
 
     /**
-     * Reopen every `claimed` row for `$runDate` whose `claimed_at` is older than
-     * `$staleAfterSeconds` before `$utcNow` — a crashed or cut-off earlier
-     * slice left them stuck. Runs first each slice. Returns the number reopened.
-     * Scoped to `$runDate` so a stale row from another day is not flipped to
-     * `pending` only to sit unclaimable (the slice claims by run date).
+     * Recover stale `claimed` rows before a slice claims new work. Current-date
+     * rows reopen to `pending`; older rows are terminally failed because their
+     * historical slot must remain a gap rather than waiting for a past-date
+     * slice that will never run.
      */
-    public function reopenStale(int $staleAfterSeconds, DateTimeImmutable $utcNow, string $runDate): int
+    public function reopenStale(int $staleAfterSeconds, DateTimeImmutable $utcNow, string $runDate): QueueStaleRecoveryResult
     {
         $threshold = $utcNow->sub(new DateInterval('PT' . max(0, $staleAfterSeconds) . 'S'));
 
-        $stmt = $this->pdo->prepare(
+        $reopen = $this->pdo->prepare(
             'UPDATE `work_queue`
                 SET `status` = \'pending\', `claimed_at` = NULL
               WHERE `status` = \'claimed\' AND `run_date` = :run_date AND `claimed_at` < :threshold'
         );
-        $stmt->execute([
+        $reopen->execute([
             'run_date' => $runDate,
             'threshold' => $threshold->format('Y-m-d H:i:s'),
         ]);
 
-        return $stmt->rowCount();
+        $fail = $this->pdo->prepare(
+            'UPDATE `work_queue`
+                SET `status` = \'failed\'
+              WHERE `status` = \'claimed\' AND `run_date` < :run_date AND `claimed_at` < :threshold'
+        );
+        $fail->execute([
+            'run_date' => $runDate,
+            'threshold' => $threshold->format('Y-m-d H:i:s'),
+        ]);
+
+        return new QueueStaleRecoveryResult($reopen->rowCount(), $fail->rowCount());
     }
 
     /**

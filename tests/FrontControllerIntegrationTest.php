@@ -126,6 +126,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(1, $json['done']);
         self::assertSame(0, $json['failed']);
         self::assertSame(0, $json['reopened']);
+        self::assertSame(0, $json['stale_failed']);
         self::assertSame(0, $json['rows_written']);
         $zero = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0, 'retried' => 0, 'rate_limited' => 0];
         self::assertSame(['avanza' => $zero, 'nordnet' => $zero], $json['by_source']);
@@ -134,6 +135,29 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame('done', $this->pdo->query('SELECT status FROM work_queue')->fetchColumn());
         self::assertSame(1, (int) $this->pdo->query("SELECT instrument_count FROM ingest_run WHERE run_type = 'fetch'")->fetchColumn());
         self::assertSame(1, (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'fetch'")->fetchColumn());
+    }
+
+    public function testWorkReturnsStaleFailedCountForPastRunDateClaim(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $pastRunDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))
+            ->modify('-1 day')
+            ->format('Y-m-d');
+        $claimedAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->sub(new \DateInterval('PT20M'))
+            ->format('Y-m-d H:i:s');
+
+        $this->pdo->prepare('INSERT INTO work_queue (isin, run_date, status, claimed_at) VALUES (?, ?, \'claimed\', ?)')
+            ->execute(['SE0000000001', $pastRunDate, $claimedAt]);
+
+        [$status, $body] = $this->endpoint->get('/cron/work?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('ok', $json['status']);
+        self::assertSame(1, $json['stale_failed']);
+        self::assertSame('failed', $this->pdo->query('SELECT status FROM work_queue')->fetchColumn());
     }
 
     public function testClosedWindowDoesNotRunPipeline(): void
