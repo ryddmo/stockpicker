@@ -30,6 +30,10 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
 Each `/cron/work` slice also fails stale `claimed` rows left by a killed slice on an
 earlier day; the response exposes that count as `stale_failed`.
 
+Run inspection is available over SSH with `php bin/show-runs.php`; use
+`php bin/show-runs.php --alarms` to list recent schema-mismatch alarms. Configure
+the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
+
 ---
 
 ## Prerequisites
@@ -326,6 +330,7 @@ The five migrations in `db/migrations/`, in order:
 | `retry.max_attempts`       | `3`              | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry.                                                                                                                                                                              |
 | `retry.backoff_base`       | `1.0` (seconds)  | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`.                                    |
 | `retry.backoff_max`        | `20.0` (seconds) | ceiling for a single backoff sleep.                                                                                                                                                                                                                                                                                                                |
+| `alarm.email`              | absent           | optional recipient for PHP `mail()` when a run records a `SchemaMismatch`; absent or invalid values keep the persisted alarm and SSH inspection without sending mail.                                                                                                                                                                              |
 
 **429 (rate-limit) handling (Story 2.4, not operator-tunable):** when a source
 returns HTTP 429, that retry's backoff is multiplied by 4 (still capped at

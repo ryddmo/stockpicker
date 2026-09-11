@@ -37,12 +37,12 @@ final class OwnerCountRepository
      * @throws \PDOException on a foreign-key violation when `$row->isin` is not
      *                       in `instrument` (fail loud — the caller decides).
      */
-    public function upsert(NormalizedRow $row, ?string $asOfDateOverride = null): bool
+    public function upsert(NormalizedRow $row, ?string $asOfDateOverride = null, ?int $ingestRunId = null): bool
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO owner_count_daily
-                 (isin, source, as_of_date, number_of_owners, last_price, market_cap, fetched_at)
-             VALUES (:isin, :source, :as_of_date, :owners, :last_price, :market_cap, :fetched_at)
+                 (isin, source, as_of_date, number_of_owners, last_price, market_cap, fetched_at, ingest_run_id)
+             VALUES (:isin, :source, :as_of_date, :owners, :last_price, :market_cap, :fetched_at, :ingest_run_id)
              ON DUPLICATE KEY UPDATE fetched_at = fetched_at'
         );
 
@@ -57,6 +57,7 @@ final class OwnerCountRepository
             'last_price' => $row->lastPrice === null ? null : number_format($row->lastPrice, 4, '.', ''),
             'market_cap' => $row->marketCap === null ? null : number_format($row->marketCap, 2, '.', ''),
             'fetched_at' => $row->fetchedAt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
+            'ingest_run_id' => $ingestRunId,
         ]);
 
         // INSERT -> 1 affected row; the no-op ON DUPLICATE KEY UPDATE -> 0

@@ -40,25 +40,23 @@ final class Enqueue
     public function run(string $runDate): int
     {
         $startedAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $runId = $this->runs->start('enqueue', $runDate, $startedAt);
 
-        $universe = array_keys($this->instruments->allActive());
-        $created = 0;
+        try {
+            $universe = array_keys($this->instruments->allActive());
+            $created = 0;
 
-        foreach ($universe as $isin) {
-            if ($this->queue->enqueue((string) $isin, $runDate)) {
-                ++$created;
+            foreach ($universe as $isin) {
+                if ($this->queue->enqueue((string) $isin, $runDate)) {
+                    ++$created;
+                }
             }
-        }
 
-        $this->runs->record(
-            'enqueue',
-            $runDate,
-            $startedAt,
-            new DateTimeImmutable('now', new DateTimeZone('UTC')),
-            count($universe),
-            $created,
-            0,
-        );
+            $this->runs->finish($runId, new DateTimeImmutable('now', new DateTimeZone('UTC')), count($universe), $created, 0);
+        } catch (\Throwable $e) {
+            $this->runs->finish($runId, new DateTimeImmutable('now', new DateTimeZone('UTC')), 0, 0, 1, [], 'failed', false);
+            throw $e;
+        }
 
         return $created;
     }

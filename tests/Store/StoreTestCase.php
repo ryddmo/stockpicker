@@ -69,11 +69,10 @@ abstract class StoreTestCase extends TestCase
 
     private function dropSchema(): void
     {
-        // owner_count_daily and work_queue first — both have an FK to instrument.
-        // ingest_run has no FK, so its drop order does not matter.
-        $this->pdo->exec('DROP TABLE IF EXISTS ingest_run');
+        // owner_count_daily first — it now has FKs to instrument and ingest_run.
         $this->pdo->exec('DROP TABLE IF EXISTS owner_count_daily');
         $this->pdo->exec('DROP TABLE IF EXISTS work_queue');
+        $this->pdo->exec('DROP TABLE IF EXISTS ingest_run');
         $this->pdo->exec('DROP TABLE IF EXISTS instrument');
         $this->pdo->exec('DROP TABLE IF EXISTS settings');
     }
@@ -101,6 +100,26 @@ abstract class StoreTestCase extends TestCase
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
+        // Story 2.6 — ingest_run must precede owner_count_daily because owner
+        // facts carry a nullable FK to their producing run.
+        $this->pdo->exec(
+            "CREATE TABLE ingest_run (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                run_type VARCHAR(16) NOT NULL,
+                run_date DATE NOT NULL,
+                started_at DATETIME NOT NULL,
+                finished_at DATETIME NULL,
+                instrument_count INT UNSIGNED NOT NULL,
+                ok_count INT UNSIGNED NOT NULL,
+                fail_count INT UNSIGNED NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'running',
+                alarm TINYINT(1) NOT NULL DEFAULT 0,
+                schema_mismatch_count INT UNSIGNED NOT NULL DEFAULT 0,
+                by_source TEXT NOT NULL,
+                KEY ix_ingest_run_run_date (run_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        );
+
         $this->pdo->exec(
             'CREATE TABLE owner_count_daily (
                 isin VARCHAR(12) NOT NULL,
@@ -110,8 +129,10 @@ abstract class StoreTestCase extends TestCase
                 last_price DECIMAL(18,4) NULL,
                 market_cap DECIMAL(24,2) NULL,
                 fetched_at DATETIME NOT NULL,
+                ingest_run_id BIGINT UNSIGNED NULL,
                 PRIMARY KEY (isin, source, as_of_date),
-                CONSTRAINT fk_owner_count_daily_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
+                CONSTRAINT fk_owner_count_daily_isin FOREIGN KEY (isin) REFERENCES instrument (isin),
+                CONSTRAINT fk_owner_count_daily_run FOREIGN KEY (ingest_run_id) REFERENCES ingest_run (id) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
@@ -128,20 +149,5 @@ abstract class StoreTestCase extends TestCase
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
         );
 
-        // Story 1.8 — mirrors db/migrations/20260909160000_create_ingest_run.php.
-        // No FK (the per-datum run link is deferred to Story 2.6).
-        $this->pdo->exec(
-            "CREATE TABLE ingest_run (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                run_type VARCHAR(16) NOT NULL,
-                run_date DATE NOT NULL,
-                started_at DATETIME NOT NULL,
-                finished_at DATETIME NOT NULL,
-                instrument_count INT UNSIGNED NOT NULL,
-                ok_count INT UNSIGNED NOT NULL,
-                fail_count INT UNSIGNED NOT NULL,
-                KEY ix_ingest_run_run_date (run_date)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        );
     }
 }

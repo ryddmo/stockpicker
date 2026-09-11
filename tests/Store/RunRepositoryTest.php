@@ -67,6 +67,29 @@ final class RunRepositoryTest extends StoreTestCase
         self::assertSame('2026-09-09 18:01:30', $row->finishedAt);
     }
 
+    public function testStartFinishStoresSourceDetailsAndAlarm(): void
+    {
+        $repo = new RunRepository($this->pdo);
+        $id = $repo->start('fetch', '2026-09-09', $this->utc('2026-09-09T18:00:00Z'));
+
+        $repo->finish(
+            $id,
+            $this->utc('2026-09-09T18:01:00Z'),
+            2,
+            1,
+            1,
+            ['nordnet' => ['ok' => 1, 'schema_mismatch' => 1]],
+        );
+
+        $row = $repo->recent()[0];
+        self::assertSame($id, $row->id);
+        self::assertSame('alarmed', $row->status);
+        self::assertTrue($row->alarm);
+        self::assertSame(1, $row->schemaMismatchCount);
+        self::assertSame(1, $row->bySource['nordnet']['schema_mismatch']);
+        self::assertCount(1, $repo->alarmed());
+    }
+
     public function testRecentIsNewestFirstAndHonoursTheLimit(): void
     {
         $repo = new RunRepository($this->pdo);

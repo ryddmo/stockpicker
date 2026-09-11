@@ -37,6 +37,9 @@ final class UniverseSyncTest extends StoreTestCase
     /** @var list<float> */
     private array $waits = [];
 
+    /** @var list<array{to: string, subject: string, message: string}> */
+    private array $sentMails = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -45,6 +48,7 @@ final class UniverseSyncTest extends StoreTestCase
         $this->logHandler = new TestHandler();
         $this->instruments = new InstrumentRepository($this->pdo);
         $this->waits = [];
+        $this->sentMails = [];
     }
 
     private function sync(): UniverseSync
@@ -61,6 +65,11 @@ final class UniverseSyncTest extends StoreTestCase
             $logger,
             function (float $seconds): void {
                 $this->waits[] = $seconds;
+            },
+            function (string $to, string $subject, string $message): bool {
+                $this->sentMails[] = ['to' => $to, 'subject' => $subject, 'message' => $message];
+
+                return true;
             },
         );
     }
@@ -269,7 +278,10 @@ final class UniverseSyncTest extends StoreTestCase
         }
 
         self::assertNull($this->instruments->get('SE0000000001')->lastSeen);
-        self::assertSame([], $this->runsLogged());
+        $runs = $this->runsLogged();
+        self::assertCount(1, $runs);
+        self::assertSame('failed', $runs[0]->status);
+        self::assertTrue($runs[0]->alarm);
         self::assertTrue($this->logHandler->hasWarningThatContains('listing fetch failed'));
     }
 
@@ -282,12 +294,15 @@ final class UniverseSyncTest extends StoreTestCase
         try {
             $this->sync()->run(self::RUN_DATE);
         } finally {
-            self::assertSame([], $this->runsLogged());
+            $runs = $this->runsLogged();
+            self::assertCount(1, $runs);
+            self::assertSame('failed', $runs[0]->status);
         }
     }
 
     public function testMassDelistGuardAbortsBeforeAnyWrite(): void
     {
+        (new SettingsRepository($this->pdo))->set('alarm.email', 'ops@example.com');
         (new SettingsRepository($this->pdo))->set('universe.max_delist', '2');
         foreach (['1', '2', '3'] as $n) {
             $this->seed("SE000000000{$n}", "Co {$n}", UniverseEntry::LIST_LC, avanzaId: "100{$n}", nordnetId: "NX-{$n}");
@@ -306,7 +321,12 @@ final class UniverseSyncTest extends StoreTestCase
             self::assertNull($this->instruments->get("SE000000000{$n}")->lastSeen);
         }
         self::assertNull($this->instruments->get('SE0000009999'), 'no insert either');
-        self::assertSame([], $this->runsLogged());
+        $runs = $this->runsLogged();
+        self::assertCount(1, $runs);
+        self::assertSame('failed', $runs[0]->status);
+        self::assertTrue($runs[0]->alarm);
+        self::assertCount(1, $this->sentMails);
+        self::assertSame('ops@example.com', $this->sentMails[0]['to']);
         self::assertTrue($this->logHandler->hasErrorThatContains('exceed universe.max_delist'));
     }
 

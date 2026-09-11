@@ -106,7 +106,8 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status, $body);
         self::assertSame('universe_sync_failed', $json['status']);
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
-        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+        self::assertSame(1, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE alarm = 1")->fetchColumn());
     }
 
     public function testWorkRunsOneSliceAndReturnsCounts(): void

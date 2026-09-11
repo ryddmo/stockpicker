@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Story 1.8 — print the recent `ingest_run` rows over SSH:
  *
- *   php bin/show-runs.php [--limit=N] [--date=YYYY-MM-DD]
+ *   php bin/show-runs.php [--limit=N] [--date=YYYY-MM-DD] [--alarms]
  *
  * Thin wrapper (like bin/seed-instruments.php): bootstrap, build RunRepository
  * from Database::connect(), render via Stockpicker\Store\RunTable. Default: the
@@ -28,6 +28,7 @@ try {
     $services = require __DIR__ . '/../bootstrap.php';
     $limit = 20;
     $date = null;
+    $alarms = false;
 
     foreach (array_slice($argv, 1) as $arg) {
         if (preg_match('/^--date=(\d{4}-\d{2}-\d{2})$/', $arg, $m) === 1) {
@@ -36,6 +37,8 @@ try {
                 $usage();
             }
             $date = $m[1];
+        } elseif ($arg === '--alarms') {
+            $alarms = true;
         } elseif (preg_match('/^--limit=(\d+)$/', $arg, $m) === 1) {
             $limit = (int) $m[1];
             if ($limit <= 0) {
@@ -47,7 +50,7 @@ try {
     }
 
     $repo = new RunRepository(Database::connect($services['config']));
-    $rows = $date !== null ? $repo->forRunDate($date, $limit) : $repo->recent($limit);
+    $rows = $alarms ? $repo->alarmed($limit) : ($date !== null ? $repo->forRunDate($date, $limit) : $repo->recent($limit));
 
     echo RunTable::render($rows);
 } catch (\Throwable $e) {

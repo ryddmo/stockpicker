@@ -52,6 +52,9 @@ final class UniverseSync
     /** @var callable(float): void */
     private $sleep;
 
+    /** @var callable(string, string, string): bool */
+    private $sendMail;
+
     /** @var array<string, float|null> per-source instant of the last outgoing call */
     private array $lastCallAt = ['avanza' => null, 'nordnet' => null];
 
@@ -66,11 +69,15 @@ final class UniverseSync
         private readonly RunRepository $runs,
         private readonly LoggerInterface $logger,
         ?callable $sleep = null,
+        ?callable $sendMail = null,
     ) {
         $this->sleep = $sleep ?? static function (float $seconds): void {
             if ($seconds > 0) {
                 usleep((int) round($seconds * 1_000_000));
             }
+        };
+        $this->sendMail = $sendMail ?? static function (string $to, string $subject, string $message): bool {
+            return @mail($to, $subject, $message);
         };
     }
 
@@ -85,6 +92,32 @@ final class UniverseSync
     public function run(string $runDate, ?float $timeboxSeconds = null): array
     {
         $started = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $runId = $this->runs->start('universe_sync', $runDate, $started);
+
+        try {
+            return $this->runSync($runDate, $timeboxSeconds, $started, $runId);
+        } catch (\Throwable $e) {
+            $this->runs->finish(
+                $runId,
+                new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                0,
+                0,
+                1,
+                $e instanceof SchemaMismatch ? ['avanza' => ['schema_mismatch' => 1]] : [],
+                'failed',
+                $e instanceof SchemaMismatch,
+            );
+            if ($e instanceof SchemaMismatch) {
+                $this->sendAlarm($runDate, $runId, true);
+            }
+
+            throw $e;
+        }
+    }
+
+    /** @return array{added: int, removed: int, changed: int, reactivated: int, ids_resolved: int, ids_failed: int, deferred: int, active_after: int} */
+    private function runSync(string $runDate, ?float $timeboxSeconds, DateTimeImmutable $started, int $runId): array
+    {
 
         // 1. Fetch the listing. A bad response aborts with zero writes.
         try {
@@ -130,11 +163,12 @@ final class UniverseSync
                 'max_delist' => $maxDelist,
             ]);
 
-            throw new SchemaMismatch(sprintf(
+            $error = new SchemaMismatch(sprintf(
                 'universe sync: %d would-be delistings exceed universe.max_delist (%d)',
                 count($delist),
                 $maxDelist,
             ));
+            throw $error;
         }
 
         // 3. Read rates once; arm the deadline.
@@ -150,6 +184,10 @@ final class UniverseSync
         $idsResolved = 0;
         $idsFailed = 0;
         $deferred = 0;
+        $bySource = [
+            'avanza' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
+            'nordnet' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
+        ];
 
         /** @var array<string, true> ISINs already reconciled in this run (dedupe) */
         $seenIsin = [];
@@ -183,7 +221,9 @@ final class UniverseSync
             try {
                 $this->throttle('avanza', $rate['avanza']);
                 $isin = $this->universe->resolveIsin($obId);
+                ++$bySource['avanza']['ok'];
             } catch (AdapterError $e) {
+                ++$bySource['avanza'][$e instanceof SchemaMismatch ? 'schema_mismatch' : ($e instanceof NotFound ? 'not_found' : 'transient')];
                 $this->logger->warning('universe sync: could not resolve ISIN for a listed orderbookId', [
                     'orderbook_id' => $obId,
                     'error' => $e::class,
@@ -273,8 +313,10 @@ final class UniverseSync
                     throw new NotFound(sprintf('nordnet resolveId returned an empty id for %s', $isin));
                 }
                 $this->instruments->cacheNordnetId($isin, $id);
+                ++$bySource['nordnet']['ok'];
                 ++$idsResolved;
             } catch (AdapterError $e) {
+                ++$bySource['nordnet'][$e instanceof SchemaMismatch ? 'schema_mismatch' : ($e instanceof NotFound ? 'not_found' : 'transient')];
                 $this->logger->warning('universe sync: could not resolve Nordnet id', [
                     'isin' => $isin,
                     'error' => $e::class,
@@ -305,15 +347,17 @@ final class UniverseSync
             'active_after' => $activeAfter,
         ]);
 
-        $this->runs->record(
-            'universe_sync',
-            $runDate,
-            $started,
+        $this->runs->finish(
+            $runId,
             new DateTimeImmutable('now', new DateTimeZone('UTC')),
             $activeAfter,
             $added + $reactivated,
             $removed,
+            $bySource,
         );
+        if (($bySource['avanza']['schema_mismatch'] + $bySource['nordnet']['schema_mismatch']) > 0) {
+            $this->sendAlarm($runDate, $runId, true);
+        }
 
         return [
             'added' => $added,
@@ -325,6 +369,18 @@ final class UniverseSync
             'deferred' => $deferred,
             'active_after' => $activeAfter,
         ];
+    }
+
+    private function sendAlarm(string $runDate, int $runId, bool $alarm): void
+    {
+        $recipient = $this->settings->get('alarm.email');
+        if ($alarm && is_string($recipient) && filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            ($this->sendMail)($recipient, 'stockpicker schema mismatch alarm', sprintf(
+                "Run %d on %s recorded a schema mismatch.\n",
+                $runId,
+                $runDate,
+            ));
+        }
     }
 
     /**

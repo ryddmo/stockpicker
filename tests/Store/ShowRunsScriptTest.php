@@ -7,6 +7,7 @@ namespace Stockpicker\Tests\Store;
 use PHPUnit\Framework\TestCase;
 use Stockpicker\Config;
 use Stockpicker\Store\Database;
+use Stockpicker\Store\RunRepository;
 
 /**
  * Drives `bin/show-runs.php` as a real subprocess (mirrors
@@ -45,11 +46,32 @@ final class ShowRunsScriptTest extends TestCase
         self::assertStringContainsString('no runs', $out);
     }
 
+    public function testAlarmsFlagShowsAlarmedRunsOnly(): void
+    {
+        $this->requireDevelopmentDatabase();
+        $pdo = Database::connect(Config::load((string) realpath(self::REPO_ROOT)));
+        $repo = new RunRepository($pdo);
+        $started = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $cleanId = $repo->record('cleantest', '2098-01-01', $started, $started, 1, 1, 0);
+        $alarmId = $repo->start('alarmtest', '2098-01-02', $started);
+        $repo->finish($alarmId, $started, 1, 0, 1, ['avanza' => ['schema_mismatch' => 1]]);
+
+        try {
+            [$code, $out] = $this->show('--alarms', '--limit=20');
+
+            self::assertSame(0, $code, $out);
+            self::assertStringContainsString('alarmtest', $out);
+            self::assertStringNotContainsString('cleantest', $out);
+        } finally {
+            $pdo->exec(sprintf('DELETE FROM ingest_run WHERE id IN (%d, %d)', $cleanId, $alarmId));
+        }
+    }
+
     private function requireDevelopmentDatabase(): void
     {
         try {
             $pdo = Database::connect(Config::load((string) realpath(self::REPO_ROOT)));
-            $pdo->query('SELECT 1 FROM ingest_run LIMIT 1');
+            $pdo->query('SELECT status FROM ingest_run LIMIT 1');
         } catch (\Throwable $e) {
             self::markTestSkipped(
                 'dev DB for bin/show-runs.php not ready (config.php + phinx migrate -e development): ' . $e->getMessage()

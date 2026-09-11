@@ -19,10 +19,15 @@ final readonly class IngestRun
         public string $runType,
         public string $runDate,
         public string $startedAt,
-        public string $finishedAt,
+        public ?string $finishedAt,
         public int $instrumentCount,
         public int $okCount,
         public int $failCount,
+        public string $status = 'completed',
+        public bool $alarm = false,
+        public int $schemaMismatchCount = 0,
+        /** @var array<string, array<string, int>> */
+        public array $bySource = [],
     ) {
     }
 
@@ -36,10 +41,26 @@ final readonly class IngestRun
             (string) $row['run_type'],
             (string) $row['run_date'],
             (string) $row['started_at'],
-            (string) $row['finished_at'],
+            $row['finished_at'] === null ? null : (string) $row['finished_at'],
             (int) $row['instrument_count'],
             (int) $row['ok_count'],
             (int) $row['fail_count'],
+            (string) ($row['status'] ?? 'completed'),
+            (bool) ($row['alarm'] ?? false),
+            (int) ($row['schema_mismatch_count'] ?? 0),
+            self::decodeBySource($row['by_source'] ?? null),
         );
+    }
+
+    /** @return array<string, array<string, int>> */
+    private static function decodeBySource(mixed $value): array
+    {
+        if (!is_string($value) || $value === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 }

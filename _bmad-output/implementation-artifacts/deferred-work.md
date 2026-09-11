@@ -1,3 +1,6 @@
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-full-run-log-and-schema-mismatch-alarm.md`
+  summary: Preserve partial per-source counters if an unexpected exception escapes the fetch slice after some jobs have run.
+  evidence: The outer failure handler currently records a failed run with zeroed counters; the normal per-job unexpected-error path is covered, but a reproducible exception after partial slice telemetry was not established during review.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-projektskelett-och-gemensam-grund.md`
   summary: Verify `.htaccess` front-controller routing under real Apache (not just `php -S`).
   evidence: Both routing tests run through the PHP built-in server, which ignores `.htaccess`; a rewrite regression would ship with the suite green. Fix belongs in Story 1.10 (`docs/deploy.md`): a post-deploy curl check for `/` (200 JSON) and `/nope` (404 JSON) against the live subdomain.

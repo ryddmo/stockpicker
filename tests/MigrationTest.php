@@ -140,6 +140,17 @@ final class MigrationTest extends TestCase
             self::assertStringContainsString('int', $this->columnType('ingest_run', $col));
             self::assertStringContainsString('unsigned', $this->columnType('ingest_run', $col));
         }
+                self::assertSame('varchar(16)', $this->columnType('ingest_run', 'status'));
+                self::assertSame('tinyint(1)', $this->columnType('ingest_run', 'alarm'));
+                self::assertStringContainsString('int', $this->columnType('ingest_run', 'schema_mismatch_count'));
+                self::assertSame('text', $this->columnType('ingest_run', 'by_source'));
+                self::assertStringContainsString('bigint', $this->columnType('owner_count_daily', 'ingest_run_id'));
+                $foreignKey = $this->pdo->query(
+                        "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+                         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'owner_count_daily'
+                             AND COLUMN_NAME = 'ingest_run_id' AND REFERENCED_TABLE_NAME = 'ingest_run'"
+                )->fetchColumn();
+                self::assertSame(1, (int) $foreignKey);
         // Correlation-key index for forRunDate() / bin/show-runs.php --date.
         self::assertSame(
             ['run_date'],
@@ -240,8 +251,8 @@ final class MigrationTest extends TestCase
 
     private function dropAll(): void
     {
-        // owner_count_daily and work_queue first — FK to instrument.
-        foreach (['ingest_run', 'owner_count_daily', 'work_queue', 'instrument', 'settings', 'phinxlog'] as $table) {
+        // owner_count_daily first — it references both instrument and ingest_run.
+        foreach (['owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }

@@ -52,4 +52,30 @@ final class RunTableTest extends TestCase
         }
         self::assertSame(strpos($lines[0], 'type'), strpos($lines[2], 'fetch'));
     }
+
+    public function testRowsRenderStatusAlarmAndSourceDetails(): void
+    {
+        $row = new IngestRun(
+            7,
+            'fetch',
+            '2026-09-10',
+            '2026-09-10 18:31:00',
+            '2026-09-10 18:32:00',
+            1,
+            0,
+            1,
+            'alarmed',
+            true,
+            1,
+            ['nordnet' => ['ok' => 0, 'schema_mismatch' => 1]],
+        );
+
+        $out = RunTable::render([$row]);
+
+        self::assertStringContainsString('status', $out);
+        self::assertStringContainsString('alarm', $out);
+        self::assertStringContainsString('alarmed', $out);
+        self::assertStringContainsString('YES', $out);
+        self::assertStringContainsString('nordnet=ok:0,schema_mismatch:1', $out);
+    }
 }

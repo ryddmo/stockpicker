@@ -32,6 +32,9 @@ final class FetchRunnerTest extends StoreTestCase
     /** @var list<float> */
     private array $waits = [];
 
+    /** @var list<array{to: string, subject: string, message: string}> */
+    private array $sentMails = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -39,6 +42,7 @@ final class FetchRunnerTest extends StoreTestCase
         $this->nordnet = new FakeSourceAdapter('nordnet');
         $this->logHandler = new TestHandler();
         $this->waits = [];
+        $this->sentMails = [];
     }
 
     /**
@@ -78,6 +82,11 @@ final class FetchRunnerTest extends StoreTestCase
             new RunRepository($this->pdo),
             function (float $seconds): void {
                 $this->waits[] = $seconds;
+            },
+            function (string $to, string $subject, string $message): bool {
+                $this->sentMails[] = ['to' => $to, 'subject' => $subject, 'message' => $message];
+
+                return true;
             },
         );
     }
@@ -206,6 +215,10 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame($result->claimed, $log[0]->instrumentCount);
         self::assertSame($result->done, $log[0]->okCount);
         self::assertSame($result->failed, $log[0]->failCount);
+        self::assertSame('completed', $log[0]->status);
+        self::assertFalse($log[0]->alarm);
+        self::assertSame(1, $log[0]->bySource['avanza']['ok']);
+        self::assertSame(2, (int) $this->pdo->query('SELECT COUNT(*) FROM owner_count_daily WHERE ingest_run_id = ' . $log[0]->id)->fetchColumn());
         self::assertGreaterThanOrEqual($log[0]->startedAt, $log[0]->finishedAt);
     }
 
@@ -251,6 +264,7 @@ final class FetchRunnerTest extends StoreTestCase
     public function testSchemaMismatchAlsoFailsTheJob(): void
     {
         $this->seedInstruments([['SE0000000001', '5479', 'nx-1']]);
+        (new SettingsRepository($this->pdo))->set('alarm.email', 'ops@example.com');
         $this->enqueueAll();
         $this->avanza->fetchResponses = [$this->row('avanza', 'SE0000000001', 1000)];
         $this->nordnet->fetchResponses = [new \Stockpicker\Error\SchemaMismatch('nordnet: field gone')];
@@ -259,6 +273,13 @@ final class FetchRunnerTest extends StoreTestCase
 
         self::assertSame('failed', $this->queueStatus('SE0000000001'));
         self::assertSame(1, $result->failed);
+        $log = $this->fetchLogRows()[0];
+        self::assertSame('alarmed', $log->status);
+        self::assertTrue($log->alarm);
+        self::assertSame(1, $log->schemaMismatchCount);
+        self::assertSame(1, $log->bySource['nordnet']['schema_mismatch']);
+        self::assertCount(1, $this->sentMails);
+        self::assertSame('ops@example.com', $this->sentMails[0]['to']);
     }
 
     public function testTransientReopensTheJobAndTheRunnerContinues(): void

@@ -76,6 +76,9 @@ final class FetchRunner
     /** @var callable(float): void */
     private $sleep;
 
+    /** @var callable(string, string, string): bool */
+    private $sendMail;
+
     /**
      * @param array<string, SourceAdapter> $adapters keyed 'avanza' | 'nordnet' (both required)
      * @param (callable(float): void)|null  $sleep    injected throttle; default is a real sleep
@@ -91,6 +94,7 @@ final class FetchRunner
         private readonly LoggerInterface $logger,
         private readonly RunRepository $runs,
         ?callable $sleep = null,
+        ?callable $sendMail = null,
     ) {
         foreach (array_keys(self::SOURCES) as $source) {
             if (!($adapters[$source] ?? null) instanceof SourceAdapter) {
@@ -103,12 +107,41 @@ final class FetchRunner
                 usleep((int) round($seconds * 1_000_000));
             }
         };
+        $this->sendMail = $sendMail ?? static function (string $to, string $subject, string $message): bool {
+            return @mail($to, $subject, $message);
+        };
     }
 
     public function run(string $runDate, float $timeboxSeconds): FetchRunnerResult
     {
-        $start = microtime(true);
         $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $runId = $this->runs->start('fetch', $runDate, $now);
+
+        try {
+            return $this->runSlice($runDate, $timeboxSeconds, $now, $runId);
+        } catch (\Throwable $e) {
+            $this->runs->finish(
+                $runId,
+                new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                0,
+                0,
+                1,
+                [],
+                'failed',
+                $e instanceof SchemaMismatch,
+            );
+            if ($e instanceof SchemaMismatch) {
+                $this->sendAlarm($runDate, $runId, ['unknown' => ['schema_mismatch' => 1]]);
+            }
+
+            throw $e;
+        }
+    }
+
+    /** @return FetchRunnerResult */
+    private function runSlice(string $runDate, float $timeboxSeconds, DateTimeImmutable $now, int $runId): FetchRunnerResult
+    {
+        $start = microtime(true);
 
         $batchSize = $this->intSetting('batch_size');
         $staleAfter = $this->intSetting('queue.stale_after');
@@ -216,7 +249,7 @@ final class FetchRunner
                         try {
                             $row = $this->adapters[$source]->fetch($instrument);
                             ++$bySource[$source]['ok'];
-                            if ($this->ownerCounts->upsert($row, $job->runDate)) {
+                            if ($this->ownerCounts->upsert($row, $job->runDate, $runId)) {
                                 ++$rowsWritten;
                             }
 
@@ -314,15 +347,15 @@ final class FetchRunner
             }
         }
 
-        $this->runs->record(
-            'fetch',
-            $runDate,
-            $now,
+        $this->runs->finish(
+            $runId,
             new DateTimeImmutable('now', new DateTimeZone('UTC')),
             $claimed,
             $done,
             $failed,
+            $bySource,
         );
+        $this->sendAlarm($runDate, $runId, $bySource);
 
         $this->logger->info('fetchrunner: slice complete', [
             'run_date' => $runDate,
@@ -336,6 +369,24 @@ final class FetchRunner
         ]);
 
         return new FetchRunnerResult($claimed, $done, $failed, $reopened, $staleFailed, $rowsWritten, $bySource);
+    }
+
+    /** @param array<string, array<string, int>> $bySource */
+    private function sendAlarm(string $runDate, int $runId, array $bySource): void
+    {
+        $mismatches = 0;
+        foreach ($bySource as $counts) {
+            $mismatches += $counts['schema_mismatch'] ?? 0;
+        }
+        $recipient = $this->settings->get('alarm.email');
+        if ($mismatches > 0 && is_string($recipient) && filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            ($this->sendMail)($recipient, 'stockpicker schema mismatch alarm', sprintf(
+                "Run %d on %s recorded %d schema mismatch result(s).\n",
+                $runId,
+                $runDate,
+                $mismatches,
+            ));
+        }
     }
 
     /**
