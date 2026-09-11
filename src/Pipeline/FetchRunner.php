@@ -127,7 +127,9 @@ final class FetchRunner
         $backoffBase = $this->floatSetting('retry.backoff_base');
         $backoffMax = $this->floatSetting('retry.backoff_max');
 
-        $reopened = $this->queue->reopenStale($staleAfter, $now, $runDate);
+        $staleRecovery = $this->queue->reopenStale($staleAfter, $now, $runDate);
+        $reopened = $staleRecovery->reopened;
+        $staleFailed = $staleRecovery->staleFailed;
 
         $jobs = $this->queue->claimBatch($runDate, $batchSize, $now);
         $claimed = count($jobs);
@@ -329,10 +331,11 @@ final class FetchRunner
             'done' => $done,
             'failed' => $failed,
             'reopened' => $reopened,
+            'stale_failed' => $staleFailed,
             'rows_written' => $rowsWritten,
         ]);
 
-        return new FetchRunnerResult($claimed, $done, $failed, $reopened, $rowsWritten, $bySource);
+        return new FetchRunnerResult($claimed, $done, $failed, $reopened, $staleFailed, $rowsWritten, $bySource);
     }
 
     /**

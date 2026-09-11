@@ -13,6 +13,8 @@ namespace Stockpicker\Pipeline;
  * - `failed`      jobs with >= 1 NotFound/SchemaMismatch and no Transient
  * - `reopened`    jobs returned to `pending` this slice: stale one-offs +
  *                 Transient hits + timebox leftovers
+ * - `staleFailed` stale `claimed` jobs from a past run date marked `failed` at
+ *                 slice start; these belong to the past day, not this slice
  * - `rowsWritten` new `owner_count_daily` rows written via `OwnerCountRepository`
  * - `bySource`    per-source outcome tally over the slice, one bucket per source
  *                 (`avanza`, `nordnet`), initialised from `FetchRunner::SOURCES`
@@ -38,6 +40,7 @@ final readonly class FetchRunnerResult
         public int $done,
         public int $failed,
         public int $reopened,
+        public int $staleFailed,
         public int $rowsWritten,
         public array $bySource,
     ) {

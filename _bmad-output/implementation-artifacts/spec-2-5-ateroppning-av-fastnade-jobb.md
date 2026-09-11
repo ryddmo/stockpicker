@@ -1,11 +1,11 @@
 ---
-title: 'Story 2.5: Återöppning av fastnade jobb'
-type: 'feature'
-created: '2026-09-10'
-status: 'ready-for-dev'
-route: 'dispatch'
+title: "Story 2.5: Återöppning av fastnade jobb"
+type: "feature"
+created: "2026-09-10"
+status: "done"
+route: "dispatch"
 review_loop_iteration: 0
-baseline_commit: '0d39e9b98dd79c77507b7cf8578e2cb05c786a6b'
+baseline_commit: "0d39e9b98dd79c77507b7cf8578e2cb05c786a6b"
 context:
   - _bmad-output/implementation-artifacts/epic-2-context.md
   - _bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md
@@ -34,6 +34,7 @@ clean slice leaves zero `claimed` rows.
 ## Boundaries & Constraints
 
 **Always:**
+
 - Stale recovery runs first each slice, before `claimBatch`, exactly as today. A `claimed`
   row whose `claimed_at` is strictly older than `utc_now - queue.stale_after` seconds
   (default 900) is recovered; the boundary stays strict `<` and `claimed_at` stays the
@@ -54,6 +55,7 @@ clean slice leaves zero `claimed` rows.
   path. Serial, timeboxed slice behaviour is unchanged.
 
 **Never:**
+
 - No `work_queue` schema change (no new column, no new status value). No change to the
   `pending → claimed → done | failed` state machine or its guards.
 - No persisted `reopened` / stale-recovery counter on `ingest_run`, no `bin/show-runs.php`
@@ -64,16 +66,16 @@ clean slice leaves zero `claimed` rows.
 
 ## I/O & Edge-Case Matrix
 
-| Scenario | Input / State | Expected Behavior | Error Handling |
-|----------|--------------|-------------------|----------------|
-| Stale, current run_date | `claimed` row for today, `claimed_at` > `stale_after` old | reopened `pending` at slice start, re-claimed this slice, processed; `reopened` +1 | — |
-| Fresh claim, same slice | a job `claimBatch` just claimed (`claimed_at = now`) | never a stale candidate — processed normally | — |
-| Just under the window | `claimed_at` exactly `now - stale_after` | **not** recovered (strict `<`) | — |
-| Stale, past run_date | `claimed` row for an earlier run_date, older than `stale_after` (a slice killed near midnight) | marked `failed` at slice start; `stale_failed` +1; not reopened, not claimed, not re-dated | — |
-| Stale, past run_date, not yet old | `claimed` row for an earlier run_date but `claimed_at` within `stale_after` (a slice still running from just before midnight) | left alone this slice — recovered on a later slice once older than `stale_after` | — |
-| Clean multi-job slice | N jobs, all sources OK, finishes in time | all `done`; `SELECT COUNT(*) FROM work_queue WHERE status='claimed'` = 0; `reopened` = 0 | — |
-| Killed slice then recovery | slice claims 5 jobs, process dies (no transition); a later slice ≥ `stale_after` later | the 5 rows recovered at that later slice's start | — |
-| Empty queue | nothing `pending`, nothing stale | `claimed`/`reopened` = 0, no error | — |
+| Scenario                          | Input / State                                                                                                                 | Expected Behavior                                                                          | Error Handling |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------- |
+| Stale, current run_date           | `claimed` row for today, `claimed_at` > `stale_after` old                                                                     | reopened `pending` at slice start, re-claimed this slice, processed; `reopened` +1         | —              |
+| Fresh claim, same slice           | a job `claimBatch` just claimed (`claimed_at = now`)                                                                          | never a stale candidate — processed normally                                               | —              |
+| Just under the window             | `claimed_at` exactly `now - stale_after`                                                                                      | **not** recovered (strict `<`)                                                             | —              |
+| Stale, past run_date              | `claimed` row for an earlier run_date, older than `stale_after` (a slice killed near midnight)                                | marked `failed` at slice start; `stale_failed` +1; not reopened, not claimed, not re-dated | —              |
+| Stale, past run_date, not yet old | `claimed` row for an earlier run_date but `claimed_at` within `stale_after` (a slice still running from just before midnight) | left alone this slice — recovered on a later slice once older than `stale_after`           | —              |
+| Clean multi-job slice             | N jobs, all sources OK, finishes in time                                                                                      | all `done`; `SELECT COUNT(*) FROM work_queue WHERE status='claimed'` = 0; `reopened` = 0   | —              |
+| Killed slice then recovery        | slice claims 5 jobs, process dies (no transition); a later slice ≥ `stale_after` later                                        | the 5 rows recovered at that later slice's start                                           | —              |
+| Empty queue                       | nothing `pending`, nothing stale                                                                                              | `claimed`/`reopened` = 0, no error                                                         | —              |
 
 </frozen-after-approval>
 
@@ -81,9 +83,9 @@ clean slice leaves zero `claimed` rows.
 
 - `src/Store/QueueRepository.php:45-67` `reopenStale(int, DateTimeImmutable, string $runDate)`
   — keep the current-run_date `UPDATE ... SET status='pending', claimed_at=NULL WHERE
-  status='claimed' AND run_date=:run_date AND claimed_at < :threshold`. **Add** a second
+status='claimed' AND run_date=:run_date AND claimed_at < :threshold`. **Add** a second
   `UPDATE ... SET status='failed' WHERE status='claimed' AND run_date < :run_date AND
-  claimed_at < :threshold` (same `$threshold`). Change the return to a small
+claimed_at < :threshold` (same `$threshold`). Change the return to a small
   `{reopened:int, staleFailed:int}` struct (or a readonly VO in `src/Store/`), or add a
   sibling method — the caller needs both counts.
 - `src/Pipeline/FetchRunner.php:130` — the `reopenStale()` call; `:114` reads
@@ -110,14 +112,16 @@ clean slice leaves zero `claimed` rows.
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `src/Store/QueueRepository.php` -- `reopenStale()` keeps reopening current-run_date stale `claimed` rows and now also marks past-run_date (`run_date < :run_date`) stale `claimed` rows `failed`; returns both counts -- a slice killed near midnight must not strand a job forever.
-- [ ] `src/Pipeline/FetchRunner.php` -- capture the `staleFailed` count, add it to the `slice complete` `info` line and `FetchRunnerResult`; leave `runs->record('fetch', …)` `fail_count` untouched -- the operator can see stuck-job give-up happened without it polluting this slice's fetch tally.
-- [ ] `src/Pipeline/FetchRunnerResult.php` + `public_html/index.php` -- add `staleFailed` / `stale_failed` alongside `reopened` -- surfaced in the `/cron/work` response.
-- [ ] `tests/Store/QueueRepositoryTest.php` -- rewrite `testReopenStaleIsScopedToTheRunDate` to the new behaviour (past-date stale → `failed`, current-date stale → reopened); keep the window/boundary tests green -- the cross-run-date contract is pinned.
-- [ ] `tests/Pipeline/FetchRunnerTest.php` -- add an explicit "clean multi-job slice leaves zero `claimed` rows" test (AC2) and a "past-run_date stale `claimed` row → `failed`, `result->staleFailed === 1`" test -- edge-case coverage.
-- [ ] `docs/deploy.md` -- one line: a `/cron/work` slice now also fails stuck `claimed` rows left by a killed slice on an earlier day (`stale_failed` in the response) -- operator note.
+
+- [x] `src/Store/QueueRepository.php` -- `reopenStale()` keeps reopening current-run_date stale `claimed` rows and now also marks past-run_date (`run_date < :run_date`) stale `claimed` rows `failed`; returns both counts -- a slice killed near midnight must not strand a job forever.
+- [x] `src/Pipeline/FetchRunner.php` -- capture the `staleFailed` count, add it to the `slice complete` `info` line and `FetchRunnerResult`; leave `runs->record('fetch', …)` `fail_count` untouched -- the operator can see stuck-job give-up happened without it polluting this slice's fetch tally.
+- [x] `src/Pipeline/FetchRunnerResult.php` + `public_html/index.php` -- add `staleFailed` / `stale_failed` alongside `reopened` -- surfaced in the `/cron/work` response.
+- [x] `tests/Store/QueueRepositoryTest.php` -- rewrite `testReopenStaleIsScopedToTheRunDate` to the new behaviour (past-date stale → `failed`, current-date stale → reopened); keep the window/boundary tests green -- the cross-run-date contract is pinned.
+- [x] `tests/Pipeline/FetchRunnerTest.php` -- add an explicit "clean multi-job slice leaves zero `claimed` rows" test (AC2) and a "past-run_date stale `claimed` row → `failed`, `result->staleFailed === 1`" test -- edge-case coverage.
+- [x] `docs/deploy.md` -- one line: a `/cron/work` slice now also fails stuck `claimed` rows left by a killed slice on an earlier day (`stale_failed` in the response) -- operator note.
 
 **Acceptance Criteria:**
+
 - Given a `work_queue` row `claimed` longer than `settings.queue.stale_after`, when a new slice starts, then it is recovered (reopened, or failed per the decision) before `claimBatch` runs — including a row left `claimed` for a **past** run_date by a killed slice.
 - Given a normal slice that finishes within the timebox, when it returns, then no `work_queue` row from that slice is still `status='claimed'`.
 - Given `composer test`, then the full suite is green with no regressions and the `pending → claimed → done | failed` state machine and its guards are unchanged.
@@ -128,13 +132,28 @@ clean slice leaves zero `claimed` rows.
 
 ## Review Triage Log
 
+| Verdict | Finding                                                                      | Evidence and route                                                                                                                                                                                       |
+| ------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| false   | Historical stale failures leave `claimed_at` populated.                      | This matches the existing `markFailed()` terminal transition; every stale-recovery query is guarded by `status = 'claimed'`, so the timestamp cannot strand or reprocess a failed row.                   |
+| false   | The past-date boundary was not tested at exactly the timeout.                | The strict boundary is already pinned by `testReopenStaleBoundaryIsStrictlyOlderThan()` and the same SQL predicate governs both date branches; the matrix's boundary row is covered.                     |
+| patch   | A fresh past-date claim lacked coverage.                                     | The original test only used a stale past-date row; the test now adds a past-date claim inside the window and asserts it remains `claimed` with no stale failure.                                         |
+| false   | The runner stale-row test uses the system clock.                             | The fixture deliberately claims exactly 20 minutes before the runner starts against the 900-second default, leaving a large deterministic margin; no production behavior depends on the test clock.      |
+| false   | Recovery ordering lacks a test with a pending current-date job.              | `FetchRunner::run()` invokes `reopenStale()` immediately before `claimBatch()`, and the repository tests pin each transition; the suggested extra ordering fixture does not identify a reachable defect. |
+| patch   | The endpoint only tested `stale_failed: 0`.                                  | The runner test covered the nonzero result but the endpoint serialization was untested; an integration test now creates a stale past-date claim and asserts JSON `stale_failed: 1`.                      |
+| false   | The deploy note should explain investigation and no-backfill semantics.      | The story explicitly requests one operator-note line; the added line identifies the stale rows and response field, while no additional operational workflow was part of the intent.                      |
+| false   | Empty implementation notes and change log indicate incomplete documentation. | These sections are optional working-record sections, and the review triage log is now populated as required; no implementation or acceptance gap follows from their prior emptiness.                     |
+| patch   | A nonzero endpoint response count was not integration-tested.                | Same endpoint serialization gap as above; fixed by the new `FrontControllerIntegrationTest` case.                                                                                                        |
+| patch   | Fresh past-date claims were not verified as untouched.                       | Same matrix coverage gap as above; fixed by the expanded `QueueRepositoryTest` case.                                                                                                                     |
+
 ## Verification
 
 **Commands:**
+
 - `composer test -- --filter 'QueueRepositoryTest|FetchRunnerTest'` -- new + regression cases green.
 - `composer test` -- full suite green, no regressions.
 
 **Manual checks:**
+
 - After a simulated killed slice (claim rows, do not transition) followed by a slice
   `stale_after` later: `SELECT status, COUNT(*) FROM work_queue GROUP BY status` shows the
   rows recovered, none left `claimed`.

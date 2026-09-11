@@ -102,7 +102,7 @@ final class QueueRepositoryTest extends StoreTestCase
         $repo->claimBatch(self::RUN_DATE, 1, $this->utc('2026-09-09T18:15:00Z'));
 
         $now = $this->utc('2026-09-09T18:20:00Z');
-        $reopened = $repo->reopenStale(900, $now, self::RUN_DATE); // 15 min window
+        $reopened = $repo->reopenStale(900, $now, self::RUN_DATE)->reopened; // 15 min window
 
         self::assertSame(1, $reopened);
         self::assertEqualsCanonicalizing(['pending' => 1, 'claimed' => 1], $repo->countByStatus(self::RUN_DATE));
@@ -115,26 +115,29 @@ final class QueueRepositoryTest extends StoreTestCase
         $repo->claimBatch(self::RUN_DATE, 1, $this->utc('2026-09-09T18:00:00Z'));
 
         // Exactly 900s later — not strictly older, so not reopened.
-        self::assertSame(0, $repo->reopenStale(900, $this->utc('2026-09-09T18:15:00Z'), self::RUN_DATE));
+        self::assertSame(0, $repo->reopenStale(900, $this->utc('2026-09-09T18:15:00Z'), self::RUN_DATE)->reopened);
         // One second past the window — reopened.
-        self::assertSame(1, $repo->reopenStale(900, $this->utc('2026-09-09T18:15:01Z'), self::RUN_DATE));
+        self::assertSame(1, $repo->reopenStale(900, $this->utc('2026-09-09T18:15:01Z'), self::RUN_DATE)->reopened);
     }
 
-    public function testReopenStaleIsScopedToTheRunDate(): void
+    public function testReopenStaleReopensCurrentDateAndFailsPastDateRows(): void
     {
-        $repo = $this->repo(1);
+        $repo = $this->repo(3);
         $repo->enqueue($this->isins[0], '2026-09-08');
-        // Claimed a day ago and left stuck.
+        $repo->enqueue($this->isins[1], self::RUN_DATE);
+        $repo->enqueue($this->isins[2], '2026-09-08');
+
+        // The stale rows are recovered according to their run date.
         $repo->claimBatch('2026-09-08', 1, $this->utc('2026-09-08T18:00:00Z'));
+        $repo->claimBatch(self::RUN_DATE, 1, $this->utc('2026-09-09T17:00:00Z'));
+        $repo->claimBatch('2026-09-08', 1, $this->utc('2026-09-09T17:50:00Z'));
 
-        // A slice for the 9th must not touch the 8th's stale row.
-        $reopened = $repo->reopenStale(900, $this->utc('2026-09-09T18:00:00Z'), self::RUN_DATE);
+        $recovery = $repo->reopenStale(900, $this->utc('2026-09-09T18:00:00Z'), self::RUN_DATE);
 
-        self::assertSame(0, $reopened);
-        self::assertSame(['claimed' => 1], $repo->countByStatus('2026-09-08'));
-
-        // The 8th's own slice does reopen it.
-        self::assertSame(1, $repo->reopenStale(900, $this->utc('2026-09-09T18:00:00Z'), '2026-09-08'));
+        self::assertSame(1, $recovery->reopened);
+        self::assertSame(1, $recovery->staleFailed);
+        self::assertEqualsCanonicalizing(['failed' => 1, 'claimed' => 1], $repo->countByStatus('2026-09-08'));
+        self::assertSame(['pending' => 1], $repo->countByStatus(self::RUN_DATE));
     }
 
     public function testTransitionsOnlyApplyToClaimedRows(): void

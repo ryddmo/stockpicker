@@ -27,21 +27,24 @@ First production deploy completed **2026-09-10** — pipe proven end-to-end agai
 live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
 `owner_count_daily` rows written, 0 failed). Measured values are in "Open items" below.
 
+Each `/cron/work` slice also fails stale `claimed` rows left by a killed slice on an
+earlier day; the response exposes that count as `stale_failed`.
+
 ---
 
 ## Prerequisites
 
 **Verified on the Loopia shell 2026-09-08:**
 
-| Tool | Status |
-|---|---|
-| SSH / SFTP | works (ED25519 key) |
-| `rsync` | 3.4.4, `/usr/local/bin/rsync` |
-| `composer` + `composer.phar` | present, `/usr/local/bin/` |
-| `php` | 8.5.9 CLI, `/usr/local/bin/php`, `memory_limit` 1024M |
-| PHP extensions | `pdo_mysql`, `curl`, `mbstring`, `json` loaded |
-| Home layout | one folder per domain (e.g. `ryddmo.se/`), **no shared `public_html/`** — a subdomain gets `~/<subdomain>/public_html/` |
-| MariaDB | database + user created in Kundzon (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11.19) |
+| Tool                         | Status                                                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| SSH / SFTP                   | works (ED25519 key)                                                                                                     |
+| `rsync`                      | 3.4.4, `/usr/local/bin/rsync`                                                                                           |
+| `composer` + `composer.phar` | present, `/usr/local/bin/`                                                                                              |
+| `php`                        | 8.5.9 CLI, `/usr/local/bin/php`, `memory_limit` 1024M                                                                   |
+| PHP extensions               | `pdo_mysql`, `curl`, `mbstring`, `json` loaded                                                                          |
+| Home layout                  | one folder per domain (e.g. `ryddmo.se/`), **no shared `public_html/`** — a subdomain gets `~/<subdomain>/public_html/` |
+| MariaDB                      | database + user created in Kundzon (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11.19)                              |
 
 **Confirmed on the first deploy 2026-09-10** (measured values in "Open items"):
 
@@ -105,10 +108,10 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
    calling `stockpicker.ryddmo.se` over HTTPS with the shared token as the **only** query
    parameter (the endpoints return 400 on any extra param):
 
-   | Path | Periodicity | Purpose |
-   |---|---|---|
+   | Path                                                | Periodicity              | Purpose                                                                                                                                                  |
+   | --------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `https://stockpicker.ryddmo.se/cron/refill?token=…` | **Varje timme** (hourly) | `UniverseSync` (reconcile `instrument` against the live Avanza listing, timeboxed by `universe.resolve_timebox`) then `Enqueue` over the active universe |
-   | `https://stockpicker.ryddmo.se/cron/work?token=…` | **Var femte minut** | `FetchRunner`, one 75 s time-boxed slice |
+   | `https://stockpicker.ryddmo.se/cron/work?token=…`   | **Var femte minut**      | `FetchRunner`, one 75 s time-boxed slice                                                                                                                 |
 
    A `/cron/refill` whose `UniverseSync` step fails — the Avanza listing is
    unreachable / changed shape, or the run would delist more than
@@ -118,7 +121,7 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
    needs a one-run operator bump of `universe.max_delist` (see settings below).
 
    **Both endpoints are gated by `settings.run_after`** (default `18:30` Europe/Stockholm)
-   — Story 1.9 design. A `/cron/refill` *before* 18:30 returns `window_closed` and
+   — Story 1.9 design. A `/cron/refill` _before_ 18:30 returns `window_closed` and
    enqueues nothing, so it must **not** be scheduled at 00:00. Loopia's cron timezone is
    not exposed and DST shifts a fixed time, so refill runs **hourly**: the first call
    after 18:30 enqueues, later calls are idempotent (`created: 0`). Outside the window
@@ -158,8 +161,8 @@ live seed list (20 jobs enqueued, drained in one 71 s `/cron/work` slice, 36
    ```
 
    **The file must be `<?php return [ ... ];`** — a config with no `return` makes
-   `require` yield `int(1)` and phinx fails with *"config.php … must return an array, got
-   int"*. Verify before deploying:
+   `require` yield `int(1)` and phinx fails with _"config.php … must return an array, got
+   int"_. Verify before deploying:
 
    ```sh
    php -r 'var_dump(is_array(require "/home/…/stockpicker.ryddmo.se/config.php"));'  # want: bool(true)
@@ -250,6 +253,7 @@ What it does:
 
    So a routine deploy **never** deletes or overwrites `config.php` or `vendor/` on the
    server.
+
 3. `ssh … "cd stockpicker.ryddmo.se && composer install --no-dev --optimize-autoloader"`
    (falls back to `php composer.phar …`) — builds `vendor/` against Loopia's PHP.
 4. `ssh … "cd stockpicker.ryddmo.se && vendor/bin/phinx migrate -e production"` — applies
@@ -297,31 +301,31 @@ inside the deploy beyond the one explicit step above.
 - Status: `ssh loopia-stockpicker 'cd stockpicker.ryddmo.se && vendor/bin/phinx status -e production'`
 
 MariaDB DDL is **not transactional** — if a migration aborts midway (the 2026-09-10
-first deploy hit *"must return an array, got int"* from a malformed `config.php` before
+first deploy hit _"must return an array, got int"_ from a malformed `config.php` before
 any DDL ran, but a later schema change could fail after a partial apply) the schema is
 left half-migrated and must be reconciled by hand against the table above.
 
 The five migrations in `db/migrations/`, in order:
 
-| Migration | Creates |
-|---|---|
+| Migration                                       | Creates                                                                                                                                                                 |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `20260908161500_create_instrument_and_settings` | `instrument` dimension table; `settings` key/value table seeded with `run_after=18:30`, `batch_size=25`, `rate.avanza=0.5`, `rate.nordnet=0.5`, `queue.stale_after=900` |
-| `20260909140000_create_owner_count_daily` | `owner_count_daily` — the append-only time series, PK `(isin, source, as_of_date)`, FK to `instrument` |
-| `20260909140100_widen_nordnet_instrument_id` | widens `instrument.nordnet_instrument_id` to `VARCHAR(64)` (36-char nnx UUID) |
-| `20260909150000_create_work_queue` | `work_queue` — `pending → claimed → done \| failed`, unique `(isin, run_date)`, FK to `instrument` |
-| `20260909160000_create_ingest_run` | `ingest_run` — one appended summary row per pipeline run; append-only, no FK |
+| `20260909140000_create_owner_count_daily`       | `owner_count_daily` — the append-only time series, PK `(isin, source, as_of_date)`, FK to `instrument`                                                                  |
+| `20260909140100_widen_nordnet_instrument_id`    | widens `instrument.nordnet_instrument_id` to `VARCHAR(64)` (36-char nnx UUID)                                                                                           |
+| `20260909150000_create_work_queue`              | `work_queue` — `pending → claimed → done \| failed`, unique `(isin, run_date)`, FK to `instrument`                                                                      |
+| `20260909160000_create_ingest_run`              | `ingest_run` — one appended summary row per pipeline run; append-only, no FK                                                                                            |
 
 `owner_count_daily` and `ingest_run` are append-only (NFR7) and are never rolled back.
 
 **Optional `settings` keys (no migration seeds them — absent → the built-in default):**
 
-| Key | Default | Effect |
-|---|---|---|
-| `universe.resolve_timebox` | `45` (seconds) | wall-clock budget for `UniverseSync`'s two HTTP passes (ISIN + Nordnet id) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed. |
-| `universe.max_delist` | `25` | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
-| `retry.max_attempts` | `3` | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry. |
-| `retry.backoff_base` | `1.0` (seconds) | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`. |
-| `retry.backoff_max` | `20.0` (seconds) | ceiling for a single backoff sleep. |
+| Key                        | Default          | Effect                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `universe.resolve_timebox` | `45` (seconds)   | wall-clock budget for `UniverseSync`'s two HTTP passes (ISIN + Nordnet id) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed.                                                                                                             |
+| `universe.max_delist`      | `25`             | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
+| `retry.max_attempts`       | `3`              | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry.                                                                                                                                                                              |
+| `retry.backoff_base`       | `1.0` (seconds)  | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`.                                    |
+| `retry.backoff_max`        | `20.0` (seconds) | ceiling for a single backoff sleep.                                                                                                                                                                                                                                                                                                                |
 
 **429 (rate-limit) handling (Story 2.4, not operator-tunable):** when a source
 returns HTTP 429, that retry's backoff is multiplied by 4 (still capped at
@@ -403,31 +407,31 @@ There is no automated rollback. Options, simplest first:
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| 500 on every route | `.htaccess` in `public_html/` missing or not routing to `index.php`; or `config.php` absent / unreadable |
-| 404 on `/` too | subdomain docroot not pointed at `~/stockpicker.ryddmo.se/public_html/` |
-| "Parked at Loopia" page on every route | subdomain has DNS but no **web configuration** (Kundzon → Subdomäner → "Hemsida hos Loopia"), or the vhost has not propagated yet (10–30 min after enabling) |
-| phinx: *"config.php … must return an array, got int"* | `config.php` has no top-level `return` — `require` yields `int(1)`. Must be `<?php return [ ... ];` |
-| `curl` from the Loopia shell to the public hostname returns empty | hairpin NAT — the server can't reach its own external IP. Test from your laptop, `curl --resolve`, or loopback `php -S` |
-| cert warning / `ssl_verify` != 0 | Let's Encrypt not issued yet (batch runs 15–60 min after you enable it in Kundzon → SSL) |
-| 403 on a cron call you expected to work | token mismatch with `config.php`, or URL-cron not sending the query string — check the job URL in Kundzon |
-| 400 on a cron call | a query parameter other than `token` is present — the endpoints accept `token` and nothing else |
-| `/cron/work` returns `window_closed` | `settings.run_after` is later than now (Europe/Stockholm) — expected outside the run window |
-| `/cron/refill` created nothing all evening | scheduled before `run_after` (18:30) — it returns `window_closed` and enqueues nothing. Run it hourly, not at 00:00 |
-| `/cron/refill` returns `{"status":"universe_sync_failed"}` | the Avanza listing was unreachable / changed shape, or the run would delist > `universe.max_delist` names. No rows changed, `Enqueue` skipped. Check the log `warning`/`error` line; the next hourly call retries. A genuine large delisting needs a one-run `universe.max_delist` bump |
-| `deploy: cannot reach 'loopia-stockpicker'` | SSH alias/key wrong, or SSH not enabled in Kundzon — the preflight aborted before rsync |
-| Migrations fail with access denied | wrong `db.user` (copy the `@…`-suffixed string verbatim from Kundzon), wrong password, or DB user lacks rights |
-| `composer` not found over SSH | use `php composer.phar …`, or deploy with `--with-local-vendor` |
-| Slice killed mid-run | web `max_execution_time` shorter than the 75 s time-box — lower `batch_size` and the time-box |
-| Out-of-memory in a slice | web `memory_limit` < what a slice needs — lower `batch_size` |
+| Symptom                                                           | Likely cause                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 500 on every route                                                | `.htaccess` in `public_html/` missing or not routing to `index.php`; or `config.php` absent / unreadable                                                                                                                                                                                |
+| 404 on `/` too                                                    | subdomain docroot not pointed at `~/stockpicker.ryddmo.se/public_html/`                                                                                                                                                                                                                 |
+| "Parked at Loopia" page on every route                            | subdomain has DNS but no **web configuration** (Kundzon → Subdomäner → "Hemsida hos Loopia"), or the vhost has not propagated yet (10–30 min after enabling)                                                                                                                            |
+| phinx: _"config.php … must return an array, got int"_             | `config.php` has no top-level `return` — `require` yields `int(1)`. Must be `<?php return [ ... ];`                                                                                                                                                                                     |
+| `curl` from the Loopia shell to the public hostname returns empty | hairpin NAT — the server can't reach its own external IP. Test from your laptop, `curl --resolve`, or loopback `php -S`                                                                                                                                                                 |
+| cert warning / `ssl_verify` != 0                                  | Let's Encrypt not issued yet (batch runs 15–60 min after you enable it in Kundzon → SSL)                                                                                                                                                                                                |
+| 403 on a cron call you expected to work                           | token mismatch with `config.php`, or URL-cron not sending the query string — check the job URL in Kundzon                                                                                                                                                                               |
+| 400 on a cron call                                                | a query parameter other than `token` is present — the endpoints accept `token` and nothing else                                                                                                                                                                                         |
+| `/cron/work` returns `window_closed`                              | `settings.run_after` is later than now (Europe/Stockholm) — expected outside the run window                                                                                                                                                                                             |
+| `/cron/refill` created nothing all evening                        | scheduled before `run_after` (18:30) — it returns `window_closed` and enqueues nothing. Run it hourly, not at 00:00                                                                                                                                                                     |
+| `/cron/refill` returns `{"status":"universe_sync_failed"}`        | the Avanza listing was unreachable / changed shape, or the run would delist > `universe.max_delist` names. No rows changed, `Enqueue` skipped. Check the log `warning`/`error` line; the next hourly call retries. A genuine large delisting needs a one-run `universe.max_delist` bump |
+| `deploy: cannot reach 'loopia-stockpicker'`                       | SSH alias/key wrong, or SSH not enabled in Kundzon — the preflight aborted before rsync                                                                                                                                                                                                 |
+| Migrations fail with access denied                                | wrong `db.user` (copy the `@…`-suffixed string verbatim from Kundzon), wrong password, or DB user lacks rights                                                                                                                                                                          |
+| `composer` not found over SSH                                     | use `php composer.phar …`, or deploy with `--with-local-vendor`                                                                                                                                                                                                                         |
+| Slice killed mid-run                                              | web `max_execution_time` shorter than the 75 s time-box — lower `batch_size` and the time-box                                                                                                                                                                                           |
+| Out-of-memory in a slice                                          | web `memory_limit` < what a slice needs — lower `batch_size`                                                                                                                                                                                                                            |
 
 ---
 
 ## Open items — closed on the first deploy (2026-09-10)
 
-- [x] Web PHP version = **8.4**  `memory_limit` = **256M**  `max_execution_time` = **180 s**
-- [x] URL-cron max execution time ≥ 180 s  min interval = **5 min** ("Var femte minut")
+- [x] Web PHP version = **8.4** `memory_limit` = **256M** `max_execution_time` = **180 s**
+- [x] URL-cron max execution time ≥ 180 s min interval = **5 min** ("Var femte minut")
 - [x] Subdomain docroot = `~/stockpicker.ryddmo.se/public_html/` (Loopia-created, fixed)
 - [x] MariaDB reachable from the app; `config.php` in place and `chmod 600`
 - [x] Both URL-cron jobs registered — `refill` hourly, `work` every 5 min. **Firing to be

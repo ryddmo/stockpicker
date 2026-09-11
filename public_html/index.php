@@ -147,6 +147,7 @@ try {
                 'done' => $result->done,
                 'failed' => $result->failed,
                 'reopened' => $result->reopened,
+                'stale_failed' => $result->staleFailed,
                 'rows_written' => $result->rowsWritten,
                 'by_source' => $result->bySource,
             ]);
