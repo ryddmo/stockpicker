@@ -86,3 +86,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-universesync-daglig-avstamning-2.md`
   summary: `instrument.avanza_orderbook_id` has no `UNIQUE` index, yet the entire `UniverseSync` reconciliation pivots on matching by that column and `setAvanzaId()` is an unconditional writer — two rows could end up sharing one orderbook id, and `$storedByObId` would then keep only one.
   evidence: Story 2.2 review pass 2; the frozen "Never: no migration" blocked the safeguard in this story. Add a unique index in a hardening story (the column is nullable, so multiple NULLs remain allowed).
+
+## Deferred from: review pass 1 of story-3.1 (Deriver — derived metrics view, 2026-09-11)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-deriver-berakna-harledda-matt.md`
+  summary: `owner_count_metrics` stacks six CTEs with `PARTITION BY isin, source` window functions computed before any caller `WHERE isin = ?` filter — MariaDB generally cannot push a predicate through a window partition, so a single-instrument read (Story 3.3's SSH script) recomputes every window over the entire table, not just the requested instrument.
+  evidence: Structural read of the view's CTE chain; no `EXPLAIN`/timing check exists yet because today's data volume (1 day, 742 instruments) makes any measurement meaningless. The architecture spine explicitly anticipated deferring this ("materialize later if EXPLAIN ever tells us to"). Revisit once Story 3.3 has a real caller and enough historical data (weeks/months) to measure against, per the epic's "stay cheap enough for Loopia shared hosting" constraint.
