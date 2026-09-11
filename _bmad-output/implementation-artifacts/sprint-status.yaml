@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-08-2026 15:06
-last_updated: 09-11-2026 16:36
+last_updated: 09-11-2026 18:28
 project: stockpicker
 project_key: NOKEY
 tracking_system: file-system
@@ -61,5 +61,5 @@ development_status:
   epic-3: in-progress
   3-1-deriver-beräkna-härledda-mått: review
   3-2-cron-derive-endpoint: review
-  3-3-uttag-av-en-akties-serie-och-mått: backlog
+  3-3-uttag-av-en-akties-serie-och-mått: review
   epic-3-retrospective: optional

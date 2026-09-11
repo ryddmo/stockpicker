@@ -98,3 +98,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-cron-derive-endpoint.md`
   summary: The auth/param/`run_after`-gate block in `public_html/index.php` is now duplicated a third time across `/cron/refill`+`/cron/work` and `/cron/derive` instead of factored into a shared helper.
   evidence: The duplication pattern predates this story (already shared between `/cron/refill` and `/cron/work`); Story 3.2 followed the established style per its own Code Map instruction to keep `/cron/derive` as its own block. A cross-route refactor is out of this story's scope.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-uttag-av-en-akties-serie-och-matt.md`
+  summary: CLI scripts (`bin/show-runs.php`, `bin/show-metrics.php`) silently let a repeated `--isin=`/`--limit=`/`--date=` flag overwrite the earlier value instead of erroring, unlike an actually-unrecognized flag.
+  evidence: Verified in both scripts' argv loops — last-wins on repeat, no duplicate-detection guard. Pre-existing convention (`bin/show-runs.php` shipped first, Story 1.8), not introduced by Story 3.3, which mirrored it per spec instruction.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-uttag-av-en-akties-serie-och-matt.md`
+  summary: DB-gated script-integration tests (`ShowRunsScriptTest`, `ShowMetricsScriptTest`) do row setup (`INSERT`/`upsert()`) before entering their `try` block, so a setup failure (e.g. duplicate PK from a prior orphaned run) skips the `finally` cleanup and can permanently wedge the fixture ISIN/run id.
+  evidence: Confirmed in `tests/Store/ShowRunsScriptTest.php::testAlarmsFlagShowsAlarmedRunsOnly` (pre-existing, Story 1.8) and both new `ShowMetricsScriptTest.php` DB-gated tests. If real, moves setup calls inside `try`, ahead of `finally`.
