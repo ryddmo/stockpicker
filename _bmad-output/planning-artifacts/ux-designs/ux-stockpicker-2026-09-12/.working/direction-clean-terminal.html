@@ -1,0 +1,418 @@
+<!--
+  DIRECTION 1: "Clean Terminal"
+  Personality: a dense, no-nonsense data table — closer to a trading terminal or a well-kept
+  spreadsheet than a consumer app. Monospace numerals keep columns honestly aligned so deltas
+  and streaks are scannable at a glance; near-zero decoration means nothing competes with the
+  numbers. This is for the user who wants the truth fast, not a product that's trying to sell
+  them something — chrome is a cost, not a feature.
+
+  Adapts to laptop/wide viewport: the phone frame goes away, the row grid keeps its exact
+  column proportions but gets more horizontal room, so name truncation disappears, streak/flag
+  columns get fixed px widths instead of squeezing, and a persistent left rail (source + mode
+  switcher, docked instead of stacked on top) sits beside the table. Row height and type size
+  stay identical — density is the point, not something to relax once there's room.
+-->
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+/*
+  COLOR TOKENS — direction-clean-terminal
+  --bg-app:        #F7F7F5   page background, warm-neutral off-white
+  --bg-surface:    #FFFFFF   card / phone screen surface
+  --bg-row-alt:    #FBFBFA   zebra striping, barely-there
+  --border:        #E2E2DE   hairlines, dividers
+  --border-strong: #CBCBC5   frame bezel
+  --text-primary:  #14181B   near-black, main numerals/names
+  --text-secondary:#6B7280   labels, metadata
+  --text-muted:    #9CA3AF   placeholders / disabled
+  --accent:        #1D4ED8   active tab underline, links, focus — used sparingly
+  --positive:      #157F3C   up deltas, up streak
+  --negative:      #B91C1C   down deltas
+  --spike-bg:      #FEF3C7   spike flag background
+  --spike-text:    #92400E   spike flag text
+  --star-filled:   #B45309   watchlist star, filled
+  --star-empty:    #D1D5DB   watchlist star, empty
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #EDEDE9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  padding: 28px 12px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 40px;
+}
+.mono { font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace; }
+
+/* ---------- phone frame ---------- */
+.phone {
+  width: 390px;
+  max-width: 100%;
+  background: #0B0C0E;
+  border-radius: 40px;
+  padding: 10px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+}
+.screen {
+  background: #F7F7F5;
+  border-radius: 30px;
+  overflow: hidden;
+  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+}
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 22px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #14181B;
+}
+
+/* ---------- header ---------- */
+.app-header {
+  padding: 10px 16px 0;
+}
+.wordmark {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6B7280;
+  font-weight: 700;
+}
+.tagline {
+  font-size: 20px;
+  font-weight: 700;
+  color: #14181B;
+  margin-top: 2px;
+}
+.tagline .dim { color: #6B7280; font-weight: 500; font-size: 14px; display: block; margin-top: 2px; }
+
+/* ---------- source switcher ---------- */
+.source-switch {
+  display: flex;
+  gap: 6px;
+  margin: 14px 16px 0;
+  border: 1px solid #E2E2DE;
+  border-radius: 6px;
+  padding: 3px;
+  background: #FFFFFF;
+  width: fit-content;
+}
+.source-switch button {
+  font: inherit;
+}
+.src-tab {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 5px 12px;
+  border-radius: 4px;
+  color: #6B7280;
+  font-family: ui-monospace, monospace;
+}
+.src-tab.active {
+  background: #14181B;
+  color: #FFFFFF;
+}
+
+/* ---------- mode toggle ---------- */
+.mode-toggle {
+  display: flex;
+  margin: 14px 16px 0;
+  border-bottom: 1px solid #E2E2DE;
+}
+.mode-tab {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 4px 10px;
+  margin-right: 20px;
+  color: #9CA3AF;
+  letter-spacing: 0.02em;
+  position: relative;
+  font-family: ui-monospace, monospace;
+  text-transform: uppercase;
+}
+.mode-tab.active {
+  color: #14181B;
+}
+.mode-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: #1D4ED8;
+}
+
+/* ---------- column header row ---------- */
+.col-head {
+  display: grid;
+  grid-template-columns: 14px 20px 1fr 58px 78px 46px;
+  gap: 6px;
+  padding: 10px 16px 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #9CA3AF;
+  text-transform: uppercase;
+  font-family: ui-monospace, monospace;
+}
+.col-head span:nth-child(4),
+.col-head span:nth-child(5) { text-align: right; }
+.col-head span:nth-child(6) { text-align: center; }
+
+/* ---------- rows ---------- */
+.rows { padding: 0 16px 8px; }
+.row {
+  display: grid;
+  grid-template-columns: 14px 20px 1fr 58px 78px 46px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid #EFEFEC;
+  position: relative;
+}
+.row:nth-child(even) { background: #FBFBFA; margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 3px; }
+.star { font-size: 12px; color: #D1D5DB; }
+.star.filled { color: #B45309; }
+.rank { font-size: 11px; color: #9CA3AF; font-family: ui-monospace, monospace; }
+.name-cell { min-width: 0; }
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #14181B;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.substreak {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  margin-top: 1px;
+}
+.substreak.up { color: #157F3C; }
+.substreak.flat { color: #9CA3AF; }
+.owners {
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  text-align: right;
+  color: #14181B;
+}
+.delta {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.25;
+}
+.delta .abs { font-weight: 700; display: block; }
+.delta .pct { display: block; font-size: 10px; opacity: 0.85; }
+.up { color: #157F3C; }
+.down { color: #B91C1C; }
+.flagcell { display: flex; justify-content: center; }
+.spike-tag {
+  font-size: 8.5px;
+  font-weight: 800;
+  font-family: ui-monospace, monospace;
+  color: #92400E;
+  background: #FEF3C7;
+  border-radius: 3px;
+  padding: 2px 4px;
+  letter-spacing: 0.02em;
+}
+.nohist {
+  font-size: 9.5px;
+  font-style: italic;
+  color: #9CA3AF;
+  font-family: ui-monospace, monospace;
+}
+
+/* ---------- footer CTA ---------- */
+.footer {
+  margin: 6px 16px 18px;
+  padding-top: 10px;
+  border-top: 1px dashed #E2E2DE;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.seefull {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1D4ED8;
+  font-family: ui-monospace, monospace;
+}
+.seefull .arrow { margin-left: 3px; }
+.total-count {
+  font-size: 10.5px;
+  color: #9CA3AF;
+  font-family: ui-monospace, monospace;
+}
+.skeptic-note {
+  margin: 0 16px 16px;
+  font-size: 10.5px;
+  color: #9CA3AF;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* ---------- reflow note card ---------- */
+.note-card {
+  width: 390px;
+  max-width: 100%;
+  background: #FFFFFF;
+  border: 1px solid #E2E2DE;
+  border-radius: 10px;
+  padding: 16px 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #374151;
+}
+.note-card b { color: #14181B; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="screen">
+    <div class="statusbar">
+      <span>8:14</span>
+      <span>☕ ● ● ●</span>
+    </div>
+
+    <div class="app-header">
+      <div class="wordmark">STOCKPICKER</div>
+      <div class="tagline">Leaderboard
+        <span class="dim">real trend, or just hype? — checked daily</span>
+      </div>
+    </div>
+
+    <div class="source-switch">
+      <div class="src-tab active">AVANZA</div>
+      <div class="src-tab">NORDNET</div>
+    </div>
+
+    <div class="mode-toggle">
+      <div class="mode-tab active">Most owners</div>
+      <div class="mode-tab">Steady growers</div>
+    </div>
+
+    <div class="col-head">
+      <span></span><span>#</span><span>Name</span><span>Owners</span><span>Δ 1d</span><span>Trend</span>
+    </div>
+
+    <div class="rows">
+
+      <div class="row">
+        <span class="star filled">★</span>
+        <span class="rank mono">1</span>
+        <div class="name-cell"><div class="name">Investor B</div><div class="substreak up">5d↑</div></div>
+        <div class="owners mono">48,210</div>
+        <div class="delta up"><span class="abs">+412</span><span class="pct">+0.9%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">2</span>
+        <div class="name-cell"><div class="name">Volvo B</div><div class="substreak up">2d↑</div></div>
+        <div class="owners mono">41,890</div>
+        <div class="delta up"><span class="abs">+180</span><span class="pct">+0.4%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">3</span>
+        <div class="name-cell"><div class="name">Evolution</div><div class="substreak up">3d↑</div></div>
+        <div class="owners mono">38,760</div>
+        <div class="delta up"><span class="abs">+890</span><span class="pct">+2.3%</span></div>
+        <div class="flagcell"><span class="spike-tag">SPIKE</span></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">4</span>
+        <div class="name-cell"><div class="name">Ericsson B</div><div class="substreak flat">0d</div></div>
+        <div class="owners mono">35,420</div>
+        <div class="delta down"><span class="abs">−95</span><span class="pct">−0.3%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star filled">★</span>
+        <span class="rank mono">5</span>
+        <div class="name-cell"><div class="name">Atlas Copco A</div><div class="substreak up">8d↑</div></div>
+        <div class="owners mono">33,110</div>
+        <div class="delta up"><span class="abs">+205</span><span class="pct">+0.6%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">6</span>
+        <div class="name-cell"><div class="name">Hexagon B</div><div class="substreak up">1d↑</div></div>
+        <div class="owners mono">29,980</div>
+        <div class="delta up"><span class="abs">+47</span><span class="pct">+0.2%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">7</span>
+        <div class="name-cell"><div class="name">Assa Abloy B</div><div class="substreak up">4d↑</div></div>
+        <div class="owners mono">27,340</div>
+        <div class="delta up"><span class="abs">+310</span><span class="pct">+1.1%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">8</span>
+        <div class="name-cell"><div class="name">Sv. Handelsbanken A</div><div class="substreak up">2d↑</div></div>
+        <div class="owners mono">25,600</div>
+        <div class="delta up"><span class="abs">+62</span><span class="pct">+0.2%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">9</span>
+        <div class="name-cell"><div class="name">Swedbank A</div><div class="substreak up">1d↑</div></div>
+        <div class="owners mono">24,150</div>
+        <div class="delta up"><span class="abs">+530</span><span class="pct">+2.2%</span></div>
+        <div class="flagcell"><span class="spike-tag">SPIKE</span></div>
+      </div>
+
+      <div class="row">
+        <span class="star"></span>
+        <span class="rank mono">10</span>
+        <div class="name-cell"><div class="name">Boliden</div><div class="nohist">tracked 4d — no trend yet</div></div>
+        <div class="owners mono">21,870</div>
+        <div class="delta down"><span class="abs">−140</span><span class="pct">−0.6%</span></div>
+        <div class="flagcell"></div>
+      </div>
+
+    </div>
+
+    <div class="footer">
+      <span class="seefull">See full list<span class="arrow">→</span></span>
+      <span class="total-count">10 of 740</span>
+    </div>
+    <div class="skeptic-note">Two spikes above. The other eight are just... going up. That's the boring, useful kind.</div>
+  </div>
+</div>
+
+<div class="note-card">
+  <b>Wide-viewport reflow (not rendered above):</b> phone chrome drops away; the column grid
+  keeps its ratios but stops eliding stock names (58px owners → 90px, 78px delta → 110px);
+  the source switch and mode toggle move into a slim left rail docked beside the table instead
+  of stacking above it; row height and font-size are unchanged — this direction never "relaxes"
+  on space, it just stops truncating.
+</div>
+
+</body>
+</html>

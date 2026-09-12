@@ -3,6 +3,8 @@ id: SPEC-stockpicker
 companions:
   - ../../planning-artifacts/architecture/architecture-stockpicker-2026-09-08/ARCHITECTURE-SPINE.md
   - ../../planning-artifacts/briefs/brief-stockpicker-2026-09-08/addendum.md
+  - ../../planning-artifacts/ux-designs/ux-stockpicker-2026-09-12/DESIGN.md
+  - ../../planning-artifacts/ux-designs/ux-stockpicker-2026-09-12/EXPERIENCE.md
 sources:
   - ../../planning-artifacts/briefs/brief-stockpicker-2026-09-08/brief.md
 ---
@@ -14,6 +16,10 @@ sources:
 
 # Stockpicker — datainsamlingsmotor v1
 
+> _2026-09-12: presentationslagret (webb-UI) flyttat in i scope — tidigare ett Non-goal.
+> Se ARCHITECTURE-SPINE.md AD-12–AD-15/K13–K18, DESIGN.md/EXPERIENCE.md, CAP-8 nedan, och
+> sprint-change-proposal-2026-09-12.md._
+
 ## Why
 
 En vision att förverkliga. Stefan vill ha ett eget beslutsstöd för att välja enskilda
@@ -22,9 +28,10 @@ Nordnet, följt dag för dag**. Hypotesen är att ett stadigt växande ägaranta
 tid säger något om ett bolag som pris och volym inte fångar. Idag är Stefan
 indexinvesterare och öppen för något större risk i stabila bolag — men saknar
 strukturerad, egen historik att luta besluten mot. Verktyget är personligt; ambitionen
-är bättre egna beslut, inte en produkt för andra. v1 är enbart **insamlingsmotorn** —
-den som bygger upp tidsserien. Presentation och analys kommer senare och behöver att
-datainsamlingen redan gått ett tag.
+är bättre egna beslut, inte en produkt för andra. v1 är insamlingsmotorn och, sedan
+2026-09-12, en personlig webbyta ovanpå den (CAP-8): insamlingen byggdes och driftsattes
+först (Epic 1–3) eftersom presentationen förutsätter att det redan finns historik att
+visa. Analys utöver de härledda måtten (K10) kommer fortfarande senare.
 
 ## Capabilities
 
@@ -78,6 +85,16 @@ datainsamlingen redan gått ett tag.
   - **success:** Efter en natt går det att avgöra exakt vad som lyckades och vad som
     fallerade, per källa.
 
+- **CAP-8 — Autentiserad webb-yta** _(tillagd 2026-09-12)_
+  - **intent:** En inloggad, mobilanpassad webbyta (Topplista, Fullständig lista,
+    Bevakningslista, Aktiedetalj) låter Stefan bläddra, ranka, filtrera och bevaka aktier
+    utifrån de insamlade ägarantalstrenderna och härledda måtten, utan att fråga databasen
+    direkt.
+  - **success:** Stefan kan logga in med en långlivad session, se topp 10 per källa och
+    rankningsläge, gräva vidare i fullständiga listan med sök/filter/sort, bevaka en aktie
+    med ett tryck, och se en akties fulla historik och härledda mått för båda källorna —
+    på mobil och laptop.
+
 ## Constraints
 
 - **Kör helt på Loopia delat webbhotell (Privatpaket).** PHP 8.3+ + MariaDB 10.11
@@ -95,10 +112,13 @@ datainsamlingen redan gått ett tag.
   legala aktieägarantalet — de får aldrig summeras till en total.
 - **Ingen historisk backfill.** Tidsserien börjar vid första körningen; att bygga upp
   historik är ett kärnsyfte, inte en brist att åtgärda.
+- **Webb-UI:t är serverrenderad PHP utan klientramverk eller byggsteg** (enda undantaget:
+  en handskriven JS-fil för bevakningsstjärnans optimistiska växling) — se AD-12.
 
 ## Non-goals
 
-- Allt presentations- och analyslager: webbgränssnitt, grafer, dashboards, notiser.
+- Push-notiser eller e-postaviseringar (webb-UI:t är session-baserat, ingen
+  bakgrundsnotifiering).
 - Automatiska köp-/säljsignaler eller en regelmotor.
 - Icke-svenska marknader; instrument som inte är aktier (fonder, ETF:er, index).
 - Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet.
