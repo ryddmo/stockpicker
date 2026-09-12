@@ -14,6 +14,8 @@ use PHPUnit\Framework\TestCase;
 final class FrontControllerTest extends TestCase
 {
     private const REPO_ROOT = __DIR__ . '/..';
+    private const LOGIN_PASSWORD = 'correct-horse-battery-staple';
+    private const SESSION_KEY = 'test-session-key';
 
     private string $root;
 
@@ -51,7 +53,7 @@ final class FrontControllerTest extends TestCase
 
     public function testHealthcheckReturns200Json(): void
     {
-        [$status, $body] = $this->get('/');
+        [$status, $body] = $this->get('/health');
 
         self::assertSame(200, $status);
 
@@ -59,6 +61,112 @@ final class FrontControllerTest extends TestCase
         self::assertSame('ok', $json['status']);
         self::assertSame('stockpicker', $json['app']);
         self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $json['time']);
+    }
+
+    public function testRootWithoutCookieShowsLoginFormWithNoMessage(): void
+    {
+        [$status, $body] = $this->get('/');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringNotContainsString('Fel användarnamn eller lösenord.', $body);
+        self::assertStringNotContainsString('Sessionen har gått ut', $body);
+    }
+
+    public function testRootWithWrongMethodReturns405(): void
+    {
+        [$status, $body] = $this->post('/');
+
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testLoginWithWrongMethodReturns405(): void
+    {
+        [$status, $body] = $this->request('PUT', '/login');
+
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testCorrectLoginSetsSignedCookieAndRedirectsToRoot(): void
+    {
+        [$status, , $headers] = $this->postForm('/login', [
+            'username' => 'stefan',
+            'password' => self::LOGIN_PASSWORD,
+        ]);
+
+        self::assertSame(302, $status);
+        self::assertSame('/', $this->locationHeader($headers));
+
+        $cookie = $this->extractCookieValue($headers, 'stockpicker_session');
+        self::assertNotNull($cookie);
+        self::assertMatchesRegularExpression('#^[A-Za-z0-9+/=]+\.[0-9a-f]{64}$#', $cookie);
+    }
+
+    public function testWrongPasswordShowsInlineError(): void
+    {
+        [$status, $body] = $this->postForm('/login', [
+            'username' => 'stefan',
+            'password' => 'wrong-password',
+        ]);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Fel användarnamn eller lösenord.', $body);
+    }
+
+    public function testExpiredCookieShowsExpiredMessageOnRoot(): void
+    {
+        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() - 3600);
+
+        [$status, $body] = $this->get('/', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Sessionen har gått ut. Logga in igen.', $body);
+    }
+
+    public function testTamperedCookieShowsLoginFormWithNoMessage(): void
+    {
+        $cookie = 'stockpicker_session=' . base64_encode('{"exp":9999999999}') . '.' . str_repeat('0', 64);
+
+        [$status, $body] = $this->get('/', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringNotContainsString('Fel användarnamn eller lösenord.', $body);
+        self::assertStringNotContainsString('Sessionen har gått ut', $body);
+    }
+
+    public function testAlreadyLoggedInRedirectsAwayFromLoginForm(): void
+    {
+        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() + 3600);
+
+        [$status, , $headers] = $this->get('/login', $cookie);
+
+        self::assertSame(302, $status);
+        self::assertSame('/', $this->locationHeader($headers));
+    }
+
+    public function testExpiredCookieOnLoginShowsPlainFormWithNoMessage(): void
+    {
+        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() - 3600);
+
+        [$status, $body] = $this->get('/login', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringNotContainsString('Fel användarnamn eller lösenord.', $body);
+        self::assertStringNotContainsString('Sessionen har gått ut', $body);
+    }
+
+    public function testValidSessionShowsAuthenticatedPlaceholderNotLoginForm(): void
+    {
+        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() + 3600);
+
+        [$status, $body] = $this->get('/', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('<form', $body);
     }
 
     public function testUnknownRouteReturns404Json(): void
@@ -143,7 +251,7 @@ final class FrontControllerTest extends TestCase
     }
 
     /**
-     * @return array{db: array<string,string>, cron_token: string, log_path: string}
+     * @return array{db: array<string,string>, cron_token: string, log_path: string, login_username: string, login_password_hash: string, session_key: string}
      */
     private function configArray(): array
     {
@@ -157,7 +265,52 @@ final class FrontControllerTest extends TestCase
             ],
             'cron_token' => 'test-token',
             'log_path' => 'var/log/stockpicker.log',
+            'login_username' => 'stefan',
+            'login_password_hash' => password_hash(self::LOGIN_PASSWORD, PASSWORD_BCRYPT),
+            'session_key' => self::SESSION_KEY,
         ];
+    }
+
+    /**
+     * Builds a validly signed session cookie value for a given expiry,
+     * bypassing the /login flow — mirrors AuthController::issueCookieValue()'s
+     * format so tests can construct expired/near-future cookies directly.
+     */
+    private function signedCookieValue(int $exp): string
+    {
+        $payload = json_encode(['exp' => $exp], JSON_THROW_ON_ERROR);
+
+        return base64_encode($payload) . '.' . hash_hmac('sha256', $payload, self::SESSION_KEY);
+    }
+
+    private function extractCookieValue(array $headers, string $name): ?string
+    {
+        foreach ($headers as $header) {
+            if (stripos($header, 'Set-Cookie:') !== 0) {
+                continue;
+            }
+
+            $value = trim(substr($header, strlen('Set-Cookie:')));
+            $attribute = explode(';', $value, 2)[0];
+            [$cookieName, $cookieValue] = array_pad(explode('=', $attribute, 2), 2, null);
+
+            if ($cookieName === $name) {
+                return $cookieValue;
+            }
+        }
+
+        return null;
+    }
+
+    private function locationHeader(array $headers): ?string
+    {
+        foreach ($headers as $header) {
+            if (stripos($header, 'Location:') === 0) {
+                return trim(substr($header, strlen('Location:')));
+            }
+        }
+
+        return null;
     }
 
     private function startServer(): void
@@ -211,40 +364,66 @@ final class FrontControllerTest extends TestCase
     }
 
     /**
-     * @return array{0: int, 1: string}
+     * @return array{0: int, 1: string, 2: array<int, string>}
      */
-    private function post(string $path): array
+    private function post(string $path, ?string $cookie = null): array
     {
-        return $this->request('POST', $path);
+        return $this->request('POST', $path, $cookie);
     }
 
     /**
-     * @return array{0: int, 1: string}
+     * @param array<string, string> $fields
+     *
+     * @return array{0: int, 1: string, 2: array<int, string>}
      */
-    private function get(string $path): array
+    private function postForm(string $path, array $fields, ?string $cookie = null): array
     {
-        return $this->request('GET', $path);
+        return $this->request('POST', $path, $cookie, http_build_query($fields));
     }
 
     /**
-     * @return array{0: int, 1: string}
+     * @return array{0: int, 1: string, 2: array<int, string>}
      */
-    private function request(string $method, string $path): array
+    private function get(string $path, ?string $cookie = null): array
     {
-        $options = ['ignore_errors' => true, 'timeout' => 5];
+        return $this->request('GET', $path, $cookie);
+    }
+
+    /**
+     * @return array{0: int, 1: string, 2: array<int, string>}
+     */
+    private function request(string $method, string $path, ?string $cookie = null, ?string $body = null): array
+    {
+        $options = ['ignore_errors' => true, 'timeout' => 5, 'follow_location' => 0];
         if ($method !== 'GET') {
             $options['method'] = $method;
         }
+
+        $headerLines = [];
+        if ($cookie !== null) {
+            $headerLines[] = 'Cookie: ' . $cookie;
+        }
+        if ($body !== null) {
+            $headerLines[] = 'Content-Type: application/x-www-form-urlencoded';
+        }
+        if ($headerLines !== []) {
+            $options['header'] = implode("\r\n", $headerLines);
+        }
+        if ($body !== null) {
+            $options['content'] = $body;
+        }
+
         $ctx = stream_context_create(['http' => $options]);
-        $body = file_get_contents($this->base . $path, false, $ctx);
+        $responseBody = file_get_contents($this->base . $path, false, $ctx);
         $status = 0;
-        foreach ($http_response_header ?? [] as $header) {
+        $responseHeaders = $http_response_header ?? [];
+        foreach ($responseHeaders as $header) {
             if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m)) {
                 $status = (int) $m[1];
             }
         }
 
-        return [$status, (string) $body];
+        return [$status, (string) $responseBody, $responseHeaders];
     }
 
     private function removeDir(string $dir): void

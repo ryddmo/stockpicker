@@ -26,6 +26,17 @@ return [
     // Shared secret for the /cron/* endpoints, compared with hash_equals().
     'cron_token' => 'change-me',
 
+    // Single hardcoded login credential pair (Story 4.1) — no user table, no
+    // registration. Generate the bcrypt hash with:
+    //   php -r "echo password_hash('your-password', PASSWORD_BCRYPT), PHP_EOL;"
+    'login_username' => 'change-me',
+    'login_password_hash' => 'change-me',
+
+    // HMAC signing key for the session cookie, compared with hash_equals().
+    // Generate a strong secret with:
+    //   php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"
+    'session_key' => 'change-me',
+
     // Log file, relative to the project root or absolute. Must be outside public_html/.
     'log_path' => 'var/log/stockpicker.log',
 ];

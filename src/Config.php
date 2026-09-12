@@ -107,6 +107,48 @@ final class Config
     }
 
     /**
+     * HMAC signing key for the session cookie (see Web\AuthController).
+     */
+    public function sessionKey(): string
+    {
+        $key = $this->data['session_key'] ?? null;
+
+        if (!\is_string($key) || $key === '') {
+            throw new RuntimeException('config.php is missing a non-empty "session_key"');
+        }
+
+        return $key;
+    }
+
+    /**
+     * The single hardcoded login username.
+     */
+    public function loginUsername(): string
+    {
+        $username = $this->data['login_username'] ?? null;
+
+        if (!\is_string($username) || $username === '') {
+            throw new RuntimeException('config.php is missing a non-empty "login_username"');
+        }
+
+        return $username;
+    }
+
+    /**
+     * Bcrypt hash of the single hardcoded login password, checked with password_verify().
+     */
+    public function loginPasswordHash(): string
+    {
+        $hash = $this->data['login_password_hash'] ?? null;
+
+        if (!\is_string($hash) || $hash === '') {
+            throw new RuntimeException('config.php is missing a non-empty "login_password_hash"');
+        }
+
+        return $hash;
+    }
+
+    /**
      * Absolute path to the log file. A relative log_path is resolved against
      * the project root; the default is var/log/stockpicker.log.
      */
