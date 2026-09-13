@@ -839,6 +839,106 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('star--filled', $body);
     }
 
+    // -- Story 4.5: /watchlist (Bevakningslista) and the shared tab bar -------
+
+    public function testWatchlistShowsOnlyStarredInstrumentsForSelectedSource(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000); // Beta AB
+        $cookie = $this->validCookie();
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001002'], $cookie);
+
+        [$status, $body] = $this->endpoint->get('/watchlist', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Bevakningslista', $body);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringNotContainsString('Alpha AB', $body);
+        self::assertStringContainsString('star--filled', $body);
+    }
+
+    public function testWatchlistWithNoStarredInstrumentsShowsEmptyStateWithLinkToRoot(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/watchlist', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier bevakade än.', $body);
+        self::assertStringContainsString('href="/"', $body);
+    }
+
+    public function testWatchlistStarToggleUnstarsTheInstrumentAndItIsGoneOnTheNextLoad(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB
+        $cookie = $this->validCookie();
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+
+        [$firstStatus, $firstBody] = $this->endpoint->get('/watchlist', $cookie);
+        self::assertSame(200, $firstStatus);
+        self::assertStringContainsString('Alpha AB', $firstBody);
+
+        [$toggleStatus, $toggleBody] = $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+        $json = json_decode($toggleBody, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $toggleStatus);
+        self::assertFalse($json['starred']);
+
+        [$secondStatus, $secondBody] = $this->endpoint->get('/watchlist', $cookie);
+        self::assertSame(200, $secondStatus);
+        self::assertStringContainsString('Inga aktier bevakade än.', $secondBody);
+    }
+
+    public function testWatchlistSourceSwitchShowsNordnetDataForTheSameStarredIsinsNeverMergedWithAvanza(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 100, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
+        $cookie = $this->validCookie();
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+
+        [$status, $body] = $this->endpoint->get('/watchlist?source=nordnet', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('999 999', $body);
+        self::assertSame(1, substr_count($body, 'class="row"'), 'only the one starred isin may appear');
+    }
+
+    public function testWatchlistWithNoSessionShowsLoginForm(): void
+    {
+        [$status, $body] = $this->endpoint->get('/watchlist');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringContainsString('Logga in', $body);
+    }
+
+    public function testTabBarAppearsOnAllFourAuthenticatedPagesWithTheCorrectTabMarkedActive(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $cookie = $this->validCookie();
+
+        $topplistaActive = 'class="tab tab--active" href="/">Topplista</a>';
+        $watchlistActive = 'class="tab tab--active" href="/watchlist">Bevakningslista</a>';
+        $topplistaInactive = 'class="tab" href="/">Topplista</a>';
+        $watchlistInactive = 'class="tab" href="/watchlist">Bevakningslista</a>';
+
+        foreach (['/', '/list', '/stock/SE0000001001'] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $cookie);
+            self::assertSame(200, $status, $path);
+            self::assertStringContainsString($topplistaActive, $body, "{$path}: Topplista tab must be active");
+            self::assertStringContainsString($watchlistInactive, $body, "{$path}: Bevakningslista tab must be present but inactive");
+        }
+
+        [$status, $body] = $this->endpoint->get('/watchlist', $cookie);
+        self::assertSame(200, $status);
+        self::assertStringContainsString($watchlistActive, $body, '/watchlist: Bevakningslista tab must be active');
+        self::assertStringContainsString($topplistaInactive, $body, '/watchlist: Topplista tab must be present but inactive');
+    }
+
     private function seedOwnerCount(
         string $isin,
         string $asOfDate,

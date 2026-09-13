@@ -6,166 +6,101 @@ namespace Stockpicker\Web;
 
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
-use Stockpicker\Store\WatchlistRepository;
 
 /**
- * Story 4.2 — renders the authenticated `/` Topplista page: a Source
- * switcher (Avanza/Nordnet), a Ranking-mode toggle ("Flest ägare" / "Stadig
- * tillväxt"), and the top-10 Leaderboard rows for the resolved (source,
- * ranking) pair, each with its Watchlist star, badges, sparkline, owner
- * count and delta chip.
+ * Story 4.5 — renders the authenticated `/watchlist` Bevakningslista page:
+ * every currently-starred instrument for the selected source, as the same
+ * Leaderboard row shape as Topplista/Fullständig lista (star/badges/
+ * sparkline/delta unchanged), with a Source switcher and no other controls
+ * (no search/sort/filter — a personal watchlist is small by construction,
+ * Boundaries & Constraints spec-4-5).
  *
- * Source/ranking are per-request only (AD-14) — this controller never reads
- * or writes `settings`; the front controller resolves both from query
- * params (falling back to the defaults below) and passes them in.
+ * Reuses DerivedMetricsRepository::searchAndFilter() with the `watchlist`
+ * filter Story 4.4 already built — no new repository method (spec-4-5). The
+ * `watchlist` table has no source column (a starred isin's data is still
+ * per-source), so Source is per-request only here too (AD-14), same
+ * precedent as every other list page.
  *
- * No templating engine (repo convention) — plain heredoc + htmlspecialchars,
- * same as AuthController::renderLoginPage(). The badge/no-history/spike
- * selection rules are exposed as small `public static` pure functions
- * (hasStreak(), isSpiking(), isSparklineMuted(), emptyStateCopy(), …) so
- * LeaderboardControllerTest can exercise the decision logic directly,
- * without a database or HTTP.
+ * Badge/delta helpers (isSparklineMuted, isSpiking, streakBadgeHtml,
+ * spikeBadgeHtml, deltaChipHtml) are reused as-is from LeaderboardController
+ * (Boundaries & Constraints, spec-4-5) rather than re-implemented here, same
+ * as FullListController.
  */
-final class LeaderboardController
+final class WatchlistController
 {
-    public const RANKING_COUNT = 'count';
-    public const RANKING_STEADY = 'steady';
-
-    private const TOP_N = 10;
     private const SPARKLINE_WINDOW_DAYS = 30;
 
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
-        private readonly WatchlistRepository $watchlist,
     ) {
     }
 
     /**
-     * Renders the full page for the given (already-fallback-resolved-by-the-
-     * caller-or-not) source/ranking query values. Unrecognized values fall
-     * back to the defaults here too, so a garbage query string never 500s.
+     * Renders the full page. $rawSource is the raw query value as a string
+     * (or absent, coerced to '' by the caller) — unrecognized values fall
+     * back to the default here too, so a garbage query string never 500s
+     * (same tolerance as FullListController::render()).
      */
-    public function render(string $source, string $rankingMode): string
+    public function render(string $rawSource): string
     {
-        $source = $source === NormalizedRow::SOURCE_NORDNET
-            ? NormalizedRow::SOURCE_NORDNET
-            : NormalizedRow::SOURCE_AVANZA;
-        $rankingMode = $rankingMode === self::RANKING_STEADY
-            ? self::RANKING_STEADY
-            : self::RANKING_COUNT;
+        $source = self::normalizeSource($rawSource);
 
-        $rows = $rankingMode === self::RANKING_STEADY
-            ? $this->metrics->topByTrendQuality($source, self::TOP_N)
-            : $this->metrics->topByOwnerCount($source, self::TOP_N);
-
-        $starred = array_flip($this->watchlist->starredIsins());
+        $rows = $this->metrics->searchAndFilter($source, ['watchlist' => true], DerivedMetricsRepository::SORT_COUNT);
 
         if ($rows === []) {
-            $bodyHtml = '<p class="empty-state">' . self::e(self::emptyStateCopy($rankingMode)) . '</p>';
+            $bodyHtml = self::emptyStateHtml();
         } else {
+            $isins = array_column($rows, 'isin');
+            $seriesByIsin = $this->metrics->recentSeriesForIsins($isins, $source, self::SPARKLINE_WINDOW_DAYS);
+
             $bodyHtml = '';
-            foreach ($rows as $i => $row) {
-                $bodyHtml .= $this->renderRow($row, $source, $i + 1, isset($starred[(string) $row['isin']]));
+            foreach ($rows as $row) {
+                $isin = (string) $row['isin'];
+                // Every row here is already guaranteed starred by construction
+                // (searchAndFilter()'s 'watchlist' filter is `isin IN (SELECT
+                // isin FROM watchlist)`) — no second query needed, and none of
+                // the non-atomic-read race a separate starredIsins() lookup
+                // would introduce against a concurrent /watchlist/toggle.
+                $bodyHtml .= $this->renderRow($row, $seriesByIsin[$isin] ?? [], true);
             }
         }
 
-        return self::pageHtml($source, $rankingMode, $bodyHtml);
+        return self::pageHtml($source, $bodyHtml);
+    }
+
+    // -- Query param normalization (pure, unit-testable) -----------------------
+
+    public static function normalizeSource(string $source): string
+    {
+        return $source === NormalizedRow::SOURCE_NORDNET
+            ? NormalizedRow::SOURCE_NORDNET
+            : NormalizedRow::SOURCE_AVANZA;
+    }
+
+    public static function emptyStateCopy(): string
+    {
+        return 'Inga aktier bevakade än.';
     }
 
     /**
-     * Empty-state copy (I/O & Edge-Case Matrix, spec-4-2). Only the
-     * steady-growth zero-qualifiers case has product-specified copy; the
-     * owner-count mode's empty case is not reachable in normal operation
-     * (it would mean zero active instruments) but still gets a plain
-     * fallback rather than a blank page.
+     * The zero-starred body (I/O & Edge-Case Matrix, spec-4-5): the copy
+     * plus a link back to `/` (no "rensa filter" — there is nothing to
+     * clear, Code Map). A pure static so it can be exercised without a
+     * database or HTTP request.
      */
-    public static function emptyStateCopy(string $rankingMode): string
+    public static function emptyStateHtml(): string
     {
-        return $rankingMode === self::RANKING_STEADY
-            ? 'Inga aktier med stadig tillväxt just nu.'
-            : 'Inga aktier hittades.';
+        return '<p class="empty-state">' . self::e(self::emptyStateCopy())
+            . ' <a href="/">Till Topplista</a></p>';
     }
+
+    // -- Row rendering -----------------------------------------------------
 
     /**
-     * Streak badge condition (Story 3.1's fixed view column, spec-4-2):
-     * `up_streak >= 1`. NULL (first-ever row) does not qualify.
+     * @param array<string, mixed> $row one searchAndFilter() row
+     * @param list<array{as_of_date: string, number_of_owners: int}> $series
      */
-    public static function hasStreak(?int $upStreak): bool
-    {
-        return $upStreak !== null && $upStreak >= 1;
-    }
-
-    /**
-     * Spike badge condition: `spike_score >= 2`, upward only — a large
-     * *negative* spike_score (a genuine drop) must never trigger this badge
-     * (decided 2026-09-13).
-     */
-    public static function isSpiking(?float $spikeScore): bool
-    {
-        return $spikeScore !== null && $spikeScore >= DerivedMetricsRepository::SPIKE_THRESHOLD;
-    }
-
-    /**
-     * Sparkline muted/dashed condition: `sma_7 IS NULL` (fewer than 7 stored
-     * rows). Accepts the raw view value (string|null from PDO, or already
-     * cast) so callers can pass the row field straight through.
-     */
-    public static function isSparklineMuted(mixed $sma7): bool
-    {
-        return $sma7 === null;
-    }
-
-    public static function sparklineNoHistoryLabel(int $trackedDays): string
-    {
-        return sprintf('%dd spårade · ingen trend än', $trackedDays);
-    }
-
-    public static function streakBadgeHtml(?int $upStreak): string
-    {
-        if (self::hasStreak($upStreak)) {
-            return '<span class="badge badge--streak">🔥 ' . $upStreak . 'd</span>';
-        }
-
-        return '<span class="badge badge--nohist">flat</span>';
-    }
-
-    public static function spikeBadgeHtml(?float $spikeScore): string
-    {
-        if (!self::isSpiking($spikeScore)) {
-            return '';
-        }
-
-        return '<span class="badge badge--spike">⚡ spike</span>';
-    }
-
-    /**
-     * "+412 · 0,9 %" — count and percent always together (DESIGN.md), sign
-     * shown on the count, magnitude-only on the percent. Empty when either
-     * value is unavailable (no >1-day-gap-free predecessor to compare to).
-     */
-    public static function deltaChipHtml(?int $delta, ?float $pct): string
-    {
-        if ($delta === null || $pct === null) {
-            return '';
-        }
-
-        $sign = $delta > 0 ? '+' : ($delta < 0 ? '-' : '');
-        $deltaText = $sign . number_format(abs($delta), 0, ',', ' ');
-        $pctText = number_format(abs($pct) * 100, 1, ',', '') . ' %';
-        $cls = $delta > 0 ? 'positive' : ($delta < 0 ? 'negative' : 'neutral');
-
-        return sprintf(
-            '<span class="delta-chip delta-chip--%s">%s · %s</span>',
-            $cls,
-            self::e($deltaText),
-            self::e($pctText),
-        );
-    }
-
-    /**
-     * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQuality() row
-     */
-    private function renderRow(array $row, string $source, int $rank, bool $starred): string
+    private function renderRow(array $row, array $series, bool $starred): string
     {
         $isin = (string) $row['isin'];
         $name = (string) $row['name'];
@@ -174,13 +109,11 @@ final class LeaderboardController
         $pct = $row['pct_1d'] !== null ? (float) $row['pct_1d'] : null;
         $upStreak = $row['up_streak'] !== null ? (int) $row['up_streak'] : null;
         $spikeScore = $row['spike_score'] !== null ? (float) $row['spike_score'] : null;
-        $muted = self::isSparklineMuted($row['sma_7']);
+        $muted = LeaderboardController::isSparklineMuted($row['sma_7']);
 
-        $series = $this->metrics->recentSeries($isin, $source, self::SPARKLINE_WINDOW_DAYS);
-
-        $badgesHtml = self::streakBadgeHtml($upStreak) . self::spikeBadgeHtml($spikeScore);
+        $badgesHtml = LeaderboardController::streakBadgeHtml($upStreak) . LeaderboardController::spikeBadgeHtml($spikeScore);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
-        $deltaChipHtml = self::deltaChipHtml($delta, $pct);
+        $deltaChipHtml = LeaderboardController::deltaChipHtml($delta, $pct);
 
         $eIsin = self::e($isin);
         $eName = self::e($name);
@@ -192,7 +125,6 @@ final class LeaderboardController
 
         return <<<HTML
         <div class="row">
-          <span class="rank">{$rank}</span>
           <button type="button" class="{$starClass}" data-isin="{$eIsin}" aria-pressed="{$ariaPressed}" aria-label="{$starLabel}">{$starGlyph}</button>
           <a class="row-body" href="/stock/{$eIsin}">
             <span class="name">{$eName}</span>
@@ -207,6 +139,11 @@ final class LeaderboardController
     }
 
     /**
+     * Same sparkline rendering as LeaderboardController::sparklineHtml()/
+     * FullListController::sparklineHtml() (both private and out of the
+     * reuse list — same precedent as spec-4-4), kept byte-for-byte
+     * equivalent so the rendered row is visually identical.
+     *
      * @param list<array{as_of_date: string, number_of_owners: int}> $series
      */
     private static function sparklineHtml(array $series, bool $muted, ?float $spikeScore, ?int $delta): string
@@ -214,7 +151,7 @@ final class LeaderboardController
         $count = count($series);
 
         if ($count < 2) {
-            $label = self::e(self::sparklineNoHistoryLabel($count));
+            $label = self::e(LeaderboardController::sparklineNoHistoryLabel($count));
 
             return '<span class="sparkline sparkline--empty" aria-hidden="true"></span>'
                 . '<span class="sparkline-label">' . $label . '</span>';
@@ -236,7 +173,7 @@ final class LeaderboardController
 
         if ($muted) {
             $strokeClass = 'sparkline-line--nohistory';
-        } elseif (self::isSpiking($spikeScore)) {
+        } elseif (LeaderboardController::isSpiking($spikeScore)) {
             $strokeClass = 'sparkline-line--spike';
         } elseif ($delta !== null && $delta > 0) {
             $strokeClass = 'sparkline-line--positive';
@@ -255,18 +192,18 @@ final class LeaderboardController
         );
 
         if ($muted) {
-            $svg .= '<span class="sparkline-label">' . self::e(self::sparklineNoHistoryLabel($count)) . '</span>';
+            $svg .= '<span class="sparkline-label">' . self::e(LeaderboardController::sparklineNoHistoryLabel($count)) . '</span>';
         }
 
         return $svg;
     }
 
-    private static function pageHtml(string $source, string $rankingMode, string $rowsHtml): string
+    // -- Page assembly -----------------------------------------------------
+
+    private static function pageHtml(string $source, string $rowsHtml): string
     {
-        $tabBar = self::tabBarHtml('topplista', $source);
-        $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode);
-        $rankingToggle = self::rankingToggleHtml($source, $rankingMode);
-        $fullListHref = self::e(self::fullListUrl($source));
+        $tabBar = self::tabBarHtml('watchlist', $source);
+        $sourceSwitcher = self::sourceSwitcherHtml($source);
         $css = self::css();
 
         return <<<HTML
@@ -275,7 +212,7 @@ final class LeaderboardController
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Topplista — stockpicker</title>
+        <title>Bevakningslista — stockpicker</title>
         <style>{$css}</style>
         </head>
         <body>
@@ -283,17 +220,14 @@ final class LeaderboardController
           {$tabBar}
           <header class="page-header">
             <div class="wordmark">STOCKPICKER</div>
-            <h1>Topplista</h1>
-            <p class="subtitle">Ägarantal, rankade. Spikar uppmärksammas, döljs inte.</p>
+            <h1>Bevakningslista</h1>
             <div class="controls">
               {$sourceSwitcher}
-              {$rankingToggle}
             </div>
           </header>
           <main class="rows">
             {$rowsHtml}
           </main>
-          <p class="full-list-link"><a href="{$fullListHref}">Visa fullständig lista</a></p>
         </div>
         <script src="/assets/watchlist.js" defer></script>
         </body>
@@ -307,8 +241,8 @@ final class LeaderboardController
      * added to all four authenticated pages (Design Notes/Code Map,
      * spec-4-5). No shared layout file exists (Stories 4.3/4.4's
      * already-accepted CSS duplication debt), so this exact snippet is
-     * duplicated byte-for-byte across FullListController,
-     * StockDetailController, WatchlistController and here — not a new gap.
+     * duplicated byte-for-byte across LeaderboardController,
+     * FullListController, StockDetailController and here — not a new gap.
      * $active is 'topplista' or 'watchlist'; Fullständig lista/Aktiedetalj
      * both mark 'topplista' active (Boundaries & Constraints: Fullständig
      * lista is reachable only via Topplista's own footer action, never a
@@ -330,12 +264,12 @@ final class LeaderboardController
         HTML;
     }
 
-    private static function sourceSwitcherHtml(string $source, string $rankingMode): string
+    private static function sourceSwitcherHtml(string $source): string
     {
         $avanzaClass = $source === NormalizedRow::SOURCE_AVANZA ? 'tab tab--active' : 'tab';
         $nordnetClass = $source === NormalizedRow::SOURCE_NORDNET ? 'tab tab--active' : 'tab';
-        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode));
-        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode));
+        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA));
+        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET));
 
         return <<<HTML
         <div class="source-switcher" role="tablist" aria-label="Källa">
@@ -345,51 +279,16 @@ final class LeaderboardController
         HTML;
     }
 
-    private static function rankingToggleHtml(string $source, string $rankingMode): string
-    {
-        $countClass = $rankingMode === self::RANKING_COUNT ? 'tab tab--active' : 'tab';
-        $steadyClass = $rankingMode === self::RANKING_STEADY ? 'tab tab--active' : 'tab';
-        $countHref = self::e(self::url($source, self::RANKING_COUNT));
-        $steadyHref = self::e(self::url($source, self::RANKING_STEADY));
-
-        return <<<HTML
-        <div class="ranking-toggle" role="tablist" aria-label="Rankningsläge">
-          <a class="{$countClass}" href="{$countHref}">Flest ägare</a>
-          <a class="{$steadyClass}" href="{$steadyHref}">Stadig tillväxt</a>
-        </div>
-        HTML;
-    }
-
     /**
-     * Builds the "/" URL for a given (source, ranking) pair, omitting a
-     * query param entirely when it is the default — so the default view's
-     * own links stay a plain "/" (never stored server-side either way, AD-14).
+     * Builds the "/watchlist" URL for a given source, omitting the query
+     * param entirely for the Avanza default — same AD-14-friendly,
+     * nothing-stored pattern as the other controllers' url() helpers.
      */
-    private static function url(string $source, string $rankingMode): string
-    {
-        $params = [];
-        if ($source === NormalizedRow::SOURCE_NORDNET) {
-            $params['source'] = 'nordnet';
-        }
-        if ($rankingMode === self::RANKING_STEADY) {
-            $params['ranking'] = 'steady';
-        }
-
-        return $params === [] ? '/' : '/?' . http_build_query($params);
-    }
-
-    /**
-     * Story 4.4 — the footer's "Visa fullständig lista" link target:
-     * `/list`, carrying the current Source forward (`?source={current}`,
-     * spec's Code Map) so switching to the full list doesn't silently reset
-     * back to Avanza. Omitted for the Avanza default, same
-     * omit-when-default convention as url().
-     */
-    private static function fullListUrl(string $source): string
+    private static function url(string $source): string
     {
         return $source === NormalizedRow::SOURCE_NORDNET
-            ? '/list?source=nordnet'
-            : '/list';
+            ? '/watchlist?source=nordnet'
+            : '/watchlist';
     }
 
     private static function e(string $s): string
@@ -437,10 +336,9 @@ final class LeaderboardController
           font-size: 12px; font-weight: 800; letter-spacing: 0.06em;
           color: var(--brand); text-transform: uppercase;
         }
-        h1 { font-size: 22px; font-weight: 800; margin: 4px 0 2px; }
-        .subtitle { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px; }
+        h1 { font-size: 22px; font-weight: 800; margin: 4px 0 12px; }
         .controls { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
-        .source-switcher, .ranking-toggle {
+        .source-switcher {
           display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
         }
         .tab {
@@ -448,17 +346,12 @@ final class LeaderboardController
           font-size: 13px; font-weight: 700; color: var(--text-secondary);
         }
         .source-switcher .tab--active, .tab-bar .tab--active { background: var(--text-primary); color: var(--bg-surface); }
-        .ranking-toggle .tab--active {
-          background: var(--bg-surface); color: var(--brand);
-          box-shadow: 0 1px 3px rgba(16,19,31,0.12);
-        }
         .rows { display: flex; flex-direction: column; gap: 8px; }
         .row {
           display: flex; align-items: center; gap: 10px;
           background: var(--bg-surface); border: 1px solid var(--row-border);
           border-radius: 16px; padding: 10px 12px;
         }
-        .rank { font-size: 12px; font-weight: 800; color: var(--text-muted); width: 1.5em; text-align: center; }
         .star {
           background: none; border: none; cursor: pointer; font-size: 18px; line-height: 1;
           padding: 8px; min-width: 44px; min-height: 44px;
@@ -499,11 +392,10 @@ final class LeaderboardController
         .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
         .delta-chip--neutral { background: var(--nohist-bg); color: var(--text-secondary); }
         .empty-state { color: var(--text-secondary); font-size: 13.5px; }
-        .full-list-link { text-align: center; margin: 16px 0 4px; }
-        .full-list-link a { color: var(--brand); font-size: 13px; font-weight: 700; text-decoration: none; }
+        .empty-state a { color: var(--brand); font-weight: 700; }
         @media (min-width: 900px) {
           .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
-          .controls { flex-direction: row; }
+          .controls { flex-direction: row; flex-wrap: wrap; }
           .sparkline, .sparkline--empty { width: 130px; height: 30px; }
         }
         CSS;
