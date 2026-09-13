@@ -116,3 +116,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-5-1-mobil-layoutbugg-pa-listornas-rader.md`
   summary: The `.row-body` CSS (`.namecol`/`.trend`/`.statcol`/`.name`/`.badges`/`.stat`/`.delta-chip`) is hand-edited identically into `LeaderboardController.php`, `FullListController.php`, and `WatchlistController.php` a third time, with no shared CSS file.
   evidence: Already-accepted duplication debt carried from Stories 4.3-4.5 (per this story's own Code Map, which explicitly notes "no shared CSS file exists"); Story 5.1 extends the existing triplication rather than introducing it, per its own instruction to fix all three controllers identically. The surface for the next layout tweak keeps tripling — worth a shared-CSS or shared-partial mechanism as its own chore, especially before Stories 5.4/5.5 add more per-row content.
+
+## Deferred from: review pass 1 of story-5.2 (Länk till aktien på Avanza, 2026-09-13)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-2-lank-till-aktien-pa-avanza.md`
+  summary: `avanzaLinkHtml()` builds the Avanza stock-page URL straight from the currently cached `avanza_orderbook_id`, with no acknowledgment that this id can rotate for the same ISIN.
+  evidence: `UniverseSyncTest` confirms orderbookId rotation is an already-handled, expected phenomenon for a stable ISIN (Epic 2). A previously bookmarked or shared Aktiedetalj page could, after a rotation, link to a stale/wrong Avanza page — self-healing on any fresh page load (the link is rebuilt from the current DB value each render), so only stale external bookmarks are affected. Pre-existing characteristic of the cached field; this story just consumes it as-is.
