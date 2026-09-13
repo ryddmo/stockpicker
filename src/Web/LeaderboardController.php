@@ -265,6 +265,7 @@ final class LeaderboardController
     {
         $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode);
         $rankingToggle = self::rankingToggleHtml($source, $rankingMode);
+        $fullListHref = self::e(self::fullListUrl($source));
         $css = self::css();
 
         return <<<HTML
@@ -290,6 +291,7 @@ final class LeaderboardController
           <main class="rows">
             {$rowsHtml}
           </main>
+          <p class="full-list-link"><a href="{$fullListHref}">Visa fullständig lista</a></p>
         </div>
         <script src="/assets/watchlist.js" defer></script>
         </body>
@@ -344,6 +346,20 @@ final class LeaderboardController
         }
 
         return $params === [] ? '/' : '/?' . http_build_query($params);
+    }
+
+    /**
+     * Story 4.4 — the footer's "Visa fullständig lista" link target:
+     * `/list`, carrying the current Source forward (`?source={current}`,
+     * spec's Code Map) so switching to the full list doesn't silently reset
+     * back to Avanza. Omitted for the Avanza default, same
+     * omit-when-default convention as url().
+     */
+    private static function fullListUrl(string $source): string
+    {
+        return $source === NormalizedRow::SOURCE_NORDNET
+            ? '/list?source=nordnet'
+            : '/list';
     }
 
     private static function e(string $s): string
@@ -449,6 +465,8 @@ final class LeaderboardController
         .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
         .delta-chip--neutral { background: var(--nohist-bg); color: var(--text-secondary); }
         .empty-state { color: var(--text-secondary); font-size: 13.5px; }
+        .full-list-link { text-align: center; margin: 16px 0 4px; }
+        .full-list-link a { color: var(--brand); font-size: 13px; font-weight: 700; text-decoration: none; }
         @media (min-width: 900px) {
           .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
           .controls { flex-direction: row; }

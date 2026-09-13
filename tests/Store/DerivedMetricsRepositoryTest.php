@@ -9,6 +9,7 @@ use DateTimeZone;
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
 use Stockpicker\Store\OwnerCountRepository;
+use Stockpicker\Store\WatchlistRepository;
 
 /**
  * One case per row of the spec's I/O & Edge-Case Matrix (spec-3-1), against
@@ -64,13 +65,13 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertTrue($this->owners->upsert($row, $asOfDate), "seed row for {$isin}/{$asOfDate}/{$source} should be new");
     }
 
-    private function insertInstrument(string $isin, string $name, ?string $lastSeen = null): void
+    private function insertInstrument(string $isin, string $name, ?string $lastSeen = null, string $list = 'LC'): void
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO instrument (isin, name, list, first_seen, last_seen)
-             VALUES (:isin, :name, \'LC\', \'2026-01-01\', :last_seen)'
+             VALUES (:isin, :name, :list, \'2026-01-01\', :last_seen)'
         );
-        $stmt->execute(['isin' => $isin, 'name' => $name, 'last_seen' => $lastSeen]);
+        $stmt->execute(['isin' => $isin, 'name' => $name, 'list' => $list, 'last_seen' => $lastSeen]);
     }
 
     public function testFirstEverRowHasAllSevenMetricsNull(): void
@@ -448,5 +449,298 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $series = $this->metrics->recentSeries(self::ISIN, NormalizedRow::SOURCE_AVANZA, 30);
 
         self::assertSame([['as_of_date' => '2026-01-01', 'number_of_owners' => 1000]], $series);
+    }
+
+    // -- searchAndFilter() -----------------------------------------------------
+
+    public function testSearchAndFilterDefaultReturnsAllActiveInstrumentsOrderedByOwnerCountDescWithIsinTiebreak(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 1000); // tie on owner count
+        $this->seedFor('SE0000199999', '2026-01-01', 9000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, [], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertCount(2, $rows, 'the delisted instrument must never appear');
+        // Tied owner counts -> isin ASC tie-break: SE0000108656 < SE0015811963.
+        self::assertSame('SE0000108656', $rows[0]['isin']);
+        self::assertSame(self::ISIN, $rows[1]['isin']);
+    }
+
+    public function testSearchAndFilterQMatchesNameCaseInsensitiveSubstring(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000); // Investor B
+        $this->seedFor('SE0000108656', '2026-01-01', 2000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['q' => 'INVES'], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertCount(1, $rows);
+        self::assertSame(self::ISIN, $rows[0]['isin']);
+    }
+
+    public function testSearchAndFilterEscapesLikeWildcardCharactersInTheSearchTerm(): void
+    {
+        $this->insertInstrument('SE0000333333', 'A_B AB');
+        // Without escaping, '_' is a LIKE single-char wildcard, so a naive
+        // '%A_B%' pattern would also match "AXB AB" — the escaping in
+        // escapeLike() must make the search term match only literally.
+        $this->insertInstrument('SE0000444444', 'AXB AB');
+        $this->seedFor('SE0000333333', '2026-01-01', 1000);
+        $this->seedFor('SE0000444444', '2026-01-01', 2000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['q' => 'A_B'], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame(['SE0000333333'], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterQWithNoMatchesReturnsEmptyArray(): void
+    {
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['q' => 'nosuchcompany'], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame([], $rows);
+    }
+
+    public function testSearchAndFilterSortPctOrdersByPct1dDescWithIsinTiebreak(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        // self::ISIN: 1000 -> 1100 (+10%). SE0000108656: 1000 -> 2000 (+100%).
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor(self::ISIN, '2026-01-02', 1100);
+        $this->seedFor('SE0000108656', '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-02', 2000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, [], DerivedMetricsRepository::SORT_PCT);
+
+        self::assertSame(['SE0000108656', self::ISIN], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterGrowthFilterAppliesTheExactSteadyGrowthQualifyingRule(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        // self::ISIN: 29 days steady growth then a huge jump -> spiking, must be excluded.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedFor(self::ISIN, $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        // Atlas Copco A: a clean 5-day up-streak, no spike.
+        foreach ([2000, 2010, 2020, 2030, 2040, 2050] as $i => $v) {
+            $this->seedFor('SE0000108656', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['growth' => true], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame(['SE0000108656'], array_column($rows, 'isin'), 'the spiking isin must never qualify for growth');
+    }
+
+    public function testSearchAndFilterSpikeFilterMatchesSpikeThresholdExactly(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        // self::ISIN spikes; Atlas Copco A grows cleanly, no spike.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedFor(self::ISIN, $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        foreach ([2000, 2010, 2020, 2030, 2040, 2050] as $i => $v) {
+            $this->seedFor('SE0000108656', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['spike' => true], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame([self::ISIN], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterGrowthAndSpikeTogetherIsAlwaysEmpty(): void
+    {
+        // Contradictory in practice: growth requires "not spiking", spike
+        // requires "spiking" -> the AND-combined intersection can never
+        // match anything (Acceptance Criteria, spec-4-4).
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedFor(self::ISIN, $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        $rows = $this->metrics->searchAndFilter(
+            NormalizedRow::SOURCE_AVANZA,
+            ['growth' => true, 'spike' => true],
+            DerivedMetricsRepository::SORT_COUNT,
+        );
+
+        self::assertSame([], $rows);
+    }
+
+    public function testSearchAndFilterWatchlistFilterOnlyReturnsStarredIsins(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 2000);
+
+        (new WatchlistRepository($this->pdo))->toggle('SE0000108656');
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['watchlist' => true], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame(['SE0000108656'], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterMarketFilterMatchesExactStoredListValue(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A', null, 'MC');
+        $this->insertInstrument('SE0000222222', 'SSAB B', null, 'First North');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000); // LC (default from insertInstrument in setUp)
+        $this->seedFor('SE0000108656', '2026-01-01', 2000);
+        $this->seedFor('SE0000222222', '2026-01-01', 3000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['market' => 'First North'], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame(['SE0000222222'], array_column($rows, 'isin'));
+    }
+
+    /**
+     * The repository itself does not enforce any casing rule on `market` —
+     * that's `FullListController::normalizeMarket()`'s whitelist, evaluated
+     * before this method is ever called. This test calls the repository
+     * directly, bypassing that whitelist, to document/lock in whatever the
+     * `instrument.list` column's collation actually does with a
+     * differently-cased value, whichever way it falls.
+     */
+    public function testSearchAndFilterMarketFilterCaseSensitivityAtTheSqlLayerIsDocumented(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A', null, 'First North');
+        $this->seedFor('SE0000108656', '2026-01-01', 1000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['market' => 'first north'], DerivedMetricsRepository::SORT_COUNT);
+
+        // MariaDB's default utf8mb4 collation is case-insensitive, so a
+        // plain `=` comparison matches 'First North' regardless of the
+        // query value's casing — this is the actual SQL-layer behavior,
+        // not a deliberate design choice; the case-sensitive-looking
+        // Boundaries & Constraints wording ("the literal stored strings")
+        // is enforced above this layer, by the controller's whitelist.
+        self::assertSame(['SE0000108656'], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterCombinesQSortAndFilterWithAndSemantics(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Investor A', null, 'MC');
+        $this->insertInstrument('SE0000222222', 'SSAB B', null, 'LC');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000); // Investor B, LC
+        $this->seedFor('SE0000108656', '2026-01-01', 2000); // Investor A, MC
+        $this->seedFor('SE0000222222', '2026-01-01', 3000); // SSAB B, LC
+
+        // q="investor" matches both Investor A and Investor B; market=LC
+        // narrows to just Investor B.
+        $rows = $this->metrics->searchAndFilter(
+            NormalizedRow::SOURCE_AVANZA,
+            ['q' => 'investor', 'market' => 'LC'],
+            DerivedMetricsRepository::SORT_COUNT,
+        );
+
+        self::assertSame([self::ISIN], array_column($rows, 'isin'));
+    }
+
+    public function testSearchAndFilterExcludesDelistedInstruments(): void
+    {
+        $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
+        $this->seedFor('SE0000199999', '2026-01-01', 9000);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, [], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame([], $rows);
+    }
+
+    public function testSearchAndFilterNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seedFor(self::ISIN, '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedFor(self::ISIN, '2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, [], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertCount(1, $rows);
+        self::assertSame(1000, (int) $rows[0]['number_of_owners']);
+    }
+
+    public function testSearchAndFilterReturnsEmptyArrayWhenNothingMatches(): void
+    {
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, [], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame([], $rows);
+    }
+
+    // -- recentSeriesForIsins() -------------------------------------------------
+
+    public function testRecentSeriesForIsinsReturnsEachIsinsSeriesKeyedByIsinOldestFirst(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        foreach ([1000, 1010, 1020] as $i => $v) {
+            $this->seedFor(self::ISIN, sprintf('2026-09-%02d', $i + 1), $v);
+        }
+        foreach ([2000, 2010] as $i => $v) {
+            $this->seedFor('SE0000108656', sprintf('2026-09-%02d', $i + 1), $v);
+        }
+
+        $series = $this->metrics->recentSeriesForIsins([self::ISIN, 'SE0000108656'], NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertSame([self::ISIN, 'SE0000108656'], array_keys($series));
+        self::assertCount(3, $series[self::ISIN]);
+        self::assertSame('2026-09-01', $series[self::ISIN][0]['as_of_date']);
+        self::assertSame('2026-09-03', $series[self::ISIN][2]['as_of_date']);
+        self::assertCount(2, $series['SE0000108656']);
+        self::assertSame(2010, $series['SE0000108656'][1]['number_of_owners']);
+    }
+
+    public function testRecentSeriesForIsinsCapsAtTheRequestedWindowPerIsinKeepingTheMostRecentDaysOldestFirst(): void
+    {
+        for ($i = 0; $i < 10; ++$i) {
+            $this->seed(sprintf('2026-10-%02d', $i + 1), 1000 + $i);
+        }
+
+        $series = $this->metrics->recentSeriesForIsins([self::ISIN], NormalizedRow::SOURCE_AVANZA, 3);
+
+        self::assertCount(3, $series[self::ISIN]);
+        self::assertSame(['2026-10-08', '2026-10-09', '2026-10-10'], array_column($series[self::ISIN], 'as_of_date'));
+    }
+
+    public function testRecentSeriesForIsinsIncludesAnEmptyListForAnIsinWithNoStoredRows(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        // SE0000108656 has no owner_count_daily rows at all.
+
+        $series = $this->metrics->recentSeriesForIsins([self::ISIN, 'SE0000108656'], NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertSame([self::ISIN, 'SE0000108656'], array_keys($series));
+        self::assertCount(1, $series[self::ISIN]);
+        self::assertSame([], $series['SE0000108656']);
+    }
+
+    public function testRecentSeriesForIsinsNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seed('2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seed('2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $series = $this->metrics->recentSeriesForIsins([self::ISIN], NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertSame([['as_of_date' => '2026-01-01', 'number_of_owners' => 1000]], $series[self::ISIN]);
+    }
+
+    public function testRecentSeriesForIsinsReturnsEmptyArrayForAnEmptyIsinsList(): void
+    {
+        $series = $this->metrics->recentSeriesForIsins([], NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertSame([], $series);
     }
 }
