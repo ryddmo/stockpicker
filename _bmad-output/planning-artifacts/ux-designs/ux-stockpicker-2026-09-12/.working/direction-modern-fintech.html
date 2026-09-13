@@ -1,0 +1,427 @@
+<!--
+  DIRECTION 3: "Modern Fintech"
+  Personality: contemporary consumer-fintech register — rounded cards, one confident accent
+  color used only where it earns its keep (deltas, the active toggle), and a per-row inline
+  sparkline so the trend question ("is this real or hype?") is answered visually before you
+  read a single number. Chart-forward and a little more polished/branded than the other two
+  directions, but still restrained: green/red carry meaning, not decoration.
+
+  Two frames are rendered below: a 390px phone (primary, mobile-first) and a ~900px wide
+  variant showing the reflow — the row grid gains explicit columns (streak badge and sparkline
+  get their own dedicated space instead of stacking under the name), sparklines roughly double
+  in width since there's room to actually show shape, and the source/mode switchers move onto
+  one shared header row instead of stacking.
+-->
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+/*
+  COLOR TOKENS — direction-modern-fintech
+  --bg-app:        #F5F6FA   page background, cool light gray
+  --bg-surface:    #FFFFFF   card / row surface
+  --border:        #E4E7EC   hairlines, dividers
+  --text-primary:  #101323   near-black
+  --text-secondary:#667085   labels, metadata
+  --text-muted:    #98A2B3   placeholders
+  --brand:         #5B4FE9   primary accent — active tab, sparkline default stroke
+  --brand-tint:    #EEEDFD   active tab background
+  --positive:      #12B76A   up deltas, up sparkline stroke
+  --positive-tint: #E7F9F0   up delta chip background
+  --negative:      #F04438   down deltas, down sparkline stroke
+  --negative-tint: #FEECEB   down delta chip background
+  --spike-bg:      #FEF0C7   spike badge background
+  --spike-text:    #B54708   spike badge text / spike sparkline stroke
+  --star-filled:   #F5A623   favorite star, filled (gold)
+  --star-empty:    #D0D5DD   favorite star, empty
+  --nohist-bg:     #F2F4F7   "not enough history" chip background
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #E7E9F2;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  padding: 30px 12px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 44px;
+}
+
+/* ================= PHONE (primary) ================= */
+.phone {
+  width: 390px;
+  max-width: 100%;
+  background: #10131F;
+  border-radius: 46px;
+  padding: 12px;
+  box-shadow: 0 24px 60px rgba(16,19,31,0.30);
+}
+.screen {
+  background: #F5F6FA;
+  border-radius: 34px;
+  overflow: hidden;
+  min-height: 780px;
+  display: flex;
+  flex-direction: column;
+}
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 24px 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #101323;
+}
+.app-header { padding: 12px 18px 0; }
+.wordmark { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: #5B4FE9; text-transform: uppercase; }
+.h1 { font-size: 22px; font-weight: 800; color: #101323; margin-top: 3px; }
+.subtitle { font-size: 12.5px; color: #667085; margin-top: 3px; }
+
+.header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 14px 18px 0;
+  gap: 8px;
+}
+.source-switch { display: flex; gap: 4px; background: #ECEEF3; border-radius: 999px; padding: 3px; }
+.src-tab { font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 999px; color: #667085; }
+.src-tab.active { background: #101323; color: #FFFFFF; }
+
+.mode-toggle {
+  display: flex;
+  gap: 6px;
+  margin: 14px 18px 0;
+  background: #ECEEF3;
+  border-radius: 999px;
+  padding: 3px;
+}
+.mode-tab { flex: 1; text-align: center; font-size: 12px; font-weight: 700; padding: 7px 6px; border-radius: 999px; color: #667085; }
+.mode-tab.active { background: #FFFFFF; color: #5B4FE9; box-shadow: 0 1px 3px rgba(16,19,31,0.12); }
+
+.rows { padding: 14px 12px 6px; display: flex; flex-direction: column; gap: 8px; }
+.row {
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #EEF0F5;
+  position: relative;
+}
+.rank { font-size: 12px; font-weight: 800; color: #98A2B3; width: 14px; flex-shrink: 0; }
+.star { font-size: 15px; color: #D0D5DD; flex-shrink: 0; }
+.star.filled { color: #F5A623; }
+.namecol { min-width: 0; flex: 1 1 auto; }
+.name { font-size: 13.5px; font-weight: 700; color: #101323; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badges { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.badge { font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 999px; white-space: nowrap; }
+.badge.streak { background: #EEEDFD; color: #5B4FE9; }
+.badge.spike { background: #FEF0C7; color: #B54708; }
+.badge.nohist { background: #F2F4F7; color: #98A2B3; }
+
+.spark { flex-shrink: 0; }
+.statcol { text-align: right; flex-shrink: 0; width: 70px; }
+.owners { font-size: 13.5px; font-weight: 800; color: #101323; }
+.delta-chip {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.delta-chip.up { background: #E7F9F0; color: #12B76A; }
+.delta-chip.down { background: #FEECEB; color: #F04438; }
+
+.footer {
+  margin: 4px 18px 14px;
+  padding-top: 12px;
+  border-top: 1px solid #E4E7EC;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.seefull { font-size: 13px; font-weight: 800; color: #5B4FE9; }
+.total-count { font-size: 11px; color: #98A2B3; font-weight: 600; }
+.closing-note { margin: 0 18px 16px; font-size: 11px; color: #98A2B3; line-height: 1.5; }
+
+/* ================= WIDE VARIANT ================= */
+.wide-wrap { width: 900px; max-width: 100%; }
+.wide-label { font-size: 12px; font-weight: 700; color: #667085; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.wide-frame {
+  background: #FFFFFF;
+  border-radius: 20px;
+  border: 1px solid #E4E7EC;
+  padding: 22px 26px 18px;
+  box-shadow: 0 12px 40px rgba(16,19,31,0.08);
+}
+.wide-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.wide-titleblock .wordmark { display:block; }
+.wide-titleblock .h1 { margin-top: 4px; font-size: 24px; }
+.wide-controls { display: flex; gap: 14px; align-items: center; }
+
+.wide-col-head {
+  display: grid;
+  grid-template-columns: 20px 24px 1fr 90px 150px 90px 70px;
+  gap: 10px;
+  padding: 0 10px 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #98A2B3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #E4E7EC;
+}
+.wide-row {
+  display: grid;
+  grid-template-columns: 20px 24px 1fr 90px 150px 90px 70px;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 10px;
+  border-bottom: 1px solid #F2F4F7;
+}
+.wide-row .name { font-size: 14px; }
+.wide-row .owners { font-size: 14.5px; }
+.wide-row .delta-chip { display: inline-block; }
+.wide-flag { display: flex; }
+
+.wide-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 10px 2px;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ PRIMARY: PHONE, MOBILE-FIRST ============ -->
+<div class="phone">
+  <div class="screen">
+    <div class="statusbar"><span>8:14</span><span>☕ 📶 🔋</span></div>
+
+    <div class="app-header">
+      <div class="wordmark">Stockpicker</div>
+      <div class="h1">Leaderboard</div>
+      <div class="subtitle">Owner counts, ranked. Spikes called out, not hidden.</div>
+    </div>
+
+    <div class="header-row">
+      <div class="source-switch">
+        <div class="src-tab active">Avanza</div>
+        <div class="src-tab">Nordnet</div>
+      </div>
+    </div>
+
+    <div class="mode-toggle">
+      <div class="mode-tab active">Most owners</div>
+      <div class="mode-tab">Steady growers</div>
+    </div>
+
+    <div class="rows">
+
+      <div class="row">
+        <span class="rank">1</span><span class="star filled">★</span>
+        <div class="namecol"><div class="name">Investor B</div><div class="badges"><span class="badge streak">🔥 5d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,18 7,16 14,15 21,12 28,11 35,8 42,6 52,3" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">48,210</div><span class="delta-chip up">+412 · 0.9%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">2</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Volvo B</div><div class="badges"><span class="badge streak">🔥 2d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,15 7,14 14,15 21,13 28,12 35,11 42,10 52,8" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">41,890</div><span class="delta-chip up">+180 · 0.4%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">3</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Evolution</div><div class="badges"><span class="badge streak">🔥 3d</span><span class="badge spike">⚡ spike</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,17 7,17 14,16 21,17 28,16 35,15 42,4 52,2" fill="none" stroke="#B54708" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">38,760</div><span class="delta-chip up">+890 · 2.3%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">4</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Ericsson B</div><div class="badges"><span class="badge nohist">flat</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,10 7,9 14,8 21,9 28,10 35,11 42,12 52,13" fill="none" stroke="#F04438" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">35,420</div><span class="delta-chip down">−95 · 0.3%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">5</span><span class="star filled">★</span>
+        <div class="namecol"><div class="name">Atlas Copco A</div><div class="badges"><span class="badge streak">🔥 8d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,19 7,17 14,16 21,14 28,12 35,10 42,7 52,4" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">33,110</div><span class="delta-chip up">+205 · 0.6%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">6</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Hexagon B</div><div class="badges"><span class="badge streak">🔥 1d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,14 7,14 14,13 21,14 28,13 35,12 42,12 52,11" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">29,980</div><span class="delta-chip up">+47 · 0.2%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">7</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Assa Abloy B</div><div class="badges"><span class="badge streak">🔥 4d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,18 7,16 14,15 21,13 28,11 35,10 42,8 52,6" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">27,340</div><span class="delta-chip up">+310 · 1.1%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">8</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Sv. Handelsbanken A</div><div class="badges"><span class="badge streak">🔥 2d</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,13 7,13 14,12 21,13 28,12 35,11 42,11 52,10" fill="none" stroke="#12B76A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">25,600</div><span class="delta-chip up">+62 · 0.2%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">9</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Swedbank A</div><div class="badges"><span class="badge streak">🔥 1d</span><span class="badge spike">⚡ spike</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,16 7,16 14,17 21,16 28,17 35,15 42,5 52,2" fill="none" stroke="#B54708" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">24,150</div><span class="delta-chip up">+530 · 2.2%</span></div>
+      </div>
+
+      <div class="row">
+        <span class="rank">10</span><span class="star">☆</span>
+        <div class="namecol"><div class="name">Boliden</div><div class="badges"><span class="badge nohist">4d tracked · no trend yet</span></div></div>
+        <svg class="spark" width="52" height="22" viewBox="0 0 52 22"><polyline points="0,9 7,10 14,10 21,11 28,12 35,13 42,13 52,14" fill="none" stroke="#98A2B3" stroke-width="2" stroke-dasharray="2 3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="statcol"><div class="owners">21,870</div><span class="delta-chip down">−140 · 0.6%</span></div>
+      </div>
+
+    </div>
+
+    <div class="footer">
+      <span class="seefull">See full list →</span>
+      <span class="total-count">10 of 740</span>
+    </div>
+    <div class="closing-note">2 of 10 are spiking — not the same as trending. Check "Steady growers" for the ones actually building momentum.</div>
+  </div>
+</div>
+
+<!-- ============ WIDE VARIANT (~900px reflow) ============ -->
+<div class="wide-wrap">
+  <div class="wide-label">Wide viewport (~900px) — same data, reflowed</div>
+  <div class="wide-frame">
+    <div class="wide-header-row">
+      <div class="wide-titleblock">
+        <span class="wordmark">Stockpicker</span>
+        <div class="h1">Leaderboard</div>
+      </div>
+      <div class="wide-controls">
+        <div class="source-switch"><div class="src-tab active">Avanza</div><div class="src-tab">Nordnet</div></div>
+        <div class="mode-toggle" style="margin:0;"><div class="mode-tab active">Most owners</div><div class="mode-tab">Steady growers</div></div>
+      </div>
+    </div>
+
+    <div class="wide-col-head">
+      <span></span><span>#</span><span>Name</span><span>Owners</span><span>7-day trend</span><span>Δ 1d</span><span>Flag</span>
+    </div>
+
+    <div class="wide-row">
+      <span class="star filled">★</span><span class="rank">1</span>
+      <div class="name">Investor B <span class="badge streak" style="margin-left:6px;">🔥 5d</span></div>
+      <div class="owners">48,210</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,26 20,22 40,20 60,15 80,12 100,7 115,4 130,2" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+412 · 0.9%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">2</span>
+      <div class="name">Volvo B <span class="badge streak" style="margin-left:6px;">🔥 2d</span></div>
+      <div class="owners">41,890</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,20 20,19 40,20 60,17 80,15 100,14 115,12 130,10" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+180 · 0.4%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">3</span>
+      <div class="name">Evolution <span class="badge streak" style="margin-left:6px;">🔥 3d</span></div>
+      <div class="owners">38,760</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,23 20,23 40,21 60,22 80,21 100,20 115,5 130,3" fill="none" stroke="#B54708" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+890 · 2.3%</span>
+      <div class="wide-flag"><span class="badge spike">⚡ spike</span></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">4</span>
+      <div class="name">Ericsson B</div>
+      <div class="owners">35,420</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,13 20,11 40,10 60,11 80,13 100,15 115,16 130,17" fill="none" stroke="#F04438" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip down">−95 · 0.3%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star filled">★</span><span class="rank">5</span>
+      <div class="name">Atlas Copco A <span class="badge streak" style="margin-left:6px;">🔥 8d</span></div>
+      <div class="owners">33,110</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,27 20,24 40,21 60,18 80,15 100,11 115,7 130,4" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+205 · 0.6%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">6</span>
+      <div class="name">Hexagon B <span class="badge streak" style="margin-left:6px;">🔥 1d</span></div>
+      <div class="owners">29,980</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,19 20,19 40,18 60,19 80,18 100,17 115,16 130,15" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+47 · 0.2%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">7</span>
+      <div class="name">Assa Abloy B <span class="badge streak" style="margin-left:6px;">🔥 4d</span></div>
+      <div class="owners">27,340</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,25 20,22 40,20 60,17 80,14 100,12 115,9 130,7" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+310 · 1.1%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">8</span>
+      <div class="name">Sv. Handelsbanken A <span class="badge streak" style="margin-left:6px;">🔥 2d</span></div>
+      <div class="owners">25,600</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,17 20,17 40,16 60,17 80,16 100,15 115,15 130,14" fill="none" stroke="#12B76A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+62 · 0.2%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">9</span>
+      <div class="name">Swedbank A <span class="badge streak" style="margin-left:6px;">🔥 1d</span></div>
+      <div class="owners">24,150</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,21 20,21 40,22 60,21 80,22 100,20 115,6 130,3" fill="none" stroke="#B54708" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip up">+530 · 2.2%</span>
+      <div class="wide-flag"><span class="badge spike">⚡ spike</span></div>
+    </div>
+
+    <div class="wide-row">
+      <span class="star">☆</span><span class="rank">10</span>
+      <div class="name">Boliden <span class="badge nohist" style="margin-left:6px;">4d tracked · no trend yet</span></div>
+      <div class="owners">21,870</div>
+      <svg width="130" height="30" viewBox="0 0 130 30"><polyline points="0,12 20,13 40,13 60,14 80,16 100,17 115,17 130,18" fill="none" stroke="#98A2B3" stroke-width="2.5" stroke-dasharray="3 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="delta-chip down">−140 · 0.6%</span>
+      <div class="wide-flag"></div>
+    </div>
+
+    <div class="wide-footer">
+      <span class="seefull">See full list →</span>
+      <span class="total-count">10 of 740 tracked instruments</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

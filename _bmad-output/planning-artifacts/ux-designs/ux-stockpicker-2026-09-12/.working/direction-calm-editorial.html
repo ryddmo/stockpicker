@@ -1,0 +1,426 @@
+<!--
+  DIRECTION 2: "Calm Editorial"
+  Personality: reads like a personal journal or a Sunday-morning dashboard, not a market
+  terminal. Cards, generous whitespace, a warm cream palette and softer rust/sage instead of
+  alarm-red/green all lower the emotional temperature — the point is to make "is this real or
+  hype" feel like a calm question you're allowed to sit with over coffee, not a flashing alert.
+  Copy leans conversational and first-person rather than clinical.
+
+  Adapts to laptop/wide viewport: the single-column card stack becomes a two-column card grid
+  (5+5) or a comfortable single column capped at ~640px and centered with more side margin —
+  either way cards keep their internal proportions and whitespace; nothing shrinks to fit more
+  in, the page just gets wider margins and, optionally, more columns. The source/mode switchers
+  move onto one row above the grid instead of stacking, since there's now room.
+-->
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+/*
+  COLOR TOKENS — direction-calm-editorial
+  --bg-app:        #EFE9DD   page background, warm putty
+  --bg-surface:    #FBF7F1   phone screen / warm cream
+  --bg-card:       #FFFFFF   card surface
+  --border:        #EDE4D3   card & divider hairlines
+  --text-primary:  #2B2622   warm near-black
+  --text-secondary:#8A7F6E   labels, metadata, subtitle
+  --text-muted:    #B4A98F   placeholders
+  --accent:        #A8763E   active tab / small brand accent (warm ochre)
+  --positive:      #4C7A56   soft sage green, up deltas
+  --negative:      #B5674B   soft terracotta, down deltas (not alarm red)
+  --spike-bg:      #F4E3C1   spike badge background, warm amber
+  --spike-text:    #8A5A16   spike badge text
+  --star-filled:   #D9A441   favorite star, filled (gold)
+  --star-empty:    #C9BBA0   favorite star, empty
+  --nohist-bg:     #F1ECE1   dashed "not enough history" card fill
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #EFE9DD;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Georgia, serif;
+  padding: 30px 12px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 36px;
+}
+.serif { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; }
+
+.phone {
+  width: 390px;
+  max-width: 100%;
+  background: #3A342C;
+  border-radius: 44px;
+  padding: 12px;
+  box-shadow: 0 24px 55px rgba(43,38,34,0.28);
+}
+.screen {
+  background: #FBF7F1;
+  border-radius: 32px;
+  overflow: hidden;
+  min-height: 760px;
+  display: flex;
+  flex-direction: column;
+}
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 24px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2B2622;
+  font-family: -apple-system, sans-serif;
+}
+
+.app-header { padding: 14px 20px 4px; }
+.wordmark {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #A8763E;
+  font-weight: 700;
+  font-family: -apple-system, sans-serif;
+}
+.h1 {
+  font-family: Georgia, serif;
+  font-size: 25px;
+  color: #2B2622;
+  margin-top: 3px;
+}
+.subtitle {
+  font-size: 13px;
+  color: #8A7F6E;
+  margin-top: 4px;
+  line-height: 1.4;
+  font-family: -apple-system, sans-serif;
+}
+
+.switch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 16px 20px 0;
+  gap: 10px;
+  font-family: -apple-system, sans-serif;
+}
+.source-switch {
+  display: flex;
+  gap: 4px;
+  background: #F1ECE1;
+  border-radius: 20px;
+  padding: 3px;
+}
+.src-tab {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 16px;
+  color: #8A7F6E;
+}
+.src-tab.active {
+  background: #FFFFFF;
+  color: #2B2622;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 18px;
+  margin: 18px 20px 6px;
+  font-family: -apple-system, sans-serif;
+}
+.mode-tab {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #B4A98F;
+  padding-bottom: 8px;
+  border-bottom: 2px solid transparent;
+}
+.mode-tab.active {
+  color: #2B2622;
+  border-bottom-color: #A8763E;
+}
+.mode-note {
+  margin: 0 20px 10px;
+  font-size: 11.5px;
+  color: #8A7F6E;
+  font-style: italic;
+  font-family: -apple-system, sans-serif;
+}
+
+.cards { padding: 4px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+.card {
+  background: #FFFFFF;
+  border: 1px solid #EDE4D3;
+  border-radius: 16px;
+  padding: 13px 14px;
+  position: relative;
+  font-family: -apple-system, sans-serif;
+}
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.rank-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rank {
+  font-size: 11px;
+  color: #C9BBA0;
+  font-weight: 700;
+  font-family: Georgia, serif;
+}
+.name {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #2B2622;
+  font-family: Georgia, serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.star { font-size: 16px; color: #C9BBA0; line-height: 1; }
+.star.filled { color: #D9A441; }
+
+.card-mid {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 8px;
+}
+.owners { font-size: 20px; font-weight: 700; color: #2B2622; }
+.owners-label { font-size: 10.5px; color: #B4A98F; display: block; font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase; }
+.delta { text-align: right; }
+.delta .abs { font-size: 14px; font-weight: 700; }
+.delta .pct { font-size: 11.5px; opacity: 0.8; margin-left: 4px; }
+.up { color: #4C7A56; }
+.down { color: #B5674B; }
+
+.card-bottom {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 12px;
+}
+.pill.streak { background: #EAF1EA; color: #4C7A56; }
+.pill.spike { background: #F4E3C1; color: #8A5A16; }
+
+.card.nohist { border-style: dashed; background: #FBF9F5; }
+.nohist-note { font-size: 11px; color: #8A7F6E; font-style: italic; margin-top: 8px; }
+
+.footer {
+  margin: 4px 20px 16px;
+  padding-top: 14px;
+  border-top: 1px solid #EDE4D3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: -apple-system, sans-serif;
+}
+.seefull { font-size: 13px; font-weight: 700; color: #A8763E; }
+.total-count { font-size: 11px; color: #B4A98F; }
+.closing-note {
+  margin: 0 20px 18px;
+  font-size: 11.5px;
+  color: #8A7F6E;
+  line-height: 1.5;
+  font-style: italic;
+  font-family: -apple-system, sans-serif;
+}
+
+.note-card {
+  width: 390px;
+  max-width: 100%;
+  background: #FFFFFF;
+  border: 1px solid #EDE4D3;
+  border-radius: 14px;
+  padding: 16px 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #4A4239;
+  font-family: -apple-system, sans-serif;
+}
+.note-card b { color: #2B2622; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="screen">
+    <div class="statusbar">
+      <span>8:14</span>
+      <span>☕ ◡ ▮▮▮</span>
+    </div>
+
+    <div class="app-header">
+      <div class="wordmark">Stockpicker</div>
+      <div class="h1">Good morning.</div>
+      <div class="subtitle">Here's who's gaining owners — and who's just having a moment.</div>
+    </div>
+
+    <div class="switch-row">
+      <div class="source-switch">
+        <div class="src-tab active">Avanza</div>
+        <div class="src-tab">Nordnet</div>
+      </div>
+    </div>
+
+    <div class="mode-toggle">
+      <div class="mode-tab active">Most owners</div>
+      <div class="mode-tab">Steady growers</div>
+    </div>
+    <div class="mode-note">Ranked by owner count today — not by how they got here.</div>
+
+    <div class="cards">
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">1</span><span class="name">Investor B</span></div>
+          <span class="star filled">★</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">48,210</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+412</span><span class="pct">+0.9%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 5-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">2</span><span class="name">Volvo B</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">41,890</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+180</span><span class="pct">+0.4%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 2-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">3</span><span class="name">Evolution</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">38,760</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+890</span><span class="pct">+2.3%</span></div>
+        </div>
+        <div class="card-bottom">
+          <span class="pill streak">🔥 3-day streak</span>
+          <span class="pill spike">⚡ unusual jump</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">4</span><span class="name">Ericsson B</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">35,420</span><span class="owners-label">owners</span></div>
+          <div class="delta down"><span class="abs">−95</span><span class="pct">−0.3%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak" style="background:#F1ECE1;color:#8A7F6E;">flat today</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">5</span><span class="name">Atlas Copco A</span></div>
+          <span class="star filled">★</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">33,110</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+205</span><span class="pct">+0.6%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 8-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">6</span><span class="name">Hexagon B</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">29,980</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+47</span><span class="pct">+0.2%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 1-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">7</span><span class="name">Assa Abloy B</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">27,340</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+310</span><span class="pct">+1.1%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 4-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">8</span><span class="name">Sv. Handelsbanken A</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">25,600</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+62</span><span class="pct">+0.2%</span></div>
+        </div>
+        <div class="card-bottom"><span class="pill streak">🔥 2-day streak</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">9</span><span class="name">Swedbank A</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">24,150</span><span class="owners-label">owners</span></div>
+          <div class="delta up"><span class="abs">+530</span><span class="pct">+2.2%</span></div>
+        </div>
+        <div class="card-bottom">
+          <span class="pill streak">🔥 1-day streak</span>
+          <span class="pill spike">⚡ unusual jump</span>
+        </div>
+      </div>
+
+      <div class="card nohist">
+        <div class="card-top">
+          <div class="rank-name"><span class="rank">10</span><span class="name">Boliden</span></div>
+          <span class="star">☆</span>
+        </div>
+        <div class="card-mid">
+          <div><span class="owners">21,870</span><span class="owners-label">owners</span></div>
+          <div class="delta down"><span class="abs">−140</span><span class="pct">−0.6%</span></div>
+        </div>
+        <div class="nohist-note">Just started tracking this one 4 days ago — not enough history for a streak yet.</div>
+      </div>
+
+    </div>
+
+    <div class="footer">
+      <span class="seefull">See the full list →</span>
+      <span class="total-count">10 of 740 tracked</span>
+    </div>
+    <div class="closing-note">Two of these ten look like hype spikes, not trends. The rest are just quietly climbing.</div>
+  </div>
+</div>
+
+<div class="note-card">
+  <b>Wide-viewport reflow (not rendered above):</b> the card stack becomes a two-column grid
+  (five cards per row) inside a centered, max-width ~900px container with wide side margins —
+  cards keep the same internal padding and type scale, they just tile instead of stacking. The
+  source switch and mode toggle sit on one shared row above the grid since there's no longer a
+  need to stack them for width.
+</div>
+
+</body>
+</html>

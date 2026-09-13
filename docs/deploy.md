@@ -158,11 +158,13 @@ the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
 
 2. Create `config.php` by hand from the committed template (never rsynced, never in git —
    AD-8). The template documents every key; `Stockpicker\Config` is the contract it must
-   satisfy (`db`, `cron_token`, optional `log_path`):
+   satisfy (`db`, `cron_token`, `login_username`, `login_password_hash`, `session_key`,
+   optional `log_path`) — see `config.php.dist`'s comments for the exact commands to
+   generate the bcrypt password hash and the session key:
 
    ```sh
    cp ~/stockpicker.ryddmo.se/config.php.dist ~/stockpicker.ryddmo.se/config.php
-   nano ~/stockpicker.ryddmo.se/config.php   # real DB creds + a strong cron_token
+   nano ~/stockpicker.ryddmo.se/config.php   # real DB creds, a strong cron_token, login credentials, session_key
    chmod 600 ~/stockpicker.ryddmo.se/config.php
    ```
 
@@ -356,8 +358,8 @@ still issuing.
 
 ```sh
 # health check — front controller + .htaccess routing under real Apache
-curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/            # expect 200
-curl -sS https://stockpicker.ryddmo.se/                                             # expect {"status":"ok","app":"stockpicker",...}
+curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/            # expect 200 (login page, HTML)
+curl -sS https://stockpicker.ryddmo.se/health                                       # expect {"status":"ok","app":"stockpicker",...}
 curl -sS -o /dev/null -w '%{http_code}\n' https://stockpicker.ryddmo.se/nope        # expect 404 (rewrite reaches index.php)
 
 # cron endpoints reject a bad or missing token

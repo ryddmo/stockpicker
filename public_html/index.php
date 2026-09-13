@@ -25,6 +25,8 @@ use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+use Stockpicker\Web\AuthController;
+use Stockpicker\Web\SessionStatus;
 
 require_once __DIR__ . '/cron_helpers.php';
 
@@ -49,12 +51,70 @@ try {
     }
 
     switch ($path) {
-        case '/':
+        case '/health':
             send_json(200, [
                 'status' => 'ok',
                 'app' => 'stockpicker',
                 'time' => gmdate('Y-m-d\TH:i:s\Z'),
             ]);
+            break;
+
+        case '/':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            if (!require_session($services['config'])) {
+                break;
+            }
+
+            render_html(200, render_placeholder_page());
+            break;
+
+        case '/login':
+            $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+            if ($method !== 'GET' && $method !== 'POST') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            $auth = new AuthController($services['config']);
+            $cookie = $_COOKIE[AuthController::COOKIE_NAME] ?? null;
+            $cookie = is_string($cookie) ? $cookie : null;
+
+            if ($method === 'GET') {
+                if ($auth->sessionStatus($cookie) === SessionStatus::Valid) {
+                    http_response_code(302);
+                    header('Location: /');
+                    break;
+                }
+
+                render_html(200, $auth->renderLoginPage());
+                break;
+            }
+
+            $username = $_POST['username'] ?? '';
+            $password = $_POST['password'] ?? '';
+            $username = is_string($username) ? $username : '';
+            $password = is_string($password) ? $password : '';
+
+            if (!$auth->login($username, $password)) {
+                render_html(200, $auth->renderLoginPage('Fel användarnamn eller lösenord.'));
+                break;
+            }
+
+            $isHttps = !empty($_SERVER['HTTPS'])
+                || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null) === 'https';
+            setcookie(AuthController::COOKIE_NAME, $auth->issueCookieValue(), [
+                'expires' => time() + AuthController::SESSION_TTL_SECONDS,
+                'path' => '/',
+                'secure' => $isHttps,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+            http_response_code(302);
+            header('Location: /');
             break;
 
         case '/cron/refill':
@@ -230,6 +290,63 @@ function authorize_cron(Config $config): void
         send_json(403, ['error' => 'forbidden']);
         exit;
     }
+}
+
+/**
+ * Gate for any route that needs a logged-in session. Unlike authorize_cron(),
+ * this never calls exit — it renders the login form itself (with the right
+ * inline message) and returns false, so the caller can just `break` out of
+ * its switch case. Returns true when the session is valid, letting the
+ * caller proceed with its own response. Reusable as-is by Stories 4.2+.
+ */
+function require_session(Config $config): bool
+{
+    $auth = new AuthController($config);
+    $cookie = $_COOKIE[AuthController::COOKIE_NAME] ?? null;
+    $cookie = is_string($cookie) ? $cookie : null;
+    $status = $auth->sessionStatus($cookie);
+
+    if ($status === SessionStatus::Valid) {
+        return true;
+    }
+
+    $message = $status === SessionStatus::Expired
+        ? 'Sessionen har gått ut. Logga in igen.'
+        : null;
+
+    render_html(200, $auth->renderLoginPage($message));
+
+    return false;
+}
+
+/**
+ * Placeholder for the authenticated "/" route. Real Topplista content lands
+ * in Story 4.2.
+ */
+function render_placeholder_page(): string
+{
+    return <<<HTML
+    <!DOCTYPE html>
+    <html lang="sv">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>stockpicker</title>
+    </head>
+    <body>
+    <h1>stockpicker</h1>
+    <p>Inloggad. Innehållet kommer i en senare story.</p>
+    </body>
+    </html>
+
+    HTML;
+}
+
+function render_html(int $status, string $body): void
+{
+    http_response_code($status);
+    header('Content-Type: text/html; charset=utf-8');
+    echo $body;
 }
 
 function cron_time(string $runAfter, \DateTimeImmutable $now): \DateTimeImmutable

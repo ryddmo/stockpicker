@@ -2,10 +2,14 @@
 title: "Product Brief: Stockpicker"
 status: draft
 created: 2026-09-08
-updated: 2026-09-10
+updated: 2026-09-12
 ---
 
 # Product Brief: Stockpicker
+
+> _2026-09-12: presentationslagret (webb-UI) flyttat in i scope — tidigare listat som
+> liggande utanför v1. Se SPEC.md CAP-8, ARCHITECTURE-SPINE.md AD-12–AD-15, och
+> sprint-change-proposal-2026-09-12.md._
 
 ## Sammanfattning
 
@@ -80,7 +84,8 @@ visar sig räcka är det ett rimligt utfall.
 
 Endast jag. En användare, en installation. Inga andra intressenter, ingen delning av
 data, ingen publik åtkomst. Detta förenklar i stort sett varje beslut nedåt: ingen
-inloggning, ingen fleranvändarhantering, ingen SLA.
+fleranvändarhantering, ingen SLA — webb-UI:t (tillagt 2026-09-12) har en enda hårdkodad
+inloggning, ingen registrering eller multi-tenant.
 
 ## Vad framgång är
 
@@ -101,14 +106,19 @@ och kringdata från Avanza och Nordnet, instrumentmatchning via ISIN, tidsseriel
 härledda mått, robust felhantering och schemakontroll. Se kravavsnittet K1–K12 för
 detaljer.
 
+**Ingår i v1 (webb-UI, tillagt 2026-09-12):** autentiserad, mobilanpassad webbyta för
+Topplista, Fullständig lista, Bevakningslista och Aktiedetalj ovanpå den insamlade
+tidsserien och de härledda måtten. Se SPEC.md CAP-8 och ARCHITECTURE-SPINE.md K13–K18.
+
 **Ligger utanför v1:**
 
-- All presentation: webbgränssnitt, grafer, dashboards, notiser.
+- Push-notiser eller e-postaviseringar (webb-UI:t, tillagt 2026-09-12, är session-baserat
+  utan bakgrundsnotifiering).
 - Automatiska köp-/säljsignaler eller regelmotor.
 - Andra marknader än svenska, andra instrument än aktier (fonder, ETF:er, index).
 - Euroclear/Holdings/Börsdata som källa för det totala legala aktieägarantalet.
 - Realtidsdata, intradagsdata.
-- Fleranvändarstöd, autentisering, molndrift, hög tillgänglighet.
+- Fleranvändarstöd, molndrift, hög tillgänglighet.
 
 ## Krav: datahämtning
 

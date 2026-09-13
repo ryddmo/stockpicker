@@ -96,6 +96,30 @@ final class SmokeTest extends TestCase
         $config->cronToken();
     }
 
+    public function testConfigSessionKeyThrowsOnEmptyString(): void
+    {
+        $config = Config::fromArray(['session_key' => ''], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->sessionKey();
+    }
+
+    public function testConfigLoginUsernameThrowsOnEmptyString(): void
+    {
+        $config = Config::fromArray(['login_username' => ''], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->loginUsername();
+    }
+
+    public function testConfigLoginPasswordHashThrowsOnEmptyString(): void
+    {
+        $config = Config::fromArray(['login_password_hash' => ''], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->loginPasswordHash();
+    }
+
     public function testConfigLoadThrowsWhenMissingAndNamesThePath(): void
     {
         $expectedPath = $this->fixtureRoot . '/config.php';
