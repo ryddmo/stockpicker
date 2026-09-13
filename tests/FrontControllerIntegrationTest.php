@@ -398,6 +398,172 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringNotContainsString('Alpha AB', $body, 'the spiking instrument must never appear in Stadig tillväxt');
     }
 
+    // -- spec-5-4: / with source=alla ------------------------------------------
+
+    public function testRootDefaultViewIsStillAvanzaOnlyUnchangedFromStory42(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        // Avanza (not Alla) is the active tab, and the default view's own
+        // Avanza link stays a plain "/" — Alla is first in the switcher's
+        // tab order but is not the default landing source.
+        self::assertStringContainsString('class="tab tab--active" href="/">Avanza</a>', $body);
+        self::assertStringNotContainsString('class="tab tab--active" href="/?source=alla">Alla</a>', $body);
+        self::assertStringNotContainsString('Nordnet ingen data', $body);
+    }
+
+    public function testRootSourceSwitcherShowsAllaAvanzaNordnetInThatOrderWithAllaFirst(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab tab--active" href="/?source=alla">Alla</a>', $body);
+
+        $switcherHtml = $this->sourceSwitcherHtmlFor($body);
+        $allaPos = strpos($switcherHtml, '>Alla<');
+        $avanzaPos = strpos($switcherHtml, '>Avanza<');
+        $nordnetPos = strpos($switcherHtml, '>Nordnet<');
+        self::assertNotFalse($allaPos);
+        self::assertNotFalse($avanzaPos);
+        self::assertNotFalse($nordnetPos);
+        self::assertLessThan($avanzaPos, $allaPos, 'Alla must render before Avanza');
+        self::assertLessThan($nordnetPos, $avanzaPos, 'Avanza must render before Nordnet');
+    }
+
+    public function testRootWithSourceAllaShowsBothSourcesOwnerCountsSideBySideNeverSummed(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1234, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 567, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+        self::assertStringContainsString('Avanza 1 234 · Nordnet 567', $rowHtml);
+        self::assertStringNotContainsString('1 801', $rowHtml, 'the two counts must never be summed');
+    }
+
+    public function testRootWithSourceAllaShowsIngenDataForAnIsinMissingFromNordnet(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1234, NormalizedRow::SOURCE_AVANZA);
+        // No Nordnet row at all for SE0000001001.
+
+        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+        self::assertStringContainsString('Avanza 1 234 · Nordnet ingen data', $rowHtml);
+    }
+
+    public function testRootWithSourceAllaRanksByAvanzaOwnerCountWithNordnetShownAlongsideNeverAsTheRankingBasis(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha AB: lower Avanza count, but much higher Nordnet count -- if
+        // Nordnet were ever used as the ranking basis, Alpha would rank
+        // above Beta. It must not: Avanza's count is the sole ranking basis.
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000, NormalizedRow::SOURCE_AVANZA);
+
+        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertGreaterThan(
+            strpos($body, 'Beta AB'),
+            strpos($body, 'Alpha AB'),
+            'Beta AB (5000 Avanza owners) must rank above Alpha AB (1000 Avanza owners) despite Nordnet counts',
+        );
+    }
+
+    public function testRootWithSourceAllaAndRankingSteadyRanksByTheSameIsinsAndOrderAsAvanzasStadigTillvaxt(): void
+    {
+        $this->seedMatchedUniverse();
+
+        // Alpha AB: 29 days of steady growth then a huge jump -> highest
+        // up_streak but spike_score >= 2 -> excluded from both modes.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        // Beta AB: a clean short up-streak, no spike. Nordnet data present
+        // too, to prove it's display-only and never affects the ranking.
+        foreach ([2000, 2010, 2020, 2030] as $i => $v) {
+            $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+        $this->seedOwnerCount('SE0000001002', '2026-04-04', 42, NormalizedRow::SOURCE_NORDNET);
+
+        [, $avanzaBody] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+        [$status, $allaBody] = $this->endpoint->get('/?source=alla&ranking=steady', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Beta AB', $avanzaBody);
+        self::assertStringContainsString('Beta AB', $allaBody);
+        self::assertStringNotContainsString('Alpha AB', $allaBody, 'the spiking instrument must never appear in Stadig tillväxt, in Alla mode either');
+        $betaRowHtml = $this->rowHtmlFor($allaBody, 'SE0000001002');
+        self::assertStringContainsString('Avanza 2 030 · Nordnet 42', $betaRowHtml);
+        // The sparkline must be plotted from Avanza's real (4-day, muted --
+        // fewer than the 7-day gate) trend, not accidentally empty:
+        // recentSeries() is keyed by an exact `source` match, so if Alla
+        // mode's series fetch ever regressed to querying source='alla'
+        // literally, every row would silently fall back to the true
+        // "sparkline--empty" state (<2 points) instead of a real, if muted,
+        // polyline.
+        self::assertStringContainsString('<polyline class="sparkline-line--nohistory"', $betaRowHtml);
+        self::assertStringNotContainsString('sparkline sparkline--empty', $betaRowHtml);
+    }
+
+    public function testRootWithSourceAllaAndRankingSteadyShowsTheEmptyStateWhenNoInstrumentQualifies(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        // No up-streak seeded anywhere -- nothing qualifies for Stadig
+        // tillväxt, in Alla mode either. The Nordnet batch fetch must not
+        // be attempted (nothing to fetch for) and must not error.
+
+        [$status, $body] = $this->endpoint->get('/?source=alla&ranking=steady', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
+    }
+
+    public function testListAndWatchlistAreUnaffectedBySourceAllaFallingBackToTheirOwnAvanzaDefault(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $cookie = $this->validCookie();
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+
+        [$listStatus, $listBody] = $this->endpoint->get('/list?source=alla', $cookie);
+        [$watchlistStatus, $watchlistBody] = $this->endpoint->get('/watchlist?source=alla', $cookie);
+
+        self::assertSame(200, $listStatus);
+        self::assertSame(200, $watchlistStatus);
+        // Neither page's own Source switcher has an "Alla" tab (Alla is
+        // scoped to Topplista only, spec-5-4's Boundaries) -- both silently
+        // fall back to their own existing Avanza-default behavior for the
+        // unrecognized value, the same convention already used for any
+        // other garbage source string. (/list also has its own unrelated
+        // "Alla" market-filter label elsewhere on the page, so the check is
+        // scoped to the Source switcher markup specifically.)
+        self::assertStringNotContainsString('>Alla<', $this->sourceSwitcherHtmlFor($listBody));
+        self::assertStringNotContainsString('>Alla<', $this->sourceSwitcherHtmlFor($watchlistBody));
+        self::assertStringContainsString('class="tab tab--active" href="/list">Avanza</a>', $listBody);
+        self::assertStringContainsString('class="tab tab--active" href="/watchlist">Avanza</a>', $watchlistBody);
+        self::assertStringContainsString('1 000', $listBody);
+        self::assertStringContainsString('1 000', $watchlistBody);
+    }
+
     public function testWatchlistToggleStarsAnInstrumentAndTheNewStateSurvivesAReload(): void
     {
         $this->seedMatchedUniverse();
@@ -1057,6 +1223,23 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
 
         $end = strpos($body, '</div>', $start);
         self::assertNotFalse($end, "row for isin {$isin} has no closing </div>");
+
+        return substr($body, $start, $end - $start);
+    }
+
+    /**
+     * Slices out the Source switcher's own markup (`.source-switcher` to its
+     * closing `</div>`) so a test can assert on its tab order/contents
+     * without accidentally matching an unrelated same-labeled control
+     * elsewhere on the page (e.g. /list's "Alla" market filter option).
+     */
+    private function sourceSwitcherHtmlFor(string $body): string
+    {
+        $start = strpos($body, 'class="source-switcher"');
+        self::assertNotFalse($start, 'no source-switcher found in body');
+
+        $end = strpos($body, '</div>', $start);
+        self::assertNotFalse($end, 'source-switcher has no closing </div>');
 
         return substr($body, $start, $end - $start);
     }

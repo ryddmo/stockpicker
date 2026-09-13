@@ -743,4 +743,57 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         self::assertSame([], $series);
     }
+
+    // -- latestOwnerCountForIsins() (spec-5-4) -----------------------------------
+
+    public function testLatestOwnerCountForIsinsReturnsEachIsinsLatestCountKeyedByIsin(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        foreach ([1000, 1010, 1020] as $i => $v) {
+            $this->seedFor(self::ISIN, sprintf('2026-09-%02d', $i + 1), $v, NormalizedRow::SOURCE_NORDNET);
+        }
+        $this->seedFor('SE0000108656', '2026-09-01', 500, NormalizedRow::SOURCE_NORDNET);
+
+        $result = $this->metrics->latestOwnerCountForIsins(
+            [self::ISIN, 'SE0000108656'],
+            NormalizedRow::SOURCE_NORDNET,
+        );
+
+        // Latest by as_of_date, not the row insertion order or a historical peak.
+        self::assertSame(1020, $result[self::ISIN]);
+        self::assertSame(500, $result['SE0000108656']);
+    }
+
+    public function testLatestOwnerCountForIsinsOmitsAnIsinWithNoStoredRowsForTheSource(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->seedFor(self::ISIN, '2026-01-01', 1000, NormalizedRow::SOURCE_NORDNET);
+        // SE0000108656 has no owner_count_daily rows for Nordnet at all.
+
+        $result = $this->metrics->latestOwnerCountForIsins(
+            [self::ISIN, 'SE0000108656'],
+            NormalizedRow::SOURCE_NORDNET,
+        );
+
+        self::assertSame([self::ISIN => 1000], $result);
+        self::assertArrayNotHasKey('SE0000108656', $result, 'a missing isin must be absent, not padded with 0/null');
+    }
+
+    public function testLatestOwnerCountForIsinsReturnsEmptyArrayForAnEmptyIsinsList(): void
+    {
+        $result = $this->metrics->latestOwnerCountForIsins([], NormalizedRow::SOURCE_NORDNET);
+
+        self::assertSame([], $result);
+    }
+
+    public function testLatestOwnerCountForIsinsNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seed('2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seed('2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $result = $this->metrics->latestOwnerCountForIsins([self::ISIN], NormalizedRow::SOURCE_AVANZA);
+
+        self::assertSame([self::ISIN => 1000], $result);
+    }
 }

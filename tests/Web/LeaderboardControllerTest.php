@@ -226,4 +226,60 @@ final class LeaderboardControllerTest extends TestCase
         self::assertStringContainsString('21 870', $html);
         self::assertStringContainsString('badge--nohist', $html);
     }
+
+    // -- spec-5-4: normalizeSource() — three-way, garbage falls back to avanza -
+
+    public function testNormalizeSourceRecognizesAlla(): void
+    {
+        self::assertSame('alla', LeaderboardController::normalizeSource('alla'));
+    }
+
+    public function testNormalizeSourceRecognizesNordnet(): void
+    {
+        self::assertSame('nordnet', LeaderboardController::normalizeSource('nordnet'));
+    }
+
+    public function testNormalizeSourceDefaultsToAvanzaForEmptyString(): void
+    {
+        self::assertSame('avanza', LeaderboardController::normalizeSource(''));
+    }
+
+    public function testNormalizeSourceDefaultsToAvanzaForGarbage(): void
+    {
+        self::assertSame('avanza', LeaderboardController::normalizeSource('bogus'));
+    }
+
+    public function testNormalizeSourceRecognizesAvanzaItself(): void
+    {
+        self::assertSame('avanza', LeaderboardController::normalizeSource('avanza'));
+    }
+
+    // -- spec-5-4: combinedOwnerCountText() — "Avanza {n} · Nordnet {m}" -------
+
+    public function testCombinedOwnerCountTextShowsBothSourcesSideBySideWhenBothPresent(): void
+    {
+        self::assertSame(
+            'Avanza 1 234 · Nordnet 567',
+            LeaderboardController::combinedOwnerCountText(1234, 567),
+        );
+    }
+
+    public function testCombinedOwnerCountTextShowsIngenDataWhenNordnetIsMissingNeverAZeroOrBlank(): void
+    {
+        $text = LeaderboardController::combinedOwnerCountText(1234, null);
+
+        self::assertSame('Avanza 1 234 · Nordnet ingen data', $text);
+        self::assertStringNotContainsString('Nordnet 0', $text);
+    }
+
+    public function testCombinedOwnerCountTextShowsALiteralZeroDistinctFromMissingData(): void
+    {
+        // A stored Nordnet row of exactly 0 owners is real data, not the
+        // "no stored row" case -- the null-check must stay a strict
+        // `!== null`, never a falsy/empty() check that would conflate the two.
+        self::assertSame(
+            'Avanza 1 234 · Nordnet 0',
+            LeaderboardController::combinedOwnerCountText(1234, 0),
+        );
+    }
 }
