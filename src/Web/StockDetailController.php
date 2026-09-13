@@ -392,6 +392,7 @@ final class StockDetailController
         $tabBar = self::tabBarHtml('topplista', $source);
         $rangePicker = self::rangePickerHtml($isin, $source, $range);
         $sourceSwitcher = self::sourceSwitcherHtml($isin, $source, $range);
+        $avanzaLink = self::avanzaLinkHtml($instrument->avanzaOrderbookId);
         $css = self::css();
 
         return <<<HTML
@@ -410,6 +411,7 @@ final class StockDetailController
             <button type="button" class="{$starClass}" data-isin="{$eIsin}" aria-pressed="{$ariaPressed}" aria-label="{$starLabel}">{$starGlyph}</button>
             <h1>{$eName}</h1>
             <span class="badges">{$badgesHtml}</span>
+            {$avanzaLink}
           </header>
           <div class="controls">
             {$sourceSwitcher}
@@ -453,6 +455,32 @@ final class StockDetailController
           <a class="{$topplistaClass}" href="{$topplistaHref}">Topplista</a>
           <a class="{$watchlistClass}" href="{$watchlistHref}">Bevakningslista</a>
         </div>
+        HTML;
+    }
+
+    /**
+     * spec-5-2 — a link to this instrument's own page on Avanza
+     * (`https://www.avanza.se/aktier/om-aktien.html/{orderbookId}`, verified
+     * against live pages during planning; the bare orderbookId form resolves
+     * without a name slug). `$orderbookId` is `Instrument::$avanzaOrderbookId`
+     * verbatim — `null` when not yet resolved (or Nordnet-only), in which case
+     * this silently omits the link rather than rendering a broken one.
+     * `target="_blank" rel="noopener noreferrer"` keeps the authenticated
+     * session open in this tab and blocks reverse-tabnabbing. Extracted as
+     * its own pure static function (same precedent as
+     * `LeaderboardController::rowBodyHtml()`) so it's unit-testable without a
+     * database.
+     */
+    public static function avanzaLinkHtml(?string $orderbookId): string
+    {
+        if ($orderbookId === null || $orderbookId === '') {
+            return '';
+        }
+
+        $href = self::e('https://www.avanza.se/aktier/om-aktien.html/' . rawurlencode($orderbookId));
+
+        return <<<HTML
+        <a class="avanza-link" href="{$href}" target="_blank" rel="noopener noreferrer" aria-label="Visa på Avanza, öppnas i en ny flik">Visa på Avanza ↗</a>
         HTML;
     }
 
@@ -570,6 +598,10 @@ final class StockDetailController
         .badge--streak { background: var(--brand-tint); color: var(--brand); }
         .badge--spike { background: var(--spike-bg); color: var(--spike-text); }
         .badge--nohist { background: var(--nohist-bg); color: var(--text-muted); }
+        .avanza-link {
+          font-size: 12px; font-weight: 700; color: var(--text-secondary); text-decoration: none;
+          padding: 8px 0; white-space: nowrap;
+        }
         .controls { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
         .source-switcher, .range-picker {
           display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;

@@ -712,6 +712,21 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Alpha AB', $body);
         self::assertStringContainsString('trend-line--secondary', $body, 'the other source always renders, dashed');
         self::assertStringContainsString('class="tab tab--active" href="/stock/SE0000001001">Dag</a>', $body);
+        // spec-5-2: Alpha AB's seeded avanza_orderbook_id ('1001') must
+        // surface as a link to its Avanza page.
+        self::assertStringContainsString('href="https://www.avanza.se/aktier/om-aktien.html/1001"', $body);
+    }
+
+    public function testStockDetailOmitsTheAvanzaLinkWhenNoOrderbookIdIsCached(): void
+    {
+        $this->seedInstrument();
+        $this->seedOwnerCount('SE0000000001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000000001', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertStringNotContainsString('class="avanza-link"', $body);
+        self::assertStringNotContainsString('avanza.se', $body);
     }
 
     public function testStockDetailWithUnknownIsinReturns404(): void

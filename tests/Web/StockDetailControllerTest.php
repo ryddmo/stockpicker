@@ -284,6 +284,27 @@ final class StockDetailControllerTest extends TestCase
         ];
     }
 
+    // -- avanzaLinkHtml() (spec-5-2) -----------------------------------------
+
+    public function testAvanzaLinkHtmlOmitsTheLinkWhenOrderbookIdIsNull(): void
+    {
+        self::assertSame('', StockDetailController::avanzaLinkHtml(null));
+    }
+
+    public function testAvanzaLinkHtmlOmitsTheLinkWhenOrderbookIdIsAnEmptyString(): void
+    {
+        self::assertSame('', StockDetailController::avanzaLinkHtml(''));
+    }
+
+    public function testAvanzaLinkHtmlBuildsTheOmAktienUrlAndOpensInANewTabSafely(): void
+    {
+        $html = StockDetailController::avanzaLinkHtml('1001');
+
+        self::assertStringContainsString('href="https://www.avanza.se/aktier/om-aktien.html/1001"', $html);
+        self::assertStringContainsString('target="_blank"', $html);
+        self::assertStringContainsString('rel="noopener noreferrer"', $html);
+    }
+
     /**
      * @return list<float>
      */
