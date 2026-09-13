@@ -267,6 +267,7 @@ final class FullListController
      */
     private static function pageHtml(array $active, string $rowsHtml): string
     {
+        $tabBar = self::tabBarHtml('topplista', $active['source']);
         $sourceSwitcher = self::sourceSwitcherHtml($active);
         $searchForm = self::searchFormHtml($active);
         $sortToggle = self::sortToggleHtml($active);
@@ -285,7 +286,7 @@ final class FullListController
         </head>
         <body>
         <div class="page">
-          <p class="back-link"><a href="/">&larr; Topplista</a></p>
+          {$tabBar}
           <header class="page-header">
             <div class="wordmark">STOCKPICKER</div>
             <h1>Fullständig lista</h1>
@@ -305,6 +306,35 @@ final class FullListController
         </body>
         </html>
 
+        HTML;
+    }
+
+    /**
+     * Story 4.5 — the persistent two-tab bar (Topplista, Bevakningslista)
+     * added to all four authenticated pages (Design Notes/Code Map,
+     * spec-4-5), replacing the now-redundant "← Topplista" back-link (the
+     * tab bar's own Topplista tab serves the identical purpose). No shared
+     * layout file exists (Stories 4.3/4.4's already-accepted CSS
+     * duplication debt), so this exact snippet is duplicated byte-for-byte
+     * across LeaderboardController, StockDetailController,
+     * WatchlistController and here — not a new gap. $active is 'topplista'
+     * or 'watchlist'; Fullständig lista always marks 'topplista' active
+     * (Boundaries & Constraints: it is reachable only via Topplista's own
+     * footer action, never a tab of its own).
+     */
+    private static function tabBarHtml(string $active, string $source): string
+    {
+        $topplistaClass = $active === 'topplista' ? 'tab tab--active' : 'tab';
+        $watchlistClass = $active === 'watchlist' ? 'tab tab--active' : 'tab';
+        $suffix = $source === NormalizedRow::SOURCE_NORDNET ? '?source=nordnet' : '';
+        $topplistaHref = self::e('/' . $suffix);
+        $watchlistHref = self::e('/watchlist' . $suffix);
+
+        return <<<HTML
+        <div class="tab-bar" role="tablist" aria-label="Sidor">
+          <a class="{$topplistaClass}" href="{$topplistaHref}">Topplista</a>
+          <a class="{$watchlistClass}" href="{$watchlistHref}">Bevakningslista</a>
+        </div>
         HTML;
     }
 
@@ -509,8 +539,10 @@ final class FullListController
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
         }
         .page { max-width: 720px; margin: 0 auto; padding: 18px; }
-        .back-link { margin: 0 0 10px; font-size: 13px; }
-        .back-link a { color: var(--text-secondary); text-decoration: none; }
+        .tab-bar {
+          display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
+          margin: 0 0 14px;
+        }
         .wordmark {
           font-size: 12px; font-weight: 800; letter-spacing: 0.06em;
           color: var(--brand); text-transform: uppercase;
@@ -525,7 +557,7 @@ final class FullListController
           padding: 8px 14px; border-radius: 9999px; text-decoration: none;
           font-size: 13px; font-weight: 700; color: var(--text-secondary);
         }
-        .source-switcher .tab--active { background: var(--text-primary); color: var(--bg-surface); }
+        .source-switcher .tab--active, .tab-bar .tab--active { background: var(--text-primary); color: var(--bg-surface); }
         .sort-toggle .tab--active, .market-filter .tab--active {
           background: var(--bg-surface); color: var(--brand);
           box-shadow: 0 1px 3px rgba(16,19,31,0.12);

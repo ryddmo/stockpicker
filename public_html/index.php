@@ -32,6 +32,7 @@ use Stockpicker\Web\FullListController;
 use Stockpicker\Web\LeaderboardController;
 use Stockpicker\Web\SessionStatus;
 use Stockpicker\Web\StockDetailController;
+use Stockpicker\Web\WatchlistController;
 
 require_once __DIR__ . '/cron_helpers.php';
 
@@ -121,6 +122,25 @@ try {
             }
 
             render_html(200, $controller->render($source, $rawParams));
+            break;
+
+        case '/watchlist':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            if (!require_session($services['config'])) {
+                break;
+            }
+
+            $pdo = Database::connect($services['config']);
+            $controller = new WatchlistController(new DerivedMetricsRepository($pdo));
+
+            $source = $_GET['source'] ?? '';
+            $source = is_string($source) ? $source : '';
+
+            render_html(200, $controller->render($source));
             break;
 
         case '/watchlist/toggle':

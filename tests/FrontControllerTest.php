@@ -92,6 +92,17 @@ final class FrontControllerTest extends TestCase
         self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
     }
 
+    public function testWatchlistWithWrongMethodReturns405(): void
+    {
+        // The method check runs before require_session()/DB access (same
+        // precedent as testListWithWrongMethodReturns405), so this never
+        // needs a database.
+        [$status, $body] = $this->post('/watchlist');
+
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function testLoginWithWrongMethodReturns405(): void
     {
         [$status, $body] = $this->request('PUT', '/login');
