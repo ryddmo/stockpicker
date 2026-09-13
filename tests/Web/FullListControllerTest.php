@@ -7,6 +7,7 @@ namespace Stockpicker\Tests\Web;
 use PHPUnit\Framework\TestCase;
 use Stockpicker\Store\DerivedMetricsRepository;
 use Stockpicker\Web\FullListController;
+use Stockpicker\Web\LeaderboardController;
 
 /**
  * Story 4.4 — query-param normalization and the zero-results/"rensa filter"
@@ -98,5 +99,23 @@ final class FullListControllerTest extends TestCase
         self::assertStringContainsString('Inga resultat för dessa filter.', $html);
         self::assertStringContainsString('rensa filter', $html);
         self::assertStringContainsString('href="/list"', $html);
+    }
+
+    // -- Row markup (spec-5-1) --------------------------------------------
+
+    /**
+     * FullListController::renderRow() builds each row's `.row-body` via
+     * LeaderboardController::rowBodyHtml() (Boundaries & Constraints,
+     * spec-5-1 — the three list controllers share this markup, confirmed
+     * byte-identical). This asserts the wrapper classes the mobile layout
+     * fix depends on are present in what that shared helper produces, so a
+     * future refactor can't silently drop the fix for this controller.
+     */
+    public function testRowMarkupSharedWithLeaderboardUsesNamecolAndStatcolWrappers(): void
+    {
+        $html = LeaderboardController::rowBodyHtml('Ericsson B', '', '<span class="sparkline"></span>', '35 420', '');
+
+        self::assertStringContainsString('class="namecol"', $html);
+        self::assertStringContainsString('class="statcol"', $html);
     }
 }

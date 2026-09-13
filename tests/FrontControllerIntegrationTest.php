@@ -294,6 +294,10 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Topplista', $body);
         self::assertStringNotContainsString('<form', $body);
         self::assertStringContainsString('Beta AB', $body);
+        // spec-5-1: renderRow()'s real output nests name/badges and owners/delta-chip
+        // in the fixed mobile-layout wrapper columns, not just LeaderboardController::rowBodyHtml() in isolation.
+        self::assertStringContainsString('class="namecol"', $body);
+        self::assertStringContainsString('class="statcol"', $body);
         // Beta AB (5000 owners) must render before Alpha AB (1000) — descending by owner count.
         self::assertGreaterThan(
             strpos($body, 'Beta AB'),
@@ -452,6 +456,10 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Alpha AB', $body);
         self::assertStringContainsString('Beta AB', $body);
         self::assertStringContainsString('Gamma AB', $body);
+        // spec-5-1: FullListController::renderRow()'s real output nests name/badges
+        // and owners/delta-chip in the fixed mobile-layout wrapper columns.
+        self::assertStringContainsString('class="namecol"', $body);
+        self::assertStringContainsString('class="statcol"', $body);
         // Beta AB (5000) > Alpha AB (1000) > Gamma AB (200).
         self::assertGreaterThan(strpos($body, 'Beta AB'), strpos($body, 'Alpha AB'));
         self::assertGreaterThan(strpos($body, 'Alpha AB'), strpos($body, 'Gamma AB'));
@@ -856,6 +864,10 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('Beta AB', $body);
         self::assertStringNotContainsString('Alpha AB', $body);
         self::assertStringContainsString('star--filled', $body);
+        // spec-5-1: WatchlistController::renderRow()'s real output nests name/badges
+        // and owners/delta-chip in the fixed mobile-layout wrapper columns.
+        self::assertStringContainsString('class="namecol"', $body);
+        self::assertStringContainsString('class="statcol"', $body);
     }
 
     public function testWatchlistWithNoStarredInstrumentsShowsEmptyStateWithLinkToRoot(): void

@@ -189,20 +189,63 @@ final class LeaderboardController
         $starClass = $starred ? 'star star--filled' : 'star star--empty';
         $starLabel = self::e($starred ? 'Ta bort från bevakningslistan' : 'Lägg till i bevakningslistan');
         $ariaPressed = $starred ? 'true' : 'false';
+        $rowBodyHtml = self::rowBodyHtml($eName, $badgesHtml, $sparklineHtml, $eOwners, $deltaChipHtml);
 
         return <<<HTML
         <div class="row">
           <span class="rank">{$rank}</span>
           <button type="button" class="{$starClass}" data-isin="{$eIsin}" aria-pressed="{$ariaPressed}" aria-label="{$starLabel}">{$starGlyph}</button>
           <a class="row-body" href="/stock/{$eIsin}">
-            <span class="name">{$eName}</span>
-            <span class="badges">{$badgesHtml}</span>
-            <span class="trend">{$sparklineHtml}</span>
-            <span class="stat">{$eOwners}</span>
-            {$deltaChipHtml}
+            {$rowBodyHtml}
           </a>
         </div>
 
+        HTML;
+    }
+
+    /**
+     * spec-5-1 — the `.row-body` inner markup shared by all three list
+     * controllers (Leaderboard/FullList/Watchlist). `.namecol` and `.statcol`
+     * match the approved mockup's structure (`leaderboard-hero.html` lines
+     * 103-136): `.namecol` nests name+badges in the one column that's
+     * allowed to shrink (badges wrap below the name, EXPERIENCE.md's
+     * "Streak-/Spike-badgar radbryts under radnamnet"); `.statcol` nests
+     * owners+delta-chip in a protected, effectively-unshrinkable column
+     * (UX-DR12: count+percent always shown together). `.trend`'s fixed-width
+     * treatment is this story's own addition (not present in the mockup,
+     * which has no "insufficient history" label at all) — it's a
+     * fixed-width column so that label wraps within its own bound instead of
+     * forcing the row wider. Together these replace the previous five flat,
+     * mostly-unshrinkable flex siblings that let `.trend`'s label push the
+     * owner count and delta chip off-screen at 390px. Extracted as its own
+     * pure static function (not inlined in renderRow()) so it's unit-testable
+     * without a database, same precedent as streakBadgeHtml()/deltaChipHtml()
+     * above, and so FullListController/WatchlistController can reuse it
+     * byte-for-byte instead of re-duplicating the markup (they already reuse
+     * this class's badge/delta helpers the same way).
+     *
+     * $eName/$eOwners must already be htmlspecialchars-escaped by the caller
+     * (same convention as the rest of this class); $badgesHtml/
+     * $sparklineHtml/$deltaChipHtml are pre-rendered HTML fragments from the
+     * other static helpers in this class.
+     */
+    public static function rowBodyHtml(
+        string $eName,
+        string $badgesHtml,
+        string $sparklineHtml,
+        string $eOwners,
+        string $deltaChipHtml,
+    ): string {
+        return <<<HTML
+        <span class="namecol">
+          <span class="name">{$eName}</span>
+          <span class="badges">{$badgesHtml}</span>
+        </span>
+        <span class="trend">{$sparklineHtml}</span>
+        <span class="statcol">
+          <span class="stat">{$eOwners}</span>
+          {$deltaChipHtml}
+        </span>
         HTML;
     }
 
@@ -469,11 +512,12 @@ final class LeaderboardController
           display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
           text-decoration: none; color: inherit;
         }
+        .namecol { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
         .name {
-          font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis;
-          white-space: nowrap; flex: 1 1 auto; min-width: 4em;
+          display: block; font-size: 13.5px; font-weight: 700; overflow: hidden;
+          text-overflow: ellipsis; white-space: nowrap;
         }
-        .badges { display: flex; gap: 4px; flex-wrap: wrap; }
+        .badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
         .badge {
           font-size: 9px; font-weight: 800; text-transform: uppercase;
           border-radius: 9999px; padding: 3px 7px; white-space: nowrap;
@@ -481,19 +525,27 @@ final class LeaderboardController
         .badge--streak { background: var(--brand-tint); color: var(--brand); }
         .badge--spike { background: var(--spike-bg); color: var(--spike-text); }
         .badge--nohist { background: var(--nohist-bg); color: var(--text-muted); }
-        .trend { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+        .trend {
+          flex: 0 0 auto; width: 52px; display: flex; flex-direction: column;
+          align-items: flex-start; gap: 2px;
+        }
         .sparkline { width: 52px; height: 22px; }
         .sparkline--empty { width: 52px; height: 22px; display: inline-block; }
-        .sparkline-label { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
+        .sparkline-label {
+          font-size: 9px; color: var(--text-muted); white-space: normal;
+          overflow-wrap: break-word; max-width: 52px; line-height: 1.25;
+        }
         .sparkline-line--positive { fill: none; stroke: var(--positive); stroke-width: 2px; }
         .sparkline-line--negative { fill: none; stroke: var(--negative); stroke-width: 2px; }
         .sparkline-line--neutral { fill: none; stroke: var(--brand); stroke-width: 2px; }
         .sparkline-line--spike { fill: none; stroke: var(--spike-text); stroke-width: 2px; }
         .sparkline-line--nohistory { fill: none; stroke: var(--text-muted); stroke-width: 2px; stroke-dasharray: 2 3; }
-        .stat { font-size: 13.5px; font-weight: 800; flex: 0 0 auto; }
+        .statcol { text-align: right; flex-shrink: 0; width: 70px; }
+        .stat { display: block; font-size: 13.5px; font-weight: 800; white-space: nowrap; }
         .delta-chip {
+          display: inline-block; margin-top: 3px;
           font-size: 9.5px; font-weight: 800; border-radius: 6px; padding: 3px 6px;
-          flex: 0 0 auto; white-space: nowrap;
+          white-space: nowrap;
         }
         .delta-chip--positive { background: var(--positive-tint); color: var(--positive); }
         .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
@@ -504,7 +556,9 @@ final class LeaderboardController
         @media (min-width: 900px) {
           .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
           .controls { flex-direction: row; }
+          .trend { width: 130px; }
           .sparkline, .sparkline--empty { width: 130px; height: 30px; }
+          .sparkline-label { max-width: 130px; }
         }
         CSS;
     }

@@ -38,6 +38,12 @@ FR16: En källväxlare låter användaren växla mellan Avanza- och Nordnet-data
 FR17: Fullständig lista visar alla spårade instrument för vald källa, sökbar, filtrerbar (spikflaggad, Stadig tillväxt, bevakad, marknadslista) och sorterbar (namn / ägarantal / %-förändring).
 FR18: Bevakningslista låter användaren märka/avmärka valfritt instrument som bevakat via en optimistisk växling utan sidladdning, och visar en egen flik med bara bevakade instrument.
 FR19: Aktiedetalj visar ett instruments fullständiga ägarhistorik och härledda mått för båda källorna samtidigt (Trend overlay med primär/sekundär linje), med ett intervallval (Dag/Vecka/30d/90d/År) som matchar backendens beräkningsfönster (`sma_7`/`sma_30`/`sma_90`).
+FR20: Topplistan i läget "Stadig tillväxt" förklarar sorteringskriterierna — vad som gör att ett instrument kvalificerar och hur det rankas.
+FR21: Leaderboard-rader visar procentuell utveckling över flera perioder (dag/vecka/90 dagar/år), inte bara dagens delta.
+FR22: Källväxlaren får ett tredje läge "Alla" (visat först, före Avanza/Nordnet) som visar båda källornas ägarantal sida vid sida per rad, utan att summera dem (NFR6 gäller oförändrat).
+FR23: Varje aktie länkar till sin sida på Avanza (via `orderbookId`) för vidare fördjupning.
+FR24: En informationssida beskriver webbplatsen — vad som finns på varje sida och vad badges/symboler betyder.
+FR25: Topplistans rader renderas korrekt på mobil utan att klippas av (bugg — ägarantal/delta-chip/sparkline-etikett syns inte fullt ut på smala skärmar).
 
 ### NonFunctional Requirements
 
@@ -80,6 +86,7 @@ NFR15: Text- och badgekontrast siktar på ett WCAG AA-liknande riktmärke (~4,5:
 - **Enda JS-filen i systemet:** `public_html/assets/watchlist.js` — `fetch()` POST mot en växlingsendpoint, ingen bundling, synkas som statisk fil via befintlig rsync-deploy (AD-12).
 - **Delad felhanterare:** ett ofångat undantag i `src/Web/` fångas av samma `catch (\Throwable)`-mönster som redan omsluter cron-routerna, loggar via Monolog och renderar en gemensam generisk felsida (AD-14).
 - **Deferred vid implementation:** exakt sök-/filter-/sorterings-SQL för Fullständig lista (WHERE-form, index, paginering) i `src/Store/`; exakt `watchlist`-schema utöver `isin`/`starred_at`.
+- **Post-launch-tillägg (2026-09-13, efter Epic 4 i produktion):** Avanzas publika aktiesides-URL (för FR23) är overifierad — bara API-endpoints är dokumenterade i `addendum.md`, aldrig en sides-URL; det faktiska mönstret (troligen något i stil med `avanza.se/aktier/om-aktien.html/{orderbookId}/{slug}`) fastställs mot en riktig sida vid implementation, samma disciplin som Story 2.1:s endpoint-verifiering.
 
 ### UX Design Requirements
 
@@ -124,6 +131,12 @@ FR16: Epic 4 - Källväxlare Avanza/Nordnet över Topplista/Fullständig lista/A
 FR17: Epic 4 - Fullständig lista (sök/filter/sortering över ~740 instrument)
 FR18: Epic 4 - Bevakningslista (optimistisk stjärnväxling, egen flik)
 FR19: Epic 4 - Aktiedetalj (Trend overlay båda källor, Range picker)
+FR20: Epic 5 - Förklaring av Stadig tillväxt-sorteringen (informationssidan)
+FR21: Epic 5 - Procentuell utveckling över flera perioder på raderna
+FR22: Epic 5 - Källäge "Alla" (sida vid sida, aldrig summerat)
+FR23: Epic 5 - Länk till aktien på Avanza
+FR24: Epic 5 - Informationssida om webbplatsen
+FR25: Epic 5 - Mobil layoutbugg på Topplistans rader
 
 ## Epic List
 
@@ -145,6 +158,10 @@ Ovanpå tidsserien går det att hämta dagsförändring, procentuell förändrin
 ### Epic 4: Webb-UI — bläddra ägarantal-trender
 Ovanpå tidsserien och de härledda måtten (Epic 1–3) får Stefan en autentiserad, mobilanpassad webbyta för att själv bläddra, ranka, filtrera och bevaka aktier utifrån ägarantalstrender, utan att fråga databasen direkt. Inloggning (signerad sessionscookie), Topplista (topp 10, källväxlare, rankningsläge), Fullständig lista (sök/filter/sort över ~740 instrument), Bevakningslista (optimistisk stjärnväxling) och Aktiedetalj (Trend overlay för båda källorna, Range picker) byggs som ordnade stories i `src/Web/`, sidoordnat med den nattliga pipelinen (`src/Web/` och `src/Pipeline/` anropar aldrig varandra). Efter epicen kan Stefan följa morgonrutinen och helgresearchen helt i webbläsaren i stället för mot rådata.
 **FRs covered:** FR14, FR15, FR16, FR17, FR18, FR19
+
+### Epic 5: Post-launch-förbättringar av webb-UI
+Efter Epic 4:s driftsättning (2026-09-13) märker Stefan fem saker i verklig användning: en mobil layoutbugg som klipper av rader, avsaknad av en direktlänk till Avanzas egen aktiesida, ingen förklaring av vad sidorna/symbolerna betyder eller vad som styr Stadig tillväxt-sorteringen, önskan om att se båda källornas ägarantal sida vid sida utan att slå ihop dem, och önskan om procentuell utveckling över fler perioder än bara dagens delta. Fem ordnade stories i `src/Web/` (en av dem — multi-periods %-förändring — sträcker sig även in i `src/Pipeline/Deriver` för nya beräknade kolumner). Efter epicen är Topplistan läsbar på mobil, varje aktie går att öppna direkt på Avanza, en informationssida förklarar verktyget, källväxlaren har ett tredje "Alla"-läge (aldrig summerat, NFR6 oförändrat), och raderna visar utveckling över flera tidsperioder.
+**FRs covered:** FR20, FR21, FR22, FR23, FR24, FR25
 
 ---
 
@@ -822,3 +839,134 @@ So that jag snabbt kan se om momentum håller i sig utan att vada genom hela lis
 **Then** är Topplista och Bevakningslista de två toppnivå-flikarna
 **And** Fullständig lista nås bara via Topplistans footer-åtgärd, inte som en egen flik
 **And** Inloggning ligger helt utanför flikfältet
+
+---
+
+## Epic 5: Post-launch-förbättringar av webb-UI
+
+Fem saker Stefan märker i verklig användning efter Epic 4:s driftsättning (2026-09-13):
+en mobil layoutbugg, en saknad länk till Avanza, avsaknad av förklarande text, ett
+önskat tredje källäge, och önskan om utveckling över fler tidsperioder.
+
+### Story 5.1: Mobil layoutbugg på listornas rader
+
+As Stefan,
+I want att rader på Topplista, Fullständig lista och Bevakningslista visas fullständigt på mobil utan att klippas av,
+So that jag kan läsa ägarantal, delta och sparkline-etiketten även på telefonen.
+
+**Acceptance Criteria:**
+
+**Given** en rad med en lång sparkline-etikett (t.ex. "4d spårade · ingen trend än")
+**When** raden renderas på en smal skärm (~390px, samma referensbredd som `DESIGN.md`)
+**Then** får hela raden plats utan att klippas av eller tvinga fram horisontell scroll
+**And** ägarantalet och Delta chip förblir synliga
+
+**Given** samma delade radkomponent används på Topplista, Fullständig lista och Bevakningslista
+**When** fixen implementeras
+**Then** verifieras den på alla tre sidorna, inte bara Topplistan
+
+**Given** fixen är på plats
+**When** en lista öppnas i en 390px-bred vy
+**Then** går ingen del av någon rad utanför sidans bredd
+
+### Story 5.2: Länk till aktien på Avanza
+
+As Stefan,
+I want en länk från Aktiedetalj till aktiens sida på Avanza,
+So that jag kan fördjupa mig ytterligare på Avanzas egen sida.
+
+**Acceptance Criteria:**
+
+**Given** det exakta URL-mönstret för Avanzas publika aktiesida är overifierat (bara API-endpoints är dokumenterade i `addendum.md`)
+**When** story påbörjas
+**Then** verifieras mönstret mot en riktig sida, samma disciplin som Story 2.1:s endpoint-verifiering, innan länken byggs
+
+**Given** Aktiedetalj är öppen för ett instrument med cachat `avanza_orderbook_id`
+**When** sidan renderas
+**Then** visas en synlig länk till aktiens sida på Avanza, byggd från `orderbookId`
+**And** länken öppnas i en ny flik, lämnar inte appens inloggade session
+
+**Given** ett instrument utan cachat `avanza_orderbook_id`
+**When** Aktiedetalj renderas
+**Then** döljs länken tyst istället för att visa en trasig länk
+
+### Story 5.3: Informationssida
+
+As Stefan,
+I want en informationssida som förklarar webbplatsens sidor och symboler,
+So that jag inte behöver minnas vad varje badge betyder eller hur Stadig tillväxt rankas.
+
+**Acceptance Criteria:**
+
+**Given** jag är inloggad
+**When** jag navigerar till informationssidan
+**Then** beskrivs Topplista, Fullständig lista, Bevakningslista och Aktiedetalj i klartext
+
+**Given** informationssidan
+**When** jag läser den
+**Then** förklaras varje symbol (🔥 Streak, ⚡ Spike, ☆/★ Watchlist star, Delta chip) och vad den betyder
+
+**Given** rankningsläget Stadig tillväxt
+**When** jag läser informationssidan
+**Then** förklaras i vanligt språk (inte teknisk jargong) vad som gör att ett instrument kvalificerar och hur det rankas
+
+**Given** informationssidan
+**When** den renderas
+**Then** är den nåbar från Topplistan (en synlig länk), inte bara via direkt URL
+
+### Story 5.4: Källäge "Alla" på Topplista
+
+As Stefan,
+I want ett tredje källäge "Alla" på Topplistan som visar båda källornas ägarantal sida vid sida,
+So that jag kan jämföra Avanza och Nordnet utan att öppna Aktiedetalj för varje aktie — utan att siffrorna någonsin summeras (NFR6).
+
+**Acceptance Criteria:**
+
+**Given** Topplistans källväxlare
+**When** den renderas
+**Then** visas tre lägen i ordningen Alla, Avanza, Nordnet — Alla först
+
+**Given** källäget Alla är valt
+**When** en rad renderas
+**Then** visas både Avanzas och Nordnets ägarantal på raden separat (t.ex. "Avanza 1 234 · Nordnet 567")
+**And** aldrig ett summerat tal
+
+**Given** källäget Alla och rankningsläget Flest ägare
+**When** Topplistan renderas
+**Then** rankas raderna efter Avanzas ägarantal (samma primära källa som redan är standard överallt annars), med Nordnets antal visat bredvid — aldrig som rankningsgrund
+
+**Given** källäget Alla och rankningsläget Stadig tillväxt
+**When** Topplistan renderas
+**Then** rankas raderna efter samma Stadig tillväxt-kriterier som i Avanza-läget (Avanzas `up_streak`/`spike_score`), med Nordnets ägarantal visat bredvid
+
+**Given** ett instrument som saknar data hos en av källorna
+**When** det renderas i läget Alla
+**Then** visas den källan som "ingen data" istället för ett missvisande nolltal
+
+**Given** Fullständig lista och Bevakningslista
+**When** denna story implementeras
+**Then** förblir de oförändrade — läget Alla är avgränsat till Topplistan i denna story
+
+### Story 5.5: Procentuell utveckling över flera perioder
+
+As Stefan,
+I want att se procentuell utveckling över dag/vecka/90 dagar/år direkt på Topplistans rader,
+So that jag snabbt kan bedöma om en trend håller i sig över flera tidshorisonter, inte bara dagens rörelse.
+
+**Acceptance Criteria:**
+
+**Given** `owner_count_metrics`-vyn
+**When** Deriver beräknar mått för ett instrument/källa
+**Then** beräknas även `pct_7d`, `pct_90d` och `pct_365d` (utöver befintliga `pct_1d`), med samma "null tills tillräckligt med rader"-princip som `sma_7`/`sma_30`/`sma_90`
+
+**Given** ett instrument med färre rader än respektive fönster kräver
+**When** måtten beräknas
+**Then** är motsvarande `pct_Nd`-kolumn `NULL`, aldrig ett missvisande tal
+
+**Given** en rad på Topplistan
+**When** den renderas
+**Then** visas procentuell utveckling för dag/vecka/90 dagar/år, med ett tydligt "otillräcklig historik"-tecken för perioder utan data
+
+**Given** detta är den enda story i Epic 5 som ändrar `src/Pipeline/Deriver`
+**When** story implementeras
+**Then** följer ändringen samma disciplin som Story 3.1 (MariaDB window functions, SQL-vy, gap-medveten null-hantering) — Epic 4/5:s övriga "rör aldrig `src/Pipeline/`"-regel gäller inte just denna story

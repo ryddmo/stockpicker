@@ -110,3 +110,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-2-topplista-med-bevakningsstjarnans-mekanik.md`
   summary: The hand-mirrored `watchlist` table DDL in `tests/Store/StoreTestCase.php` has no automated check against the real Phinx migration, so the two can silently drift.
   evidence: Pre-existing gap already acknowledged by the file's own comment ("Keep this in step with the migration; there is no automated check") for every table before this story; Story 4.2 only extends the same already-accepted convention to `watchlist`, per its Code Map's explicit instruction to match it. A cross-cutting fix (e.g. a test that diffs the migration's schema against `createSchema()` for every table) is out of this story's scope.
+
+## Deferred from: review pass 1 of story-5.1 (Mobil layoutbugg på listornas rader, 2026-09-13)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-1-mobil-layoutbugg-pa-listornas-rader.md`
+  summary: The `.row-body` CSS (`.namecol`/`.trend`/`.statcol`/`.name`/`.badges`/`.stat`/`.delta-chip`) is hand-edited identically into `LeaderboardController.php`, `FullListController.php`, and `WatchlistController.php` a third time, with no shared CSS file.
+  evidence: Already-accepted duplication debt carried from Stories 4.3-4.5 (per this story's own Code Map, which explicitly notes "no shared CSS file exists"); Story 5.1 extends the existing triplication rather than introducing it, per its own instruction to fix all three controllers identically. The surface for the next layout tweak keeps tripling — worth a shared-CSS or shared-partial mechanism as its own chore, especially before Stories 5.4/5.5 add more per-row content.
