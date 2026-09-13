@@ -23,6 +23,16 @@ final class DerivedMetricsRepository
      */
     public const SPIKE_THRESHOLD = 2.0;
 
+    /**
+     * Story 4.4/spec-4-4 — the two `/list` sort values. `SORT_COUNT` (the
+     * default) orders by latest `number_of_owners` desc, same as
+     * topByOwnerCount(); `SORT_PCT` orders by `pct_1d` desc. Both always add
+     * `, isin ASC` as the tie-breaker (same convention as Story 4.2's
+     * ranking queries).
+     */
+    public const SORT_COUNT = 'count';
+    public const SORT_PCT = 'pct';
+
     public function __construct(private readonly PDO $pdo)
     {
     }
@@ -191,5 +201,170 @@ final class DerivedMetricsRepository
             ],
             $stmt->fetchAll(),
         );
+    }
+
+    /**
+     * Story 4.4 — `/list`'s combined search/filter/sort query: every active
+     * instrument for `$source` (same "latest row per isin" + "active"
+     * shape as topByOwnerCount()/topByTrendQuality()), narrowed by whichever
+     * of `$filters` are present, all combined with AND. No `LIMIT` (the spec
+     * renders the full result in one page load).
+     *
+     * `$filters` (every key optional, absent/false/null/'' means "not
+     * active"):
+     *  - 'q': string — case-insensitive substring match on instrument name.
+     *  - 'growth': bool — the exact Topplista "Stadig tillväxt" qualifying
+     *    rule (`up_streak >= 1` AND not spiking).
+     *  - 'spike': bool — `spike_score >= self::SPIKE_THRESHOLD`.
+     *  - 'watchlist': bool — isin exists in `watchlist`.
+     *  - 'market': string — exact match on `instrument.list` (the literal
+     *    stored values, e.g. 'LC'/'MC'/'SC'/'First North').
+     *
+     * `$sort` is self::SORT_COUNT (default) or self::SORT_PCT; any other
+     * value falls back to SORT_COUNT so a garbage query value never 500s.
+     *
+     * @param array{q?: ?string, growth?: bool, spike?: bool, watchlist?: bool, market?: ?string} $filters
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function searchAndFilter(string $source, array $filters, string $sort): array
+    {
+        $conditions = ['latest.rn = 1', 'i.last_seen IS NULL'];
+        $params = ['source' => $source];
+
+        $q = $filters['q'] ?? null;
+        if ($q !== null && $q !== '') {
+            $conditions[] = 'LOWER(i.name) LIKE LOWER(:q)';
+            $params['q'] = '%' . self::escapeLike($q) . '%';
+        }
+
+        if (!empty($filters['growth'])) {
+            $conditions[] = 'latest.up_streak >= 1';
+            $conditions[] = '(latest.spike_score IS NULL OR latest.spike_score < :spike_threshold_growth)';
+            $params['spike_threshold_growth'] = self::SPIKE_THRESHOLD;
+        }
+
+        if (!empty($filters['spike'])) {
+            $conditions[] = 'latest.spike_score >= :spike_threshold_spike';
+            $params['spike_threshold_spike'] = self::SPIKE_THRESHOLD;
+        }
+
+        if (!empty($filters['watchlist'])) {
+            $conditions[] = 'latest.isin IN (SELECT isin FROM watchlist)';
+        }
+
+        $market = $filters['market'] ?? null;
+        if ($market !== null && $market !== '') {
+            $conditions[] = 'i.list = :market';
+            $params['market'] = $market;
+        }
+
+        $orderBy = $sort === self::SORT_PCT
+            ? 'latest.pct_1d DESC, latest.isin ASC'
+            : 'latest.number_of_owners DESC, latest.isin ASC';
+
+        $sql = sprintf(
+            <<<'SQL'
+            WITH latest AS (
+                SELECT
+                    m.*,
+                    ROW_NUMBER() OVER (PARTITION BY m.isin ORDER BY m.as_of_date DESC) AS rn
+                FROM owner_count_metrics m
+                WHERE m.source = :source
+            )
+            SELECT
+                latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
+                latest.delta_1d, latest.pct_1d, latest.sma_7, latest.sma_30, latest.sma_90,
+                latest.up_streak, latest.spike_score,
+                i.name, i.list
+            FROM latest
+            JOIN instrument i ON i.isin = latest.isin
+            WHERE %s
+            ORDER BY %s
+            SQL,
+            implode(' AND ', $conditions),
+            $orderBy,
+        );
+
+        $stmt = $this->pdo->prepare($sql);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(':' . $key, $value);
+        }
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Story 4.4 — the batched sparkline data for every visible `/list` row:
+     * one query for the last `$days` `number_of_owners` values per isin,
+     * instead of Story 4.2's per-row recentSeries() call (unacceptable
+     * N+1 shape at full-list scale). Same "last N per isin, oldest first"
+     * shape as recentSeries(), extended with a PARTITION-BY-isin window
+     * function to cap rows-per-isin in one round trip.
+     *
+     * Every requested isin is present as a key, even when it has no stored
+     * rows for `$source` (empty list, same "no padding" contract as
+     * recentSeries()).
+     *
+     * @param list<string> $isins
+     *
+     * @return array<string, list<array{as_of_date: string, number_of_owners: int}>>
+     */
+    public function recentSeriesForIsins(array $isins, string $source, int $days): array
+    {
+        $isins = array_values(array_unique($isins));
+
+        $out = [];
+        foreach ($isins as $isin) {
+            $out[$isin] = [];
+        }
+
+        if ($isins === []) {
+            return $out;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($isins), '?'));
+        $stmt = $this->pdo->prepare(
+            <<<SQL
+            SELECT isin, as_of_date, number_of_owners FROM (
+                SELECT
+                    isin, as_of_date, number_of_owners,
+                    ROW_NUMBER() OVER (PARTITION BY isin ORDER BY as_of_date DESC) AS rn
+                FROM owner_count_daily
+                WHERE source = ? AND isin IN ($placeholders)
+            ) recent
+            WHERE rn <= ?
+            ORDER BY isin ASC, as_of_date ASC
+            SQL
+        );
+
+        $position = 1;
+        $stmt->bindValue($position++, $source, PDO::PARAM_STR);
+        foreach ($isins as $isin) {
+            $stmt->bindValue($position++, $isin, PDO::PARAM_STR);
+        }
+        $stmt->bindValue($position, max(0, $days), PDO::PARAM_INT);
+        $stmt->execute();
+
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(string) $row['isin']][] = [
+                'as_of_date' => (string) $row['as_of_date'],
+                'number_of_owners' => (int) $row['number_of_owners'],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Escapes LIKE's own wildcard characters in user input so a search
+     * term containing '%' or '_' is matched literally, not as a wildcard.
+     * MariaDB's default LIKE escape character is '\' — no ESCAPE clause
+     * needed as long as '\' itself is escaped too.
+     */
+    private static function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
     }
 }

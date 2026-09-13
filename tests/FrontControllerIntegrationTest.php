@@ -436,6 +436,258 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM watchlist')->fetchColumn());
     }
 
+    // -- Story 4.4: /list (Fullständig lista) ----------------------------------
+
+    public function testListDefaultViewShowsEveryActiveInstrumentForAvanzaOrderedByOwnerCountDesc(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000);
+        $this->seedOwnerCount('SE0000001003', '2026-01-01', 200);
+
+        [$status, $body] = $this->endpoint->get('/list', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Fullständig lista', $body);
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringContainsString('Gamma AB', $body);
+        // Beta AB (5000) > Alpha AB (1000) > Gamma AB (200).
+        self::assertGreaterThan(strpos($body, 'Beta AB'), strpos($body, 'Alpha AB'));
+        self::assertGreaterThan(strpos($body, 'Alpha AB'), strpos($body, 'Gamma AB'));
+    }
+
+    public function testListSearchFiltersToNameMatchingRowsRegardlessOfOtherFilters(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000); // Beta AB
+
+        [$status, $body] = $this->endpoint->get('/list?q=alpha', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringNotContainsString('Beta AB', $body);
+    }
+
+    public function testListSortPctOrdersRowsByPct1dDesc(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha AB: 1000 -> 1100 (+10%).
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 1100);
+        // Beta AB: 1000 -> 2000 (+100%).
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001002', '2026-01-02', 2000);
+
+        [$status, $body] = $this->endpoint->get('/list?sort=pct', $this->validCookie());
+
+        self::assertSame(200, $status);
+        // Beta AB (+100%) must render before Alpha AB (+10%) — descending by pct_1d.
+        self::assertGreaterThan(strpos($body, 'Beta AB'), strpos($body, 'Alpha AB'));
+    }
+
+    public function testListGrowthFilterOnlyShowsSteadyGrowthQualifiers(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha AB: 29 days steady growth then a huge jump -> spiking, excluded.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+        // Beta AB: a clean up-streak, no spike.
+        foreach ([2000, 2010, 2020, 2030] as $i => $v) {
+            $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        [$status, $body] = $this->endpoint->get('/list?growth=1', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringNotContainsString('Alpha AB', $body);
+    }
+
+    public function testListSpikeFilterOnlyShowsSpikingRows(): void
+    {
+        $this->seedMatchedUniverse();
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+        foreach ([2000, 2010, 2020, 2030] as $i => $v) {
+            $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        [$status, $body] = $this->endpoint->get('/list?spike=1', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringNotContainsString('Beta AB', $body);
+    }
+
+    public function testListWatchlistFilterOnlyShowsStarredIsins(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000); // Beta AB
+        $cookie = $this->validCookie();
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001002'], $cookie);
+
+        [$status, $body] = $this->endpoint->get('/list?watchlist=1', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringNotContainsString('Alpha AB', $body);
+    }
+
+    public function testListMarketFilterOnlyShowsMatchingList(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB, LC
+        $this->seedOwnerCount('SE0000001004', '2026-01-01', 500); // Delta AB, First North
+
+        [$status, $body] = $this->endpoint->get('/list?market=' . urlencode('First North'), $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Delta AB', $body);
+        self::assertStringNotContainsString('Alpha AB', $body);
+    }
+
+    public function testListCarriesForwardAllActiveParamsOnOtherControlsAndTheActiveToggleOmitsItself(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body] = $this->endpoint->get('/list?q=alpha&sort=pct&growth=1', $this->validCookie());
+
+        self::assertSame(200, $status);
+        // A different control's own link (the Nordnet source-switcher) must
+        // carry every other currently-active param forward: q, sort, growth.
+        // (Hrefs are HTML-escaped, so '&' renders as '&amp;'.)
+        self::assertStringContainsString('href="/list?source=nordnet&amp;q=alpha&amp;sort=pct&amp;growth=1"', $body);
+        // The active growth toggle's own link flips itself off (omits
+        // growth) while still carrying q/sort forward.
+        self::assertStringContainsString('href="/list?q=alpha&amp;sort=pct"', $body);
+    }
+
+    public function testListGrowthAndSpikeTogetherShowsTheZeroResultsEmptyStateEndToEnd(): void
+    {
+        $this->seedMatchedUniverse();
+        // Steady 29-day growth then a huge jump -> spiking, which is exactly
+        // the case Acceptance Criteria calls out as "contradictory in
+        // practice": growth requires "not spiking", spike requires
+        // "spiking", so the AND-combined result must be empty.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        [$status, $body] = $this->endpoint->get('/list?growth=1&spike=1', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga resultat för dessa filter.', $body);
+    }
+
+    public function testListSearchTermRendersSafelyInTheSearchBoxValueAttribute(): void
+    {
+        $this->seedMatchedUniverse();
+
+        $maliciousQ = '<script>alert(1)</script>';
+        [$status, $body] = $this->endpoint->get('/list?' . http_build_query(['q' => $maliciousQ]), $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString($maliciousQ, $body);
+        self::assertStringContainsString('value="&lt;script&gt;alert(1)&lt;/script&gt;"', $body);
+    }
+
+    public function testListZeroMatchesWithNordnetSourceActiveStillShowsABareRensaFilterLink(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/list?source=nordnet&q=nosuchcompany', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga resultat för dessa filter.', $body);
+        self::assertStringContainsString('href="/list"', $body);
+        self::assertStringNotContainsString('href="/list?source=nordnet"', $body, 'the rensa filter link must drop source too, not just filters');
+    }
+
+    public function testListCombinedFiltersNarrowTheResultSetTogether(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000); // Alpha AB, LC
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000); // Beta AB, MC
+
+        [$status, $body] = $this->endpoint->get('/list?q=alpha&sort=pct&market=LC', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringNotContainsString('Beta AB', $body);
+    }
+
+    public function testListZeroMatchesShowsEmptyStateWithRensaFilterLink(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/list?q=nosuchcompany', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga resultat för dessa filter.', $body);
+        self::assertStringContainsString('href="/list"', $body);
+    }
+
+    public function testListSourceSwitchShowsNordnetsOwnInstrumentsAndPersistsSearchTerm(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 100, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/list?source=nordnet&q=alpha', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('999 999', $body);
+        // The search term persists in the rendered search box.
+        self::assertStringContainsString('value="alpha"', $body);
+    }
+
+    public function testListSourceSwitchNeverMergesAvanzaAndNordnetData(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 100, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/list?source=nordnet', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertSame(1, substr_count($body, 'class="row"'), 'only the one isin with Nordnet data may appear');
+    }
+
+    public function testListFooterLinkFromTopplistaPointsToListPreservingSource(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/?source=nordnet', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('href="/list?source=nordnet"', $body);
+    }
+
+    public function testListWithNoSessionShowsLoginForm(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body] = $this->endpoint->get('/list');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringContainsString('Logga in', $body);
+    }
+
     // -- Story 4.3: /stock/{isin} (Aktiedetalj) --------------------------------
 
     public function testStockDetailDefaultViewShowsNameBothSourceLinesAndDagRange(): void

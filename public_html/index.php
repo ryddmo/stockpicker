@@ -28,6 +28,7 @@ use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
 use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
+use Stockpicker\Web\FullListController;
 use Stockpicker\Web\LeaderboardController;
 use Stockpicker\Web\SessionStatus;
 use Stockpicker\Web\StockDetailController;
@@ -90,6 +91,36 @@ try {
             $ranking = is_string($ranking) ? $ranking : '';
 
             render_html(200, $controller->render($source, $ranking));
+            break;
+
+        case '/list':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            if (!require_session($services['config'])) {
+                break;
+            }
+
+            $pdo = Database::connect($services['config']);
+            $controller = new FullListController(
+                new DerivedMetricsRepository($pdo),
+                new WatchlistRepository($pdo),
+            );
+
+            $source = $_GET['source'] ?? '';
+            $source = is_string($source) ? $source : '';
+
+            $rawParams = [];
+            foreach (['q', 'sort', 'growth', 'spike', 'watchlist', 'market'] as $key) {
+                $value = $_GET[$key] ?? null;
+                if (is_string($value)) {
+                    $rawParams[$key] = $value;
+                }
+            }
+
+            render_html(200, $controller->render($source, $rawParams));
             break;
 
         case '/watchlist/toggle':
