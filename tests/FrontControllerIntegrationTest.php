@@ -966,6 +966,61 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString($topplistaInactive, $body, '/watchlist: Topplista tab must be present but inactive');
     }
 
+    // -- spec-5-3: /info (Information) -----------------------------------------
+
+    public function testInfoWithNoSessionShowsLoginForm(): void
+    {
+        [$status, $body] = $this->endpoint->get('/info');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringContainsString('Logga in', $body);
+    }
+
+    public function testInfoWithValidSessionShowsAllFourPagesAllFourSymbolsAndTheStadigTillvaxtRule(): void
+    {
+        [$status, $body] = $this->endpoint->get('/info', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('Topplista', $body);
+        self::assertStringContainsString('Fullständig lista', $body);
+        self::assertStringContainsString('Bevakningslista', $body);
+        self::assertStringContainsString('Aktiedetalj', $body);
+        self::assertStringContainsString('🔥', $body);
+        self::assertStringContainsString('⚡', $body);
+        self::assertStringContainsString('☆', $body);
+        self::assertStringContainsString('★', $body);
+        self::assertStringContainsString('Delta-chip', $body);
+        self::assertStringContainsString(
+            'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar; sorteras med längst svit först',
+            $body,
+        );
+    }
+
+    public function testRootHasAVisibleFooterLinkToInfoDistinctFromTheFullListLink(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="info-link"><a href="/info"', $body);
+    }
+
+    public function testInfoRouteRoundTripPreservesNordnetSourceFromTheTopplistaFooterLink(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_NORDNET);
+
+        [, $rootBody] = $this->endpoint->get('/?source=nordnet', $this->validCookie());
+        self::assertStringContainsString('class="info-link"><a href="/info?source=nordnet"', $rootBody);
+
+        [$status, $infoBody] = $this->endpoint->get('/info?source=nordnet', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab tab--active" href="/?source=nordnet">Topplista</a>', $infoBody);
+    }
+
     private function seedOwnerCount(
         string $isin,
         string $asOfDate,
