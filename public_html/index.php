@@ -30,6 +30,7 @@ use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
 use Stockpicker\Web\LeaderboardController;
 use Stockpicker\Web\SessionStatus;
+use Stockpicker\Web\StockDetailController;
 
 require_once __DIR__ . '/cron_helpers.php';
 
@@ -51,6 +52,11 @@ try {
     $path = is_string($path) ? rtrim($path, '/') : '';
     if ($path === '') {
         $path = '/';
+    }
+
+    if (str_starts_with($path, '/stock/')) {
+        route_stock_detail($services, substr($path, 7));
+        return;
     }
 
     switch ($path) {
@@ -372,6 +378,45 @@ function require_session(Config $config): bool
     render_html(200, $auth->renderLoginPage($message));
 
     return false;
+}
+
+/**
+ * Story 4.3 — `/stock/{isin}` dispatch. `$isin` is the raw remainder after
+ * the `/stock/` prefix (public_html/index.php's route match), unvalidated
+ * until the InstrumentRepository::get() lookup below — the exact
+ * unknown-isin-to-404 precedent as `/watchlist/toggle`.
+ *
+ * @param array{config: Config, logger: Logger} $services
+ */
+function route_stock_detail(array $services, string $isin): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+        send_json(405, ['error' => 'method not allowed']);
+        return;
+    }
+
+    if (!require_session($services['config'])) {
+        return;
+    }
+
+    $pdo = Database::connect($services['config']);
+    $instrument = (new InstrumentRepository($pdo))->get($isin);
+    if ($instrument === null) {
+        send_json(404, ['error' => 'not found']);
+        return;
+    }
+
+    $controller = new StockDetailController(
+        new DerivedMetricsRepository($pdo),
+        new WatchlistRepository($pdo),
+    );
+
+    $source = $_GET['source'] ?? '';
+    $range = $_GET['range'] ?? '';
+    $source = is_string($source) ? $source : '';
+    $range = is_string($range) ? $range : '';
+
+    render_html(200, $controller->render($instrument, $source, $range));
 }
 
 function render_html(int $status, string $body): void

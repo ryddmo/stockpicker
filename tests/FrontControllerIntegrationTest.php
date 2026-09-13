@@ -436,6 +436,157 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM watchlist')->fetchColumn());
     }
 
+    // -- Story 4.3: /stock/{isin} (Aktiedetalj) --------------------------------
+
+    public function testStockDetailDefaultViewShowsNameBothSourceLinesAndDagRange(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 1010, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 500, NormalizedRow::SOURCE_NORDNET);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 510, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringContainsString('trend-line--secondary', $body, 'the other source always renders, dashed');
+        self::assertStringContainsString('class="tab tab--active" href="/stock/SE0000001001">Dag</a>', $body);
+    }
+
+    public function testStockDetailWithUnknownIsinReturns404(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body] = $this->endpoint->get('/stock/SE9999999999', $this->validCookie());
+
+        self::assertSame(404, $status);
+        self::assertSame(['error' => 'not found'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function testStockDetailWithNoSessionShowsLoginForm(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertStringContainsString('Logga in', $body);
+    }
+
+    public function testStockDetailRangeVeckaRendersTheChartWhenPrimaryHasSevenRows(): void
+    {
+        $this->seedMatchedUniverse();
+        $start = new DateTimeImmutable('2026-02-01');
+        for ($i = 0; $i < 7; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
+        }
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=vecka', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('trend-overlay', $body);
+        self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+    }
+
+    public function testStockDetailRange30dShowsInsufficientHistoryMessageWhenPrimaryHasFewerThan30Rows(): void
+    {
+        $this->seedMatchedUniverse();
+        $start = new DateTimeImmutable('2026-02-01');
+        for ($i = 0; $i < 10; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
+        }
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=30d', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString(
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 20 dagar',
+            $body,
+        );
+    }
+
+    public function testStockDetailRangeArRendersTheFullSeriesWhenPrimaryHasAtLeast90Rows(): void
+    {
+        $this->seedMatchedUniverse();
+        $start = new DateTimeImmutable('2026-01-01');
+        for ($i = 0; $i < 90; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 3);
+        }
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=ar', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('trend-overlay', $body);
+        self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+    }
+
+    public function testStockDetailRange90dRendersTheChartWhenPrimaryHasNinetyRows(): void
+    {
+        $this->seedMatchedUniverse();
+        $start = new DateTimeImmutable('2026-01-01');
+        for ($i = 0; $i < 90; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 3);
+        }
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=90d', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('trend-overlay', $body);
+        self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+    }
+
+    public function testStockDetailDefaultDagViewShowsInsufficientHistoryForABrandNewInstrument(): void
+    {
+        $this->seedMatchedUniverse();
+        // Only one stored day -> fewer than Dag's 2-row gate.
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString(
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 1 dagar',
+            $body,
+        );
+    }
+
+public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAvanzaTheSecondary(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 1010, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 500, NormalizedRow::SOURCE_NORDNET);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 510, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?source=nordnet', $this->validCookie());
+
+        self::assertSame(200, $status);
+        // The Source switcher's own generated href marks Nordnet active.
+        self::assertStringContainsString('class="tab tab--active" href="/stock/SE0000001001?source=nordnet">Nordnet</a>', $body);
+        // The legend names Avanza as the (always fixed/dashed) secondary line.
+        self::assertStringContainsString('legend-swatch--secondary', $body);
+        self::assertStringContainsString('Avanza</span>', $body);
+    }
+
+    public function testStockDetailWatchlistStarTogglesExactlyAsOnTheLeaderboard(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $cookie = $this->validCookie();
+
+        [$toggleStatus, $toggleBody] = $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+        $json = json_decode($toggleBody, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $toggleStatus);
+        self::assertTrue($json['starred']);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001', $cookie);
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('star--filled', $body);
+    }
+
     private function seedOwnerCount(
         string $isin,
         string $asOfDate,

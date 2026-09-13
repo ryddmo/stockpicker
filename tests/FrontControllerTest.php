@@ -173,6 +173,17 @@ final class FrontControllerTest extends TestCase
         self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
     }
 
+    public function testStockDetailWithWrongMethodReturns405(): void
+    {
+        // The method check in route_stock_detail() runs before require_session()
+        // or any database connection, so this never needs a seeded instrument —
+        // same DB-free precedent as every other 405 test in this file.
+        [$status, $body] = $this->post('/stock/SE0000001001');
+
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
+
     public function testWatchlistToggleWithoutCookieReturns401MinimalTextBodyNotLoginHtml(): void
     {
         [$status, $body] = $this->post('/watchlist/toggle');
