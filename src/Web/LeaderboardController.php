@@ -31,6 +31,17 @@ final class LeaderboardController
     public const RANKING_COUNT = 'count';
     public const RANKING_STEADY = 'steady';
 
+    /**
+     * spec-5-4 — Topplista's third Source-switcher mode: a Web-layer-only
+     * display concept (deliberately not added to NormalizedRow, which
+     * represents real adapter data sources, not a display mode). In "Alla"
+     * mode ranking/badges/sparkline always use Avanza as the basis
+     * (self::normalizeSource()/render()'s $rankingSource); Nordnet's latest
+     * owner count is fetched for the same isins and shown display-only,
+     * alongside, never as a ranking or summed figure (NFR6).
+     */
+    public const SOURCE_ALL = 'alla';
+
     private const TOP_N = 10;
     private const SPARKLINE_WINDOW_DAYS = 30;
 
@@ -47,29 +58,74 @@ final class LeaderboardController
      */
     public function render(string $source, string $rankingMode): string
     {
-        $source = $source === NormalizedRow::SOURCE_NORDNET
-            ? NormalizedRow::SOURCE_NORDNET
-            : NormalizedRow::SOURCE_AVANZA;
+        $source = self::normalizeSource($source);
         $rankingMode = $rankingMode === self::RANKING_STEADY
             ? self::RANKING_STEADY
             : self::RANKING_COUNT;
 
+        // Alla mode ranks by Avanza's data always (Intent) — badges/
+        // sparkline/rank basis stay Avanza-derived, Nordnet is display-only.
+        $rankingSource = $source === self::SOURCE_ALL ? NormalizedRow::SOURCE_AVANZA : $source;
+
         $rows = $rankingMode === self::RANKING_STEADY
-            ? $this->metrics->topByTrendQuality($source, self::TOP_N)
-            : $this->metrics->topByOwnerCount($source, self::TOP_N);
+            ? $this->metrics->topByTrendQuality($rankingSource, self::TOP_N)
+            : $this->metrics->topByOwnerCount($rankingSource, self::TOP_N);
 
         $starred = array_flip($this->watchlist->starredIsins());
+
+        $nordnetOwners = [];
+        if ($source === self::SOURCE_ALL && $rows !== []) {
+            $isins = array_map(static fn (array $row): string => (string) $row['isin'], $rows);
+            $nordnetOwners = $this->metrics->latestOwnerCountForIsins($isins, NormalizedRow::SOURCE_NORDNET);
+        }
 
         if ($rows === []) {
             $bodyHtml = '<p class="empty-state">' . self::e(self::emptyStateCopy($rankingMode)) . '</p>';
         } else {
             $bodyHtml = '';
             foreach ($rows as $i => $row) {
-                $bodyHtml .= $this->renderRow($row, $source, $i + 1, isset($starred[(string) $row['isin']]));
+                $isin = (string) $row['isin'];
+                $rowNordnetOwners = $source === self::SOURCE_ALL ? ($nordnetOwners[$isin] ?? null) : null;
+                $bodyHtml .= $this->renderRow($row, $source, $i + 1, isset($starred[$isin]), $rowNordnetOwners);
             }
         }
 
         return self::pageHtml($source, $rankingMode, $bodyHtml);
+    }
+
+    /**
+     * Three-way Source normalization (mirrors StockDetailController's/
+     * FullListController's/WatchlistController's two-way
+     * normalizeSource()): 'alla' | 'nordnet' | anything else (including
+     * garbage) falls back to 'avanza' — a garbage query value never 500s.
+     */
+    public static function normalizeSource(string $source): string
+    {
+        return match ($source) {
+            self::SOURCE_ALL => self::SOURCE_ALL,
+            NormalizedRow::SOURCE_NORDNET => NormalizedRow::SOURCE_NORDNET,
+            default => NormalizedRow::SOURCE_AVANZA,
+        };
+    }
+
+    /**
+     * "Avanza {n} · Nordnet {m}" (Alla mode's row text, Intent/AC) — the two
+     * sources are always shown side by side, never summed (NFR6: different
+     * populations, neither is the legal shareholder count). An isin with no
+     * stored Nordnet data ($nordnetOwners === null, latestOwnerCountForIsins()'s
+     * "absent from the map" signal) shows "Nordnet ingen data" instead of a
+     * misleading zero. Same "·" separator convention as deltaChipHtml().
+     * Returns unescaped text — the caller runs it through self::e() before
+     * handing it to rowBodyHtml(), same discipline as the rest of this class.
+     */
+    public static function combinedOwnerCountText(int $avanzaOwners, ?int $nordnetOwners): string
+    {
+        $avanzaText = number_format($avanzaOwners, 0, ',', ' ');
+        $nordnetText = $nordnetOwners !== null
+            ? number_format($nordnetOwners, 0, ',', ' ')
+            : 'ingen data';
+
+        return "Avanza {$avanzaText} · Nordnet {$nordnetText}";
     }
 
     /**
@@ -164,8 +220,12 @@ final class LeaderboardController
 
     /**
      * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQuality() row
+     * @param ?int $nordnetOwners only meaningful when $source is
+     *   self::SOURCE_ALL (null otherwise) — Nordnet's latest owner count for
+     *   this row's isin, or null when Nordnet has no stored data for it
+     *   ("ingen data", never a misleading zero).
      */
-    private function renderRow(array $row, string $source, int $rank, bool $starred): string
+    private function renderRow(array $row, string $source, int $rank, bool $starred, ?int $nordnetOwners): string
     {
         $isin = (string) $row['isin'];
         $name = (string) $row['name'];
@@ -176,7 +236,13 @@ final class LeaderboardController
         $spikeScore = $row['spike_score'] !== null ? (float) $row['spike_score'] : null;
         $muted = self::isSparklineMuted($row['sma_7']);
 
-        $series = $this->metrics->recentSeries($isin, $source, self::SPARKLINE_WINDOW_DAYS);
+        // Alla mode's badges/sparkline/rank basis are Avanza-derived
+        // throughout (Intent) — $row itself already came from an
+        // Avanza-ranked query (render()'s $rankingSource), so the
+        // sparkline's own series fetch must match it rather than use the
+        // page-level Alla source, which recentSeries() would not recognize.
+        $dataSource = $source === self::SOURCE_ALL ? NormalizedRow::SOURCE_AVANZA : $source;
+        $series = $this->metrics->recentSeries($isin, $dataSource, self::SPARKLINE_WINDOW_DAYS);
 
         $badgesHtml = self::streakBadgeHtml($upStreak) . self::spikeBadgeHtml($spikeScore);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
@@ -184,7 +250,9 @@ final class LeaderboardController
 
         $eIsin = self::e($isin);
         $eName = self::e($name);
-        $eOwners = self::e(number_format($owners, 0, ',', ' '));
+        $eOwners = $source === self::SOURCE_ALL
+            ? self::e(self::combinedOwnerCountText($owners, $nordnetOwners))
+            : self::e(number_format($owners, 0, ',', ' '));
         $starGlyph = $starred ? '★' : '☆';
         $starClass = $starred ? 'star star--filled' : 'star star--empty';
         $starLabel = self::e($starred ? 'Ta bort från bevakningslistan' : 'Lägg till i bevakningslistan');
@@ -363,7 +431,17 @@ final class LeaderboardController
     {
         $topplistaClass = $active === 'topplista' ? 'tab tab--active' : 'tab';
         $watchlistClass = $active === 'watchlist' ? 'tab tab--active' : 'tab';
-        $suffix = $source === NormalizedRow::SOURCE_NORDNET ? '?source=nordnet' : '';
+        // spec-5-4 (review round, iteration 1): unlike fullListUrl()/infoUrl()
+        // (whose targets don't support Alla, so dropping the param is
+        // harmless), this tab bar's own "Topplista" link points at Topplista
+        // itself, which *does* support Alla — so it must carry SOURCE_ALL
+        // forward too, or clicking it while already in Alla mode silently
+        // resets the view back to Avanza.
+        $suffix = match ($source) {
+            self::SOURCE_ALL => '?source=alla',
+            NormalizedRow::SOURCE_NORDNET => '?source=nordnet',
+            default => '',
+        };
         $topplistaHref = self::e('/' . $suffix);
         $watchlistHref = self::e('/watchlist' . $suffix);
 
@@ -377,13 +455,17 @@ final class LeaderboardController
 
     private static function sourceSwitcherHtml(string $source, string $rankingMode): string
     {
+        // spec-5-4 — Alla shown first, before Avanza and Nordnet (Intent).
+        $allaClass = $source === self::SOURCE_ALL ? 'tab tab--active' : 'tab';
         $avanzaClass = $source === NormalizedRow::SOURCE_AVANZA ? 'tab tab--active' : 'tab';
         $nordnetClass = $source === NormalizedRow::SOURCE_NORDNET ? 'tab tab--active' : 'tab';
+        $allaHref = self::e(self::url(self::SOURCE_ALL, $rankingMode));
         $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode));
         $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode));
 
         return <<<HTML
         <div class="source-switcher" role="tablist" aria-label="Källa">
+          <a class="{$allaClass}" href="{$allaHref}">Alla</a>
           <a class="{$avanzaClass}" href="{$avanzaHref}">Avanza</a>
           <a class="{$nordnetClass}" href="{$nordnetHref}">Nordnet</a>
         </div>
@@ -413,7 +495,9 @@ final class LeaderboardController
     private static function url(string $source, string $rankingMode): string
     {
         $params = [];
-        if ($source === NormalizedRow::SOURCE_NORDNET) {
+        if ($source === self::SOURCE_ALL) {
+            $params['source'] = 'alla';
+        } elseif ($source === NormalizedRow::SOURCE_NORDNET) {
             $params['source'] = 'nordnet';
         }
         if ($rankingMode === self::RANKING_STEADY) {
@@ -428,7 +512,11 @@ final class LeaderboardController
      * `/list`, carrying the current Source forward (`?source={current}`,
      * spec's Code Map) so switching to the full list doesn't silently reset
      * back to Avanza. Omitted for the Avanza default, same
-     * omit-when-default convention as url().
+     * omit-when-default convention as url(). One deliberate exception
+     * (spec-5-4): `self::SOURCE_ALL` also omits the param — Fullständig
+     * lista has no Alla concept of its own (Boundaries: unchanged by that
+     * story), so landing there on Avanza is the only sensible target, not a
+     * regression of this docblock's guarantee.
      */
     private static function fullListUrl(string $source): string
     {

@@ -358,6 +358,58 @@ final class DerivedMetricsRepository
     }
 
     /**
+     * spec-5-4 — Topplista's "Alla" mode: each isin's *latest*
+     * `number_of_owners` for `$source`, keyed by isin. Mirrors
+     * recentSeriesForIsins()'s batch-over-isins shape (one query, a
+     * ROW_NUMBER() PARTITION BY isin window, rn = 1) but unlike it does
+     * NOT pad missing isins with an empty entry — an isin with no
+     * `owner_count_daily` rows for `$source` is simply absent from the
+     * returned array, and that absence IS the "no data for this source"
+     * signal the caller renders as "ingen data" instead of a misleading
+     * zero (NFR6).
+     *
+     * @param list<string> $isins
+     *
+     * @return array<string, int>
+     */
+    public function latestOwnerCountForIsins(array $isins, string $source): array
+    {
+        $isins = array_values(array_unique($isins));
+
+        if ($isins === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($isins), '?'));
+        $stmt = $this->pdo->prepare(
+            <<<SQL
+            SELECT isin, number_of_owners FROM (
+                SELECT
+                    isin, number_of_owners,
+                    ROW_NUMBER() OVER (PARTITION BY isin ORDER BY as_of_date DESC) AS rn
+                FROM owner_count_daily
+                WHERE source = ? AND isin IN ($placeholders)
+            ) latest
+            WHERE rn = 1
+            SQL
+        );
+
+        $position = 1;
+        $stmt->bindValue($position++, $source, PDO::PARAM_STR);
+        foreach ($isins as $isin) {
+            $stmt->bindValue($position++, $isin, PDO::PARAM_STR);
+        }
+        $stmt->execute();
+
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(string) $row['isin']] = (int) $row['number_of_owners'];
+        }
+
+        return $out;
+    }
+
+    /**
      * Escapes LIKE's own wildcard characters in user input so a search
      * term containing '%' or '_' is matched literally, not as a wildcard.
      * MariaDB's default LIKE escape character is '\' — no ESCAPE clause
