@@ -310,6 +310,7 @@ final class LeaderboardController
         $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode);
         $rankingToggle = self::rankingToggleHtml($source, $rankingMode);
         $fullListHref = self::e(self::fullListUrl($source));
+        $infoHref = self::e(self::infoUrl($source));
         $css = self::css();
 
         return <<<HTML
@@ -337,6 +338,7 @@ final class LeaderboardController
             {$rowsHtml}
           </main>
           <p class="full-list-link"><a href="{$fullListHref}">Visa fullständig lista</a></p>
+          <p class="info-link"><a href="{$infoHref}">Vad betyder allt detta?</a></p>
         </div>
         <script src="/assets/watchlist.js" defer></script>
         </body>
@@ -433,6 +435,13 @@ final class LeaderboardController
         return $source === NormalizedRow::SOURCE_NORDNET
             ? '/list?source=nordnet'
             : '/list';
+    }
+
+    private static function infoUrl(string $source): string
+    {
+        return $source === NormalizedRow::SOURCE_NORDNET
+            ? '/info?source=nordnet'
+            : '/info';
     }
 
     private static function e(string $s): string
@@ -553,6 +562,8 @@ final class LeaderboardController
         .empty-state { color: var(--text-secondary); font-size: 13.5px; }
         .full-list-link { text-align: center; margin: 16px 0 4px; }
         .full-list-link a { color: var(--brand); font-size: 13px; font-weight: 700; text-decoration: none; }
+        .info-link { text-align: center; margin: 4px 0 0; }
+        .info-link a { color: var(--text-secondary); font-size: 12px; font-weight: 700; text-decoration: none; }
         @media (min-width: 900px) {
           .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
           .controls { flex-direction: row; }

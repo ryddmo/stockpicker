@@ -29,6 +29,7 @@ use Stockpicker\Store\SettingsRepository;
 use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
 use Stockpicker\Web\FullListController;
+use Stockpicker\Web\InfoController;
 use Stockpicker\Web\LeaderboardController;
 use Stockpicker\Web\SessionStatus;
 use Stockpicker\Web\StockDetailController;
@@ -141,6 +142,22 @@ try {
             $source = is_string($source) ? $source : '';
 
             render_html(200, $controller->render($source));
+            break;
+
+        case '/info':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            if (!require_session($services['config'])) {
+                break;
+            }
+
+            $source = $_GET['source'] ?? '';
+            $source = is_string($source) ? $source : '';
+
+            render_html(200, InfoController::render($source));
             break;
 
         case '/watchlist/toggle':

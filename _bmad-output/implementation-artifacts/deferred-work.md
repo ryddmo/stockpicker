@@ -122,3 +122,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-5-2-lank-till-aktien-pa-avanza.md`
   summary: `avanzaLinkHtml()` builds the Avanza stock-page URL straight from the currently cached `avanza_orderbook_id`, with no acknowledgment that this id can rotate for the same ISIN.
   evidence: `UniverseSyncTest` confirms orderbookId rotation is an already-handled, expected phenomenon for a stable ISIN (Epic 2). A previously bookmarked or shared Aktiedetalj page could, after a rotation, link to a stale/wrong Avanza page — self-healing on any fresh page load (the link is rebuilt from the current DB value each render), so only stale external bookmarks are affected. Pre-existing characteristic of the cached field; this story just consumes it as-is.
+
+## Deferred from: review pass 1 of story-5.3 (Informationssida, 2026-09-13)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-3-informationssida.md`
+  summary: No route in `public_html/index.php` — `/info` included — has a test proving its 405 (method-not-allowed) guard actually fires for a non-GET request.
+  evidence: Confirmed by grep across `tests/FrontControllerIntegrationTest.php` for "405" — zero matches on any route, old or new. `EndpointFixture::postJson()` already exists, so the test is mechanically cheap once someone takes this on, but fixing it only for `/info` would be inconsistent with every other route sharing the same untested pattern; the real fix is cross-cutting 405 coverage across the whole front controller.
