@@ -41,8 +41,18 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
      */
     private function seed(string $asOfDate, int $owners, string $source = NormalizedRow::SOURCE_AVANZA): void
     {
+        $this->seedFor(self::ISIN, $asOfDate, $owners, $source);
+    }
+
+    /**
+     * Same as seed(), for an arbitrary isin — used by the topByOwnerCount()/
+     * topByTrendQuality() tests (Story 4.2), which need more than one
+     * instrument. The caller must insert the `instrument` row itself first.
+     */
+    private function seedFor(string $isin, string $asOfDate, int $owners, string $source = NormalizedRow::SOURCE_AVANZA): void
+    {
         $row = new NormalizedRow(
-            self::ISIN,
+            $isin,
             $source,
             $owners,
             null,
@@ -51,7 +61,16 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
             new DateTimeImmutable($asOfDate . 'T12:00:00', new DateTimeZone('UTC')),
         );
 
-        self::assertTrue($this->owners->upsert($row, $asOfDate), "seed row for {$asOfDate}/{$source} should be new");
+        self::assertTrue($this->owners->upsert($row, $asOfDate), "seed row for {$isin}/{$asOfDate}/{$source} should be new");
+    }
+
+    private function insertInstrument(string $isin, string $name, ?string $lastSeen = null): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO instrument (isin, name, list, first_seen, last_seen)
+             VALUES (:isin, :name, \'LC\', \'2026-01-01\', :last_seen)'
+        );
+        $stmt->execute(['isin' => $isin, 'name' => $name, 'last_seen' => $lastSeen]);
     }
 
     public function testFirstEverRowHasAllSevenMetricsNull(): void
@@ -256,5 +275,178 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         self::assertSame(10, (int) $all[NormalizedRow::SOURCE_AVANZA][1]['delta_1d']);
         self::assertSame(-100, (int) $all[NormalizedRow::SOURCE_NORDNET][1]['delta_1d']);
+    }
+
+    // -- topByOwnerCount() ---------------------------------------------------
+
+    public function testTopByOwnerCountOrdersByLatestNumberOfOwnersDescAndExcludesDelistedInstruments(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 5000);
+        $this->seedFor('SE0000199999', '2026-01-01', 9000);
+
+        $top = $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertCount(2, $top, 'the delisted instrument must never appear');
+        self::assertSame('SE0000108656', $top[0]['isin']);
+        self::assertSame('Atlas Copco A', $top[0]['name']);
+        self::assertSame(self::ISIN, $top[1]['isin']);
+    }
+
+    public function testTopByOwnerCountRanksByTheLatestRowNotAHistoricalPeak(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 9000);
+        $this->seedFor(self::ISIN, '2026-01-02', 1000); // latest day: a big drop
+        $this->seedFor('SE0000108656', '2026-01-01', 5000);
+
+        $top = $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame('SE0000108656', $top[0]['isin'], 'ranked on the latest (1000), not the historical peak (9000)');
+        self::assertSame(1000, (int) $top[1]['number_of_owners']);
+    }
+
+    public function testTopByOwnerCountRespectsTheLimit(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->insertInstrument('SE0000222222', 'SSAB B');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 2000);
+        $this->seedFor('SE0000222222', '2026-01-01', 3000);
+
+        $top = $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 2);
+
+        self::assertCount(2, $top);
+        self::assertSame('SE0000222222', $top[0]['isin']);
+        self::assertSame('SE0000108656', $top[1]['isin']);
+    }
+
+    public function testTopByOwnerCountNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seedFor(self::ISIN, '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedFor(self::ISIN, '2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $top = $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertCount(1, $top);
+        self::assertSame(1000, (int) $top[0]['number_of_owners'], 'Nordnet\'s count must never leak into an Avanza query');
+    }
+
+    // -- topByTrendQuality() --------------------------------------------------
+
+    public function testTopByTrendQualityRanksByUpStreakDescAndExcludesAnyRowMeetingTheSpikeThreshold(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->insertInstrument('SE0000222222', 'SSAB B');
+
+        // self::ISIN: 29 days of steady +10 growth, then a huge last-day jump.
+        // Strictly increasing every day -> up_streak 29 (the highest of the
+        // three), but the jump drives spike_score well past the >=2
+        // threshold -> must be excluded from the ranking entirely, despite
+        // having the longest streak.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedFor(self::ISIN, $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        // Atlas Copco A: a clean 5-day up-streak, no 30-row history yet
+        // (spike_score stays NULL — not excluded).
+        foreach ([2000, 2010, 2020, 2030, 2040, 2050] as $i => $v) {
+            $this->seedFor('SE0000108656', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        // SSAB B: a shorter 2-day up-streak.
+        foreach ([3000, 3010, 3020] as $i => $v) {
+            $this->seedFor('SE0000222222', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        $isins = array_column($top, 'isin');
+        self::assertNotContains(self::ISIN, $isins, 'the spiking isin must never appear in the steady-growth ranking');
+        self::assertSame(['SE0000108656', 'SE0000222222'], $isins);
+        self::assertSame(5, (int) $top[0]['up_streak']);
+        self::assertSame(2, (int) $top[1]['up_streak']);
+    }
+
+    public function testTopByTrendQualityReturnsEmptyArrayWhenNothingQualifies(): void
+    {
+        // No owner_count_daily rows at all for this source -> nothing to rank,
+        // and the empty-state copy ("Inga aktier med stadig tillväxt just
+        // nu.") is a LeaderboardController concern, not this repository's.
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame([], $top);
+    }
+
+    public function testTopByTrendQualityExcludesFlatOrNoStreakInstrumentsEvenWhenNotSpiking(): void
+    {
+        // A single, non-spiking, non-growing instrument: rn=1 has up_streak
+        // NULL (no predecessor), and a down/flat day resets it to 0. Neither
+        // ever qualifies as "stadig tillväxt".
+        $this->seed('2026-06-01', 1000);
+        $this->seed('2026-06-02', 990); // down day -> up_streak 0
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame([], $top, 'a flat/no-streak instrument must never qualify for Stadig tillväxt');
+    }
+
+    public function testTopByTrendQualityExcludesDelistedInstruments(): void
+    {
+        $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
+
+        foreach ([1000, 1010, 1020] as $i => $v) {
+            $this->seedFor('SE0000199999', sprintf('2026-05-%02d', $i + 1), $v);
+        }
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame([], $top);
+    }
+
+    // -- recentSeries() ---------------------------------------------------------
+
+    public function testRecentSeriesReturnsAllValuesOldestFirstWhenLessHistoryExistsThanTheWindow(): void
+    {
+        $values = [1000, 1010, 1020, 1030, 1040];
+        foreach ($values as $i => $v) {
+            $this->seed(sprintf('2026-09-%02d', $i + 1), $v);
+        }
+
+        $series = $this->metrics->recentSeries(self::ISIN, NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertCount(5, $series, 'fewer rows than the window when less history exists — no padding');
+        self::assertSame('2026-09-01', $series[0]['as_of_date']);
+        self::assertSame('2026-09-05', $series[4]['as_of_date']);
+        self::assertSame(1040, $series[4]['number_of_owners']);
+    }
+
+    public function testRecentSeriesCapsAtTheRequestedWindowKeepingTheMostRecentDaysOldestFirst(): void
+    {
+        for ($i = 0; $i < 10; ++$i) {
+            $this->seed(sprintf('2026-10-%02d', $i + 1), 1000 + $i);
+        }
+
+        $series = $this->metrics->recentSeries(self::ISIN, NormalizedRow::SOURCE_AVANZA, 3);
+
+        self::assertCount(3, $series);
+        self::assertSame(['2026-10-08', '2026-10-09', '2026-10-10'], array_column($series, 'as_of_date'));
+    }
+
+    public function testRecentSeriesNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seed('2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seed('2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $series = $this->metrics->recentSeries(self::ISIN, NormalizedRow::SOURCE_AVANZA, 30);
+
+        self::assertSame([['as_of_date' => '2026-01-01', 'number_of_owners' => 1000]], $series);
     }
 }

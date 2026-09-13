@@ -64,6 +64,7 @@ final class MigrationTest extends TestCase
         self::assertTrue($this->tableExists('owner_count_daily'));
         self::assertTrue($this->tableExists('work_queue'));
         self::assertTrue($this->tableExists('ingest_run'));
+        self::assertTrue($this->tableExists('watchlist'));
 
         // Story 1.6 widened this column to hold the 36-char nnx UUID.
         self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
@@ -171,6 +172,23 @@ final class MigrationTest extends TestCase
             'rate.nordnet' => '0.5',
             'run_after' => '18:30',
         ], $this->sortByKey($settings));
+
+        // watchlist (Story 4.2): isin PK, FK to instrument, no boolean column
+        // — a row's existence means "starred".
+        self::assertSame(['isin'], $this->primaryKey('watchlist'));
+        self::assertStringContainsString('datetime', $this->columnType('watchlist', 'starred_at'));
+
+        $this->pdo->exec(
+            "INSERT INTO watchlist (isin, starred_at) VALUES ('SE0000000000', '2026-01-01 00:00:00')"
+        );
+        try {
+            $this->pdo->exec(
+                "INSERT INTO watchlist (isin, starred_at) VALUES ('XX0000000000', '2026-01-01 00:00:00')"
+            );
+            self::fail('the migrated schema allowed a watchlist row with no matching instrument');
+        } catch (\PDOException $e) {
+            self::assertSame('23000', $e->getCode());
+        }
     }
 
     public function testRollbackDropsEverything(): void
@@ -186,6 +204,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('work_queue'));
         self::assertFalse($this->tableExists('ingest_run'));
         self::assertFalse($this->tableExists('owner_count_metrics'));
+        self::assertFalse($this->tableExists('watchlist'));
     }
 
     /**
@@ -260,8 +279,9 @@ final class MigrationTest extends TestCase
     {
         // The view first — it reads owner_count_daily. Story 3.1.
         $this->pdo->exec('DROP VIEW IF EXISTS `owner_count_metrics`');
-        // owner_count_daily next — it references both instrument and ingest_run.
-        foreach (['owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'phinxlog'] as $table) {
+        // watchlist and owner_count_daily next — both reference instrument
+        // (owner_count_daily also references ingest_run). Story 4.2.
+        foreach (['watchlist', 'owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }

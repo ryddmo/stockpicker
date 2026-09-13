@@ -9,6 +9,14 @@ final class EndpointFixture
     /** A guaranteed-unresolvable host (RFC 2606) — the hermetic default. */
     private const DEAD_UNIVERSE_BASE_URI = 'http://universe.stockpicker.invalid';
 
+    /**
+     * Fixed test credentials for the session/login config keys Story 4.2's
+     * authenticated routes need (AuthController). Callers that only exercise
+     * the token-guarded /cron/* endpoints never touch these.
+     */
+    private const SESSION_KEY = 'endpoint-fixture-session-key';
+    private const LOGIN_USERNAME = 'endpoint-fixture-user';
+
     private string $root;
 
     /** @var resource|null */
@@ -59,6 +67,9 @@ final class EndpointFixture
             'db' => $db,
             'cron_token' => $cronToken,
             'log_path' => 'var/log/stockpicker.log',
+            'login_username' => self::LOGIN_USERNAME,
+            'login_password_hash' => password_hash('endpoint-fixture-password', PASSWORD_BCRYPT),
+            'session_key' => self::SESSION_KEY,
         ], true) . ";\n");
 
         [$this->server, $this->base] = $this->spawnServer($this->root . '/public_html', null, [
@@ -121,10 +132,55 @@ final class EndpointFixture
     }
 
     /** @return array{0: int, 1: string} */
-    public function get(string $path): array
+    public function get(string $path, ?string $cookie = null): array
     {
-        $context = stream_context_create(['http' => ['ignore_errors' => true, 'timeout' => 15]]);
-        $body = file_get_contents($this->base . $path, false, $context);
+        return $this->request('GET', $path, $cookie);
+    }
+
+    /** @return array{0: int, 1: string} */
+    public function postJson(string $path, array $payload, ?string $cookie = null): array
+    {
+        return $this->request('POST', $path, $cookie, json_encode($payload, JSON_THROW_ON_ERROR), 'application/json');
+    }
+
+    /**
+     * A validly signed session cookie value for the given expiry, matching
+     * AuthController::issueCookieValue()'s format — bypasses /login so a
+     * test can construct valid/expired/near-future cookies directly.
+     */
+    public function signedSessionCookie(int $exp): string
+    {
+        $payload = json_encode(['exp' => $exp], JSON_THROW_ON_ERROR);
+
+        return base64_encode($payload) . '.' . hash_hmac('sha256', $payload, self::SESSION_KEY);
+    }
+
+    /** @return array{0: int, 1: string} */
+    private function request(
+        string $method,
+        string $path,
+        ?string $cookie = null,
+        ?string $body = null,
+        ?string $contentType = null,
+    ): array {
+        $options = ['ignore_errors' => true, 'timeout' => 15, 'method' => $method];
+
+        $headerLines = [];
+        if ($cookie !== null) {
+            $headerLines[] = 'Cookie: ' . $cookie;
+        }
+        if ($body !== null) {
+            $headerLines[] = 'Content-Type: ' . ($contentType ?? 'application/x-www-form-urlencoded');
+        }
+        if ($headerLines !== []) {
+            $options['header'] = implode("\r\n", $headerLines);
+        }
+        if ($body !== null) {
+            $options['content'] = $body;
+        }
+
+        $context = stream_context_create(['http' => $options]);
+        $responseBody = file_get_contents($this->base . $path, false, $context);
         $status = 0;
         foreach ($http_response_header ?? [] as $header) {
             if (preg_match('#^HTTP/\\S+\\s+(\\d{3})#', $header, $matches)) {
@@ -132,7 +188,7 @@ final class EndpointFixture
             }
         }
 
-        return [$status, (string) $body];
+        return [$status, (string) $responseBody];
     }
 
     public function stop(): void

@@ -159,13 +159,47 @@ final class FrontControllerTest extends TestCase
         self::assertStringNotContainsString('Sessionen har gått ut', $body);
     }
 
-    public function testValidSessionShowsAuthenticatedPlaceholderNotLoginForm(): void
+    // NB: "a valid session on / renders the real Topplista, not a login
+    // form" now needs a real database (Story 4.2's LeaderboardController) and
+    // so lives in FrontControllerIntegrationTest.php instead, which self-skips
+    // cleanly without docker-compose's MariaDB — this file stays entirely
+    // DB-free, matching its own doc comment above.
+
+    public function testWatchlistToggleWithWrongMethodReturns405(): void
     {
-        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() + 3600);
+        [$status, $body] = $this->get('/watchlist/toggle');
 
-        [$status, $body] = $this->get('/', $cookie);
+        self::assertSame(405, $status);
+        self::assertSame(['error' => 'method not allowed'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+    }
 
-        self::assertSame(200, $status);
+    public function testWatchlistToggleWithoutCookieReturns401MinimalTextBodyNotLoginHtml(): void
+    {
+        [$status, $body] = $this->post('/watchlist/toggle');
+
+        self::assertSame(401, $status);
+        self::assertStringNotContainsString('<form', $body);
+        self::assertStringNotContainsString('<html', $body);
+    }
+
+    public function testWatchlistToggleWithExpiredCookieReturns401MinimalTextBodyNotLoginHtml(): void
+    {
+        $cookie = 'stockpicker_session=' . $this->signedCookieValue(time() - 3600);
+
+        [$status, $body] = $this->post('/watchlist/toggle', $cookie);
+
+        self::assertSame(401, $status);
+        self::assertStringNotContainsString('<form', $body);
+        self::assertStringNotContainsString('Sessionen har gått ut', $body);
+    }
+
+    public function testWatchlistToggleWithTamperedCookieReturns401MinimalTextBodyNotLoginHtml(): void
+    {
+        $cookie = 'stockpicker_session=' . base64_encode('{"exp":9999999999}') . '.' . str_repeat('0', 64);
+
+        [$status, $body] = $this->post('/watchlist/toggle', $cookie);
+
+        self::assertSame(401, $status);
         self::assertStringNotContainsString('<form', $body);
     }
 

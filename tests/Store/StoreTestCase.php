@@ -71,7 +71,8 @@ abstract class StoreTestCase extends TestCase
     {
         // The view first — it reads owner_count_daily.
         $this->pdo->exec('DROP VIEW IF EXISTS owner_count_metrics');
-        // owner_count_daily first — it now has FKs to instrument and ingest_run.
+        // watchlist and owner_count_daily before instrument — both FK to it.
+        $this->pdo->exec('DROP TABLE IF EXISTS watchlist');
         $this->pdo->exec('DROP TABLE IF EXISTS owner_count_daily');
         $this->pdo->exec('DROP TABLE IF EXISTS work_queue');
         $this->pdo->exec('DROP TABLE IF EXISTS ingest_run');
@@ -99,6 +100,16 @@ abstract class StoreTestCase extends TestCase
             'CREATE TABLE settings (
                 `key` VARCHAR(64) NOT NULL PRIMARY KEY,
                 `value` VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        // Story 4.2 — mirrors db/migrations/20260913120000_create_watchlist.php.
+        // Keep this in step with the migration; there is no automated check.
+        $this->pdo->exec(
+            'CREATE TABLE watchlist (
+                isin VARCHAR(12) NOT NULL PRIMARY KEY,
+                starred_at DATETIME NOT NULL,
+                CONSTRAINT fk_watchlist_isin FOREIGN KEY (isin) REFERENCES instrument (isin)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
