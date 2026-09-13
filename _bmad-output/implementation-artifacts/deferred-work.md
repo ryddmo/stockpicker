@@ -104,3 +104,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-uttag-av-en-akties-serie-och-matt.md`
   summary: DB-gated script-integration tests (`ShowRunsScriptTest`, `ShowMetricsScriptTest`) do row setup (`INSERT`/`upsert()`) before entering their `try` block, so a setup failure (e.g. duplicate PK from a prior orphaned run) skips the `finally` cleanup and can permanently wedge the fixture ISIN/run id.
   evidence: Confirmed in `tests/Store/ShowRunsScriptTest.php::testAlarmsFlagShowsAlarmedRunsOnly` (pre-existing, Story 1.8) and both new `ShowMetricsScriptTest.php` DB-gated tests. If real, moves setup calls inside `try`, ahead of `finally`.
+
+## Deferred from: review pass 1 of story-4.2 (Topplista med bevakningsstjärnans mekanik, 2026-09-13)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-topplista-med-bevakningsstjarnans-mekanik.md`
+  summary: The hand-mirrored `watchlist` table DDL in `tests/Store/StoreTestCase.php` has no automated check against the real Phinx migration, so the two can silently drift.
+  evidence: Pre-existing gap already acknowledged by the file's own comment ("Keep this in step with the migration; there is no automated check") for every table before this story; Story 4.2 only extends the same already-accepted convention to `watchlist`, per its Code Map's explicit instruction to match it. A cross-cutting fix (e.g. a test that diffs the migration's schema against `createSchema()` for every table) is out of this story's scope.

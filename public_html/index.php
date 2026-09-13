@@ -20,12 +20,15 @@ use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
 use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
+use Stockpicker\Store\DerivedMetricsRepository;
 use Stockpicker\Store\InstrumentRepository;
 use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
+use Stockpicker\Web\LeaderboardController;
 use Stockpicker\Web\SessionStatus;
 
 require_once __DIR__ . '/cron_helpers.php';
@@ -69,7 +72,59 @@ try {
                 break;
             }
 
-            render_html(200, render_placeholder_page());
+            $pdo = Database::connect($services['config']);
+            $controller = new LeaderboardController(
+                new DerivedMetricsRepository($pdo),
+                new WatchlistRepository($pdo),
+            );
+
+            $source = $_GET['source'] ?? '';
+            $ranking = $_GET['ranking'] ?? '';
+            $source = is_string($source) ? $source : '';
+            $ranking = is_string($ranking) ? $ranking : '';
+
+            render_html(200, $controller->render($source, $ranking));
+            break;
+
+        case '/watchlist/toggle':
+            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+                send_json(405, ['error' => 'method not allowed']);
+                break;
+            }
+
+            // Same session validation as require_session(), but a 401 +
+            // minimal text body instead of the login page's HTML (AD-12) —
+            // watchlist.js tells a toggle failure from a dead session by
+            // status code alone, never by sniffing the response body.
+            $auth = new AuthController($services['config']);
+            $cookie = $_COOKIE[AuthController::COOKIE_NAME] ?? null;
+            $cookie = is_string($cookie) ? $cookie : null;
+
+            if ($auth->sessionStatus($cookie) !== SessionStatus::Valid) {
+                render_text(401, "unauthorized\n");
+                break;
+            }
+
+            $payload = json_decode((string) file_get_contents('php://input'), true);
+            $isin = is_array($payload) && isset($payload['isin']) && is_string($payload['isin'])
+                ? $payload['isin']
+                : null;
+
+            if ($isin === null || $isin === '') {
+                send_json(400, ['error' => 'invalid request']);
+                break;
+            }
+
+            $pdo = Database::connect($services['config']);
+            $instruments = new InstrumentRepository($pdo);
+
+            if ($instruments->get($isin) === null) {
+                send_json(404, ['error' => 'not found']);
+                break;
+            }
+
+            $starred = (new WatchlistRepository($pdo))->toggle($isin);
+            send_json(200, ['isin' => $isin, 'starred' => $starred]);
             break;
 
         case '/login':
@@ -319,33 +374,23 @@ function require_session(Config $config): bool
     return false;
 }
 
-/**
- * Placeholder for the authenticated "/" route. Real Topplista content lands
- * in Story 4.2.
- */
-function render_placeholder_page(): string
-{
-    return <<<HTML
-    <!DOCTYPE html>
-    <html lang="sv">
-    <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>stockpicker</title>
-    </head>
-    <body>
-    <h1>stockpicker</h1>
-    <p>Inloggad. Innehållet kommer i en senare story.</p>
-    </body>
-    </html>
-
-    HTML;
-}
-
 function render_html(int $status, string $body): void
 {
     http_response_code($status);
     header('Content-Type: text/html; charset=utf-8');
+    echo $body;
+}
+
+/**
+ * Minimal plain-text response — used by /watchlist/toggle's 401 so an
+ * expired/invalid session never renders the login page's HTML there
+ * (AD-12): watchlist.js only needs the status code to decide to navigate to
+ * /login, never the body.
+ */
+function render_text(int $status, string $body): void
+{
+    http_response_code($status);
+    header('Content-Type: text/plain; charset=utf-8');
     echo $body;
 }
 

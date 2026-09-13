@@ -6,6 +6,8 @@ namespace Stockpicker\Tests;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Stockpicker\Adapter\NormalizedRow;
+use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\SettingsRepository;
 use Stockpicker\Tests\Store\StoreTestCase;
 use Stockpicker\Tests\Support\EndpointFixture;
@@ -276,6 +278,202 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(500, $status);
         self::assertSame(['error' => 'internal server error'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
+    // -- Story 4.2: / (Topplista) and /watchlist/toggle -----------------------
+
+    public function testRootDefaultViewShowsTop10ByOwnerCountForAvanza(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Topplista', $body);
+        self::assertStringNotContainsString('<form', $body);
+        self::assertStringContainsString('Beta AB', $body);
+        // Beta AB (5000 owners) must render before Alpha AB (1000) — descending by owner count.
+        self::assertGreaterThan(
+            strpos($body, 'Beta AB'),
+            strpos($body, 'Alpha AB'),
+        );
+    }
+
+    public function testRootRendersControllerGeneratedHrefsForSourceAndRankingSwitches(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        // The default view's own Nordnet/Stadig tillväxt links — read from the
+        // controller's real output rather than a hand-typed query string.
+        self::assertStringContainsString('href="/?source=nordnet"', $body);
+        self::assertStringContainsString('href="/?ranking=steady"', $body);
+    }
+
+    public function testRootRendersTheSpikeStrokeClassForASpikingRowAndThePositiveClassForAGrowingRow(): void
+    {
+        $this->seedMatchedUniverse();
+
+        // Alpha AB: 29 days of steady growth then a huge jump -> spike_score
+        // >= 2 -> the sparkline must use the spike stroke class, not
+        // positive/neutral, even though the last day is also numerically an
+        // increase. Rendered on the default (Flest ägare) view, since
+        // Stadig tillväxt excludes spiking rows entirely (see the ranking
+        // test above) and so never renders this row at all.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        // Beta AB: 8 clean up days -> sma_7 is present (not muted) and the
+        // last delta is positive, with no spike -> the positive stroke class.
+        foreach ([2000, 2010, 2020, 2030, 2040, 2050, 2060, 2070] as $i => $v) {
+            $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('sparkline-line--spike', $this->rowHtmlFor($body, 'SE0000001001'));
+        self::assertStringContainsString('sparkline-line--positive', $this->rowHtmlFor($body, 'SE0000001002'));
+    }
+
+    public function testRootWithSourceNordnetRendersNordnetDataOnlyNeverMergedWithAvanza(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 100, NormalizedRow::SOURCE_AVANZA);
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body] = $this->endpoint->get('/?source=nordnet', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('999 999', $body);
+        self::assertSame(1, substr_count($body, 'class="row"'), 'only the one isin with Nordnet data may appear');
+    }
+
+    public function testRootWithRankingSteadyShowsZeroQualifiersMessageWhenNothingQualifies(): void
+    {
+        $this->seedMatchedUniverse();
+        // Only one day of history anywhere -> up_streak is NULL/0 for
+        // everything, so nothing qualifies for "Stadig tillväxt".
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
+    }
+
+    public function testRootWithRankingSteadyOrdersByUpStreakAndExcludesTheSpikingInstrument(): void
+    {
+        $this->seedMatchedUniverse();
+
+        // Alpha AB: 29 days of steady growth then a huge jump -> highest
+        // up_streak but spike_score >= 2 -> must be excluded entirely.
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', $start->modify('+29 days')->format('Y-m-d'), 1280 + 5000);
+
+        // Beta AB: a clean short up-streak, no spike.
+        foreach ([2000, 2010, 2020, 2030] as $i => $v) {
+            $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringNotContainsString('Alpha AB', $body, 'the spiking instrument must never appear in Stadig tillväxt');
+    }
+
+    public function testWatchlistToggleStarsAnInstrumentAndTheNewStateSurvivesAReload(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $cookie = $this->validCookie();
+
+        [$status, $body] = $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('SE0000001001', $json['isin']);
+        self::assertTrue($json['starred']);
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM watchlist WHERE isin = 'SE0000001001'")->fetchColumn(),
+        );
+
+        // Reload / — the star must render filled (persisted, not per-request).
+        [$rootStatus, $rootBody] = $this->endpoint->get('/', $cookie);
+        self::assertSame(200, $rootStatus);
+        self::assertStringContainsString('star--filled', $rootBody);
+
+        // Toggling again flips it back off.
+        [$offStatus, $offBody] = $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001001'], $cookie);
+        $offJson = json_decode($offBody, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(200, $offStatus);
+        self::assertFalse($offJson['starred']);
+        self::assertSame(
+            0,
+            (int) $this->pdo->query('SELECT COUNT(*) FROM watchlist')->fetchColumn(),
+        );
+    }
+
+    public function testWatchlistToggleWithUnknownIsinReturns404Json(): void
+    {
+        [$status, $body] = $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE9999999999'], $this->validCookie());
+
+        self::assertSame(404, $status);
+        self::assertSame(['error' => 'not found'], json_decode($body, true, 512, JSON_THROW_ON_ERROR));
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM watchlist')->fetchColumn());
+    }
+
+    private function seedOwnerCount(
+        string $isin,
+        string $asOfDate,
+        int $owners,
+        string $source = NormalizedRow::SOURCE_AVANZA,
+    ): void {
+        $row = new NormalizedRow(
+            $isin,
+            $source,
+            $owners,
+            null,
+            null,
+            null,
+            new DateTimeImmutable($asOfDate . 'T12:00:00', new DateTimeZone('UTC')),
+        );
+        (new OwnerCountRepository($this->pdo))->upsert($row, $asOfDate);
+    }
+
+    private function validCookie(): string
+    {
+        return 'stockpicker_session=' . $this->endpoint->signedSessionCookie(time() + 3600);
+    }
+
+    /**
+     * Slices out one Leaderboard row's own markup (from its `data-isin`
+     * attribute to the row `<div>`'s closing tag) so a test can assert on
+     * that row's sparkline stroke class without accidentally matching a
+     * different row on the same page.
+     */
+    private function rowHtmlFor(string $body, string $isin): string
+    {
+        $start = strpos($body, 'data-isin="' . $isin . '"');
+        self::assertNotFalse($start, "no row found for isin {$isin}");
+
+        $end = strpos($body, '</div>', $start);
+        self::assertNotFalse($end, "row for isin {$isin} has no closing </div>");
+
+        return substr($body, $start, $end - $start);
     }
 
     private function seedInstrument(): void
