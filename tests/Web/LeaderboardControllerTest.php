@@ -165,4 +165,65 @@ final class LeaderboardControllerTest extends TestCase
         self::assertStringContainsString('delta-chip--neutral', $html);
         self::assertStringContainsString('0 ·', $html);
     }
+
+    // -- Row markup (spec-5-1): namecol/trend/statcol, not flat flex siblings -
+
+    /**
+     * Root-cause regression guard for spec-5-1's mobile layout bug: the row
+     * body used to be five flat, mostly-unshrinkable flex siblings
+     * (name/badges/trend/stat/delta-chip), which let `.trend`'s
+     * "insufficient history" label push the owner count and delta chip
+     * off-screen at 390px. rowBodyHtml() now nests name+badges inside one
+     * shrinkable `.namecol` and owners+delta-chip inside one protected
+     * `.statcol`, matching the approved mockup — this test asserts that
+     * nesting directly in the rendered markup so a future refactor can't
+     * silently flatten it back out.
+     */
+    public function testRowBodyHtmlNestsNameAndBadgesInNamecolAndOwnersAndDeltaChipInStatcol(): void
+    {
+        $html = LeaderboardController::rowBodyHtml(
+            'Volvo B',
+            '<span class="badge badge--streak">streak</span>',
+            '<span class="sparkline"></span>',
+            '48 210',
+            '<span class="delta-chip delta-chip--positive">+412 · 0,9 %</span>',
+        );
+
+        self::assertStringContainsString('class="namecol"', $html);
+        self::assertStringContainsString('class="statcol"', $html);
+
+        // Badges must be nested inside namecol, after the name — not a flat
+        // sibling of .trend/.stat.
+        $namecolStart = strpos($html, 'class="namecol"');
+        $namecolEnd = strpos($html, '</span>', strpos($html, 'class="badges"'));
+        self::assertNotFalse($namecolStart);
+        self::assertNotFalse($namecolEnd);
+        self::assertGreaterThan($namecolStart, strpos($html, 'Volvo B'));
+        self::assertGreaterThan(strpos($html, 'Volvo B'), strpos($html, 'badge--streak'));
+        self::assertLessThan($namecolEnd, strpos($html, 'badge--streak'));
+
+        // Owners + delta-chip must be nested inside statcol, not flat
+        // siblings that CSS could shrink or clip independently.
+        $statcolStart = strpos($html, 'class="statcol"');
+        self::assertNotFalse($statcolStart);
+        self::assertGreaterThan($statcolStart, strpos($html, '48 210'));
+        self::assertGreaterThan(strpos($html, '48 210'), strpos($html, 'delta-chip--positive'));
+    }
+
+    public function testRowBodyHtmlHandlesFlatBadgeOnlyAndEmptyDeltaChip(): void
+    {
+        // streakBadgeHtml() never actually returns '' (always at least the
+        // "flat" badge) — this is the realistic no-streak/no-spike row.
+        // An empty delta chip (no >1-day-gap-free predecessor) is the
+        // realistic empty case and must still render valid namecol/statcol
+        // markup, not break the structure.
+        $badgesHtml = LeaderboardController::streakBadgeHtml(null);
+        $html = LeaderboardController::rowBodyHtml('Boliden', $badgesHtml, '<span class="sparkline"></span>', '21 870', '');
+
+        self::assertStringContainsString('class="namecol"', $html);
+        self::assertStringContainsString('class="statcol"', $html);
+        self::assertStringContainsString('Boliden', $html);
+        self::assertStringContainsString('21 870', $html);
+        self::assertStringContainsString('badge--nohist', $html);
+    }
 }
