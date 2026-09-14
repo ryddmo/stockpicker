@@ -3,6 +3,7 @@
 /var/
 .phpunit.result.cache
 /.phpunit.cache/
+/.phpstan.cache/
 /stockpicker-loopia*
 .DS_Store
 .idea/

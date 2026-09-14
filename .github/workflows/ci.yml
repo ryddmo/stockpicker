@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: stockpicker
+          MYSQL_USER: stockpicker
+          MYSQL_PASSWORD: stockpicker
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # PHP 8.3 is composer.json's declared floor (require.php: ">=8.3"), not
+      # pinned via config.platform.php -- CI on 8.3 is what actually catches a
+      # dependency or language feature that would silently break it.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_mysql, mbstring, curl, json
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # Mirrors docker-compose.yml's local dev setup: config.php.dist's
+      # defaults already point at this same host/db/user/pass.
+      - name: Set up config.php
+        run: cp config.php.dist config.php
+
+      - name: Wait for MariaDB
+        run: |
+          for i in $(seq 1 30); do
+            mysqladmin ping -h127.0.0.1 -uroot -proot --silent && exit 0
+            sleep 1
+          done
+          echo "MariaDB never became ready" >&2
+          exit 1
+
+      # bin/*.php script tests (PruneScriptTest, ShowRunsScriptTest, ...) hit
+      # the real "stockpicker" schema via config.php, not the StoreTestCase
+      # mirror DDL -- migrate it once up front, same as a fresh local checkout.
+      - name: Run migrations
+        run: vendor/bin/phinx migrate -e development
+
+      - name: Run tests
+        run: composer test
+
+      - name: Run static analysis
+        run: composer run analyse

@@ -11,6 +11,7 @@
         "robmorgan/phinx": "^0.16.12"
     },
     "require-dev": {
+        "phpstan/phpstan": "^2.2",
         "phpunit/phpunit": "^11"
     },
     "autoload": {
@@ -24,7 +25,8 @@
         }
     },
     "scripts": {
-        "test": "phpunit"
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=512M"
     },
     "config": {
         "sort-packages": true,

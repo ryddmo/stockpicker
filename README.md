@@ -33,7 +33,11 @@ composer install
 docker compose up -d                 # MariaDB 10.11 on 127.0.0.1:3306
 cp config.php.dist config.php        # dev defaults already point at the compose DB
 composer test                        # PHPUnit smoke suite
+composer run analyse                 # PHPStan, level 8
 ```
+
+CI (`.github/workflows/ci.yml`) runs both of these on every push/PR against a real
+MariaDB service container.
 
 `config.php.dist`'s `login_password_hash` placeholder is not a valid bcrypt hash, so set a
 real one before logging in locally:

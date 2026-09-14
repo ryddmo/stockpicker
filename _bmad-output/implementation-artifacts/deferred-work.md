@@ -14,8 +14,40 @@
   summary: Decide whether to pin `config.platform.php` in `composer.json` for the 8.3 floor.
   evidence: Without `config.platform.php`, a `composer update` on an 8.5 dev machine can lock dependencies requiring >8.3 and silently break the minimum-supported environment. All currently-locked deps are 8.1/8.2-compatible, so no impact today. The frozen spec comments that `require.php` is "not pinned", so this is a deliberate dependency-policy decision.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-projektskelett-och-gemensam-grund.md`
-  summary: Add static analysis (PHPStan) and CI to enforce the baseline type-safety bar.
+  summary: RESOLVED 2026-09-14 — Add static analysis (PHPStan) and CI to enforce the baseline type-safety bar.
   evidence: The scaffold is written to a high type-safety standard (array-shape annotations, `declare(strict_types=1)`, `@throws`) but nothing enforces it and nothing runs the smoke suite automatically. Reasonable as its own tooling story.
+
+  Added `phpstan.neon` (level 8, over `src/`, `public_html/`, `bin/`) and
+  `.github/workflows/ci.yml` (MariaDB service container matching
+  `docker-compose.yml`, `composer test` + `composer run analyse` on every
+  push/PR). Fixed every finding rather than baselining — no
+  `phpstan-baseline.neon` exists. Most were trivial (`array_values()` around a
+  `fetchAll()`/`array_map()` result to satisfy `list<>`; an explicit
+  `$stmt === false` throw after `PDO::query()`, since `Database::connect()`
+  always sets `ATTR_ERRMODE_EXCEPTION` but PHPStan can't see that invariant
+  across the call boundary; `$argv` given an explicit `??= []` in the three
+  `bin/*.php` scripts, since PHPStan can't assume the CLI SAPI populates it).
+
+  One finding was a real, live bug: `guzzlehttp/guzzle` 8.x (currently locked,
+  `composer.json` allows `^7.9 || ^8.0`) moved `getResponse()` off the base
+  `RequestException` onto a new `ResponseException` subtype — `RequestException`
+  itself no longer has it. `HandlesTransientHttp::requestJson()` (shared by
+  `AvanzaAdapter`, `NordnetAdapter`, `AvanzaUniverseAdapter`) and the two
+  `market-guide/stock/…` 404-detection call sites in `AvanzaAdapter`/
+  `AvanzaUniverseAdapter` all called `$e->getResponse()` on a bare
+  `RequestException`. Any transport-level Guzzle failure that isn't a
+  `ConnectException` — e.g. `CurlFactory`'s generic mid-transfer-reset throws —
+  is exactly a bare `RequestException` with no response, so this was a live
+  fatal-`Error` crash waiting to happen on production (which runs 8.2.0 per
+  `composer.lock`), not merely a caught-and-misclassified error. Fixed by
+  checking `instanceof ResponseException` before calling `getResponse()`,
+  treating a responseless `RequestException` the same as `ConnectException`
+  (`Transient`) rather than falling through to `SchemaMismatch`. Covered by a
+  new test in each of `AvanzaAdapterTest`, `NordnetAdapterTest`,
+  `AvanzaUniverseAdapterTest` (`testThrows(Transient|Resolve…)OnABareRequestExceptionWithNoResponse`).
+
+  This CI job also closes the separate Story 1.11 item below (`EndToEndSmokeTest`
+  runs in no unattended path) — it now gets a real MariaDB on every push/PR.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sourceadapter-port-feltyper-och-id-uppslag.md`
   summary: Widen `instrument.nordnet_instrument_id` (or change which Nordnet id is cached) before anything persists it.
   evidence: Live smoke in Story 1.3 showed `nnx_info.nnx_instrument_id` is a 36-char UUID (`19fa390b-040f-45a9-8fa2-e7fd34e319ab`); Story 1.2's column is `VARCHAR(32)`. Story 1.3 does not persist, so nothing is broken yet. The story that first caches Nordnet ids (Epic 2 `UniverseSync` or an interim resolver) must add a migration to widen the column to `VARCHAR(64)` / `CHAR(36)`, or cache `instrument_info.instrument_id` (integer) instead — which would mean renegotiating Story 1.3's frozen "return `nnx_instrument_id`" decision.
@@ -53,8 +85,15 @@
   summary: Bound the `bin/deploy.sh` SSH preflight probe against a post-connect stall (banner/auth hang), and guard `git rev-parse --short HEAD` against an unborn HEAD under `set -e`.
   evidence: Story 1.10 review (edge-case-hunter, iteration 1). `ssh -o ConnectTimeout=10` bounds only the TCP connect, so a server that accepts the connection then stalls in the SSH banner or auth hangs the deploy with no upper bound; `timeout`/`gtimeout` is not standard on macOS so the fix needs design. The `commit="$(git rev-parse --short HEAD)"` assignment aborts the script silently under `set -e` if the repo has zero commits — unreachable in a real deploy but a cheap `|| echo '(unknown)'` guard closes it.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-11-end-to-end-roktest-mot-seed-listan.md`
-  summary: The Epic 1 end-to-end guard (`EndToEndSmokeTest`) runs in no unattended path — it self-skips without a manually-started docker-compose MariaDB and the repo has no CI.
+  summary: RESOLVED 2026-09-14 — The Epic 1 end-to-end guard (`EndToEndSmokeTest`) runs in no unattended path — it self-skips without a manually-started docker-compose MariaDB and the repo has no CI.
   evidence: Story 1.11 review (verification-gap, iteration 1). `StoreTestCase` calls `markTestSkipped()` when `127.0.0.1:3306` is unreachable and `phunit` does not fail on skips; the frozen spec bars adding CI, and every existing `StoreTestCase` test shares this behaviour. Real but pre-existing — the fix is a CI job (or a documented pre-acceptance step) that runs `docker compose up -d && composer test`. Until then the epic must not be accepted without one manual `docker compose up -d && composer test` run confirming `EndToEndSmokeTest` executed and passed.
+
+  The "frozen spec bars adding CI" was Story 1.11's own scope boundary ("this
+  is a test-only story", don't scope-creep into building CI infra as part of
+  it) — not a standing project-wide ban. `.github/workflows/ci.yml` (added
+  alongside the PHPStan item above) runs a real MariaDB service container on
+  every push/PR, so `EndToEndSmokeTest` — and every other `StoreTestCase` test
+  — now actually executes unattended instead of self-skipping.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
   summary: RESOLVED 2026-09-14 — The interim `bin/resolve-ids.php` / `SourceIdResolver` ISIN search fails to resolve three correct-ISIN large caps on the scraped endpoints — Svenska Handelsbanken A (SE0007100599) and Nordea Bank Abp (FI4000297767) on Avanza, and Epiroc A (SE0011166933) on both Avanza and Nordnet.
   evidence: First Loopia production deploy 2026-09-09 — `resolve-ids` reported 36 resolved / 4 failed, all `NotFound` (not `SchemaMismatch`). ISINs verified current and correct. Avanza returns "no STOCK hit"; Nordnet "no result with isin". The scraped search-by-ISIN strategy is too brittle for reliable universe coverage. Partial fix from Epic 2 Story 2.1 v2 (`AvanzaUniverseAdapter`): the Avanza `orderbookId` comes straight out of the listing, so the Avanza side of this stops depending on ISIN search. The Nordnet id is still resolved by search in Story 2.2 — if Nordnet's ISIN search keeps missing names, hand-cache those `nordnet_instrument_id`s via a direct `instrument` UPDATE, or match on ticker/name.
