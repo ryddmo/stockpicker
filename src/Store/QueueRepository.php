@@ -112,10 +112,10 @@ final class QueueRepository
         );
         $select->execute(['now' => $now, 'run_date' => $runDate]);
 
-        return array_map(
+        return array_values(array_map(
             static fn (array $row): QueueJob => QueueJob::fromRow($row),
             $select->fetchAll(),
-        );
+        ));
     }
 
     public function markDone(int $id): void

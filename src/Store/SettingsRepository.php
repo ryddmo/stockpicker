@@ -30,8 +30,13 @@ final class SettingsRepository
      */
     public function all(): array
     {
+        $stmt = $this->pdo->query('SELECT `key`, `value` FROM settings');
+        if ($stmt === false) {
+            throw new \RuntimeException('query failed: SELECT `key`, `value` FROM settings');
+        }
+
         $out = [];
-        foreach ($this->pdo->query('SELECT `key`, `value` FROM settings') as $row) {
+        foreach ($stmt as $row) {
             $out[(string) $row['key']] = (string) $row['value'];
         }
 

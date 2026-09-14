@@ -36,6 +36,7 @@ try {
     $isin = null;
     $limit = null;
 
+    $argv ??= [];
     foreach (array_slice($argv, 1) as $arg) {
         if (preg_match('/^--isin=(.+)$/', $arg, $m) === 1) {
             $isin = $m[1];

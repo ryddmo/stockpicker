@@ -30,6 +30,7 @@ try {
     $date = null;
     $alarms = false;
 
+    $argv ??= [];
     foreach (array_slice($argv, 1) as $arg) {
         if (preg_match('/^--date=(\d{4}-\d{2}-\d{2})$/', $arg, $m) === 1) {
             $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $m[1]);

@@ -125,10 +125,10 @@ final class RunRepository
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
-        return array_map(
+        return array_values(array_map(
             static fn (array $row): IngestRun => IngestRun::fromRow($row),
             $stmt->fetchAll(),
-        );
+        ));
     }
 
     /**
@@ -152,10 +152,10 @@ final class RunRepository
         }
         $stmt->execute();
 
-        return array_map(
+        return array_values(array_map(
             static fn (array $row): IngestRun => IngestRun::fromRow($row),
             $stmt->fetchAll(),
-        );
+        ));
     }
 
     /** @return list<IngestRun> */
@@ -165,10 +165,10 @@ final class RunRepository
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
-        return array_map(
+        return array_values(array_map(
             static fn (array $row): IngestRun => IngestRun::fromRow($row),
             $stmt->fetchAll(),
-        );
+        ));
     }
 
     /**

@@ -50,7 +50,7 @@ final class DerivedMetricsRepository
         );
         $stmt->execute(['isin' => $isin, 'source' => $source]);
 
-        return $stmt->fetchAll();
+        return array_values($stmt->fetchAll());
     }
 
     /**
@@ -114,7 +114,7 @@ final class DerivedMetricsRepository
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
-        return $stmt->fetchAll();
+        return array_values($stmt->fetchAll());
     }
 
     /**
@@ -165,7 +165,7 @@ final class DerivedMetricsRepository
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
-        return $stmt->fetchAll();
+        return array_values($stmt->fetchAll());
     }
 
     /**
@@ -196,13 +196,13 @@ final class DerivedMetricsRepository
         $stmt->bindValue(':lim', max(0, $days), PDO::PARAM_INT);
         $stmt->execute();
 
-        return array_map(
+        return array_values(array_map(
             static fn (array $row): array => [
                 'as_of_date' => (string) $row['as_of_date'],
                 'number_of_owners' => (int) $row['number_of_owners'],
             ],
             $stmt->fetchAll(),
-        );
+        ));
     }
 
     /**
@@ -294,7 +294,7 @@ final class DerivedMetricsRepository
         }
         $stmt->execute();
 
-        return $stmt->fetchAll();
+        return array_values($stmt->fetchAll());
     }
 
     /**

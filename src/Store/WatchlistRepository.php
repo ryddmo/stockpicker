@@ -22,8 +22,13 @@ final class WatchlistRepository
      */
     public function starredIsins(): array
     {
+        $stmt = $this->pdo->query('SELECT isin FROM watchlist ORDER BY isin');
+        if ($stmt === false) {
+            throw new \RuntimeException('query failed: SELECT isin FROM watchlist ORDER BY isin');
+        }
+
         $out = [];
-        foreach ($this->pdo->query('SELECT isin FROM watchlist ORDER BY isin') as $row) {
+        foreach ($stmt as $row) {
             $out[] = (string) $row['isin'];
         }
 

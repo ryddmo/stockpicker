@@ -26,8 +26,13 @@ final class InstrumentRepository
      */
     public function all(): array
     {
+        $stmt = $this->pdo->query('SELECT * FROM instrument ORDER BY isin');
+        if ($stmt === false) {
+            throw new \RuntimeException('query failed: SELECT * FROM instrument ORDER BY isin');
+        }
+
         $out = [];
-        foreach ($this->pdo->query('SELECT * FROM instrument ORDER BY isin') as $row) {
+        foreach ($stmt as $row) {
             $out[(string) $row['isin']] = Instrument::fromRow($row);
         }
 
@@ -43,8 +48,13 @@ final class InstrumentRepository
      */
     public function allActive(): array
     {
+        $stmt = $this->pdo->query('SELECT * FROM instrument WHERE last_seen IS NULL ORDER BY isin');
+        if ($stmt === false) {
+            throw new \RuntimeException('query failed: SELECT * FROM instrument WHERE last_seen IS NULL ORDER BY isin');
+        }
+
         $out = [];
-        foreach ($this->pdo->query('SELECT * FROM instrument WHERE last_seen IS NULL ORDER BY isin') as $row) {
+        foreach ($stmt as $row) {
             $out[(string) $row['isin']] = Instrument::fromRow($row);
         }
 

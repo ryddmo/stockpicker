@@ -35,6 +35,7 @@ try {
     $ingestRunDays = 180;
     $apply = false;
 
+    $argv ??= [];
     foreach (array_slice($argv, 1) as $arg) {
         if (preg_match('/^--work-queue-days=(\d+)$/', $arg, $m) === 1) {
             $workQueueDays = (int) $m[1];
