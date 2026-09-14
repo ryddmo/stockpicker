@@ -16,3 +16,9 @@ independent of a review pass.
   stocks/investing to help interpret the collected figures (owner-count trends,
   streak/spike/sma) before deciding what to build next — not a specific feature yet,
   more a "how should I think about these numbers" conversation.
+- **Mobile layout bug on Topplista's "Alla" source mode.** On a phone screen the
+  accumulated owner-count number (e.g. "Avanza 534 01…") is clipped by the right edge
+  of the screen instead of wrapping/shrinking — reported with a screenshot showing
+  Investor B / Volvo B / SAAB B rows all cut off mid-number. "Alla" mode is Story 5.4;
+  the mobile row-layout fix was Story 5.1, but that predates "Alla" and evidently
+  doesn't cover this wider combined-source number.
