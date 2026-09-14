@@ -277,6 +277,14 @@ try {
                 break;
             }
 
+            if (!cron_is_allowed_weekday($settings->get('run_weekdays'), $now)) {
+                send_json(200, [
+                    'status' => 'weekend_skipped',
+                    'run_date' => $now->format('Y-m-d'),
+                ]);
+                break;
+            }
+
             $runDate = $now->format('Y-m-d');
             $instruments = new InstrumentRepository($pdo);
             $queue = new QueueRepository($pdo);
@@ -370,6 +378,14 @@ try {
             if ($now < $runAfterTime) {
                 send_json(200, [
                     'status' => 'window_closed',
+                    'run_date' => $now->format('Y-m-d'),
+                ]);
+                break;
+            }
+
+            if (!cron_is_allowed_weekday($settings->get('run_weekdays'), $now)) {
+                send_json(200, [
+                    'status' => 'weekend_skipped',
                     'run_date' => $now->format('Y-m-d'),
                 ]);
                 break;

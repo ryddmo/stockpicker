@@ -39,4 +39,33 @@ final class CronHelpersTest extends TestCase
     {
         self::assertSame($expected, universe_resolve_timebox($raw));
     }
+
+    /**
+     * @return iterable<string, array{0: ?string, 1: string, 2: bool}>
+     */
+    public static function allowedWeekdayCases(): iterable
+    {
+        $monday = '2026-09-14';
+        $saturday = '2026-09-19';
+        $sunday = '2026-09-20';
+
+        yield 'unseeded key, Monday -> allowed (default Mon-Fri)' => [null, $monday, true];
+        yield 'unseeded key, Saturday -> skipped (default Mon-Fri)' => [null, $saturday, false];
+        yield 'unseeded key, Sunday -> skipped (default Mon-Fri)' => [null, $sunday, false];
+        yield 'empty string -> default, Saturday skipped' => ['', $saturday, false];
+        yield 'non-numeric garbage -> default, Saturday skipped' => ['garbage', $saturday, false];
+        yield 'explicit weekdays only, Saturday -> skipped' => ['1,2,3,4,5', $saturday, false];
+        yield 'every day allowed, Saturday -> allowed' => ['1,2,3,4,5,6,7', $saturday, true];
+        yield 'every day allowed, Sunday -> allowed' => ['1,2,3,4,5,6,7', $sunday, true];
+        yield 'only Saturday allowed, Saturday -> allowed' => ['6', $saturday, true];
+        yield 'only Saturday allowed, Monday -> skipped' => ['6', $monday, false];
+        yield 'whitespace around values is trimmed' => [' 1, 2 , 3 ', $monday, true];
+    }
+
+    #[DataProvider('allowedWeekdayCases')]
+    public function testCronIsAllowedWeekday(?string $raw, string $date, bool $expected): void
+    {
+        $now = new \DateTimeImmutable($date, new \DateTimeZone('Europe/Stockholm'));
+        self::assertSame($expected, cron_is_allowed_weekday($raw, $now));
+    }
 }

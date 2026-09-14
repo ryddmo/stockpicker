@@ -66,6 +66,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         $this->seedMatchedUniverse();
         $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
 
         [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
         $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
@@ -101,6 +102,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // unresolvable host -> listUniverse() raises, Enqueue is skipped.
         $this->seedInstrument();
         $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
 
         [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
         $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
@@ -116,6 +118,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
     {
         $this->seedInstrument();
         $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
         $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
         $this->pdo->prepare('INSERT INTO work_queue (isin, run_date) VALUES (?, ?)')
             ->execute(['SE0000000001', $runDate]);
@@ -144,6 +147,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
     {
         $this->seedInstrument();
         $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
         $pastRunDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))
             ->modify('-1 day')
             ->format('Y-m-d');
@@ -177,10 +181,26 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    public function testWorkWeekendSkippedDoesNotRunPipeline(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->setRunWeekdays($this->aDifferentWeekdayThanToday());
+
+        [$status, $body] = $this->endpoint->get('/cron/work?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('weekend_skipped', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
     public function testDeriveWritesOneIngestRunRowAndReturnsCounts(): void
     {
         $this->seedMatchedUniverse();
         $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
 
         [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
         $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
@@ -216,6 +236,20 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    public function testDeriveWeekendSkippedDoesNotWriteARun(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->setRunWeekdays($this->aDifferentWeekdayThanToday());
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('weekend_skipped', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
     public function testRefillClosedWindowDoesNotRunPipeline(): void
     {
         $this->seedInstrument();
@@ -226,6 +260,21 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertSame('window_closed', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
+    public function testRefillWeekendSkippedDoesNotRunPipeline(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->setRunWeekdays($this->aDifferentWeekdayThanToday());
+
+        [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('weekend_skipped', $json['status']);
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
@@ -1332,5 +1381,24 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         }
 
         return $future->format('H:i');
+    }
+
+    private function setRunWeekdays(string $value): void
+    {
+        (new SettingsRepository($this->pdo))->set('run_weekdays', $value);
+    }
+
+    /** Neutralizes the run_weekdays gate so a test isn't flaky depending on which real day it runs. */
+    private function allowAllWeekdays(): void
+    {
+        $this->setRunWeekdays('1,2,3,4,5,6,7');
+    }
+
+    /** A weekday number (1-7) guaranteed to differ from today's, for exercising the weekend-skip gate. */
+    private function aDifferentWeekdayThanToday(): string
+    {
+        $today = (int) (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('N');
+
+        return (string) (($today % 7) + 1);
     }
 }

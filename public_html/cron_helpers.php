@@ -24,3 +24,25 @@ function universe_resolve_timebox(?string $raw): float
 
     return 45.0;
 }
+
+/**
+ * Whether `$now` falls on a day the `run_weekdays` setting allows the
+ * pipeline to run — a comma-separated list of ISO-8601 weekday numbers
+ * (1=Monday .. 7=Sunday). An absent or unparseable value defaults to
+ * Mon-Fri: owner counts don't move over the weekend, so there is no point
+ * hitting Avanza/Nordnet then.
+ */
+function cron_is_allowed_weekday(?string $raw, \DateTimeImmutable $now): bool
+{
+    $days = array_filter(array_map('trim', explode(',', (string) $raw)));
+    $valid = array_values(array_filter(
+        $days,
+        static fn (string $day): bool => ctype_digit($day) && (int) $day >= 1 && (int) $day <= 7,
+    ));
+
+    if ($valid === []) {
+        $valid = ['1', '2', '3', '4', '5'];
+    }
+
+    return in_array($now->format('N'), $valid, true);
+}

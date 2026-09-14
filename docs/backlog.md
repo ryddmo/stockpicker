@@ -16,6 +16,3 @@ independent of a review pass.
   stocks/investing to help interpret the collected figures (owner-count trends,
   streak/spike/sma) before deciding what to build next — not a specific feature yet,
   more a "how should I think about these numbers" conversation.
-- **Skip weekends in the nightly owner-count update.** Only needs to run on weekdays
-  (Mon–Fri); no point hitting Avanza/Nordnet on days the underlying data doesn't move.
-  Touches `Enqueue`/cron scheduling — currently runs every day.
