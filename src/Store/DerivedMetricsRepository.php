@@ -98,7 +98,8 @@ final class DerivedMetricsRepository
             )
             SELECT
                 latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
-                latest.delta_1d, latest.pct_1d, latest.sma_7, latest.sma_30, latest.sma_90,
+                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_90d, latest.pct_365d,
+                latest.sma_7, latest.sma_30, latest.sma_90,
                 latest.up_streak, latest.spike_score,
                 i.name, i.list
             FROM latest
@@ -145,7 +146,8 @@ final class DerivedMetricsRepository
             )
             SELECT
                 latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
-                latest.delta_1d, latest.pct_1d, latest.sma_7, latest.sma_30, latest.sma_90,
+                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_90d, latest.pct_365d,
+                latest.sma_7, latest.sma_30, latest.sma_90,
                 latest.up_streak, latest.spike_score,
                 i.name, i.list
             FROM latest

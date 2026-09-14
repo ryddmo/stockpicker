@@ -166,6 +166,82 @@ final class LeaderboardControllerTest extends TestCase
         self::assertStringContainsString('0 ·', $html);
     }
 
+    // -- spec-5-5: periodPctItemHtml()/periodPctsHtml() — Vecka/90d/År line --
+
+    public function testPeriodPctItemHtmlFormatsAPositivePercentWithSignAndLabel(): void
+    {
+        $html = LeaderboardController::periodPctItemHtml('V', 0.021);
+
+        self::assertStringContainsString('+2,1 %', $html);
+        self::assertStringContainsString('>V<', $html);
+        self::assertStringContainsString('period-pct--positive', $html);
+    }
+
+    public function testPeriodPctItemHtmlFormatsANegativePercentWithMinusSign(): void
+    {
+        $html = LeaderboardController::periodPctItemHtml('90d', -0.021);
+
+        self::assertStringContainsString('-2,1 %', $html);
+        self::assertStringContainsString('period-pct--negative', $html);
+    }
+
+    public function testPeriodPctItemHtmlFormatsZeroAsNeutralNotNoHistory(): void
+    {
+        $html = LeaderboardController::periodPctItemHtml('År', 0.0);
+
+        self::assertStringContainsString('0,0 %', $html);
+        self::assertStringContainsString('period-pct--neutral', $html);
+        self::assertStringNotContainsString('period-pct--nohist', $html);
+    }
+
+    public function testPeriodPctItemHtmlNeverShowsASignedZeroWhenTheRawValueRoundsToZero(): void
+    {
+        // A genuine but tiny change (e.g. -0.00001) must round to a plain,
+        // neutral "0,0 %" -- not a self-contradictory "-0,0 %" styled
+        // negative from the unrounded float's sign.
+        $html = LeaderboardController::periodPctItemHtml('V', -0.00001);
+
+        self::assertStringContainsString('0,0 %', $html);
+        self::assertStringNotContainsString('-0,0 %', $html);
+        self::assertStringNotContainsString('+0,0 %', $html);
+        self::assertStringContainsString('period-pct--neutral', $html);
+        self::assertStringNotContainsString('period-pct--negative', $html);
+    }
+
+    public function testPeriodPctItemHtmlRendersANoHistoryMarkWhenNull(): void
+    {
+        $html = LeaderboardController::periodPctItemHtml('90d', null);
+
+        self::assertStringContainsString('period-pct--nohist', $html);
+        self::assertStringContainsString('–', $html);
+        self::assertStringContainsString('title="Otillräcklig historik"', $html);
+        self::assertStringNotContainsString('period-pct--positive', $html);
+        self::assertStringNotContainsString('period-pct--negative', $html);
+    }
+
+    public function testPeriodPctsHtmlWrapsThreeItemsLabeledVeckaNinetyDAndAr(): void
+    {
+        $html = LeaderboardController::periodPctsHtml(0.01, null, -0.5);
+
+        self::assertStringContainsString('class="period-pcts"', $html);
+        self::assertStringContainsString('>V<', $html);
+        self::assertStringContainsString('>90d<', $html);
+        self::assertStringContainsString('>År<', $html);
+        self::assertStringContainsString('+1,0 %', $html);
+        self::assertStringContainsString('period-pct--nohist', $html);
+        self::assertStringContainsString('-50,0 %', $html);
+        // Ordered V, 90d, År.
+        self::assertLessThan(strpos($html, '>90d<'), strpos($html, '>V<'));
+        self::assertLessThan(strpos($html, '>År<'), strpos($html, '>90d<'));
+    }
+
+    public function testPeriodPctsHtmlAllThreeNullRendersThreeNoHistoryMarks(): void
+    {
+        $html = LeaderboardController::periodPctsHtml(null, null, null);
+
+        self::assertSame(3, substr_count($html, 'period-pct--nohist'));
+    }
+
     // -- Row markup (spec-5-1): namecol/trend/statcol, not flat flex siblings -
 
     /**

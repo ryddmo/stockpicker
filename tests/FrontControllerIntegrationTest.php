@@ -537,6 +537,75 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
     }
 
+    // -- spec-5-5: / period percentages (Vecka/90d/År line) -------------------
+
+    public function testRootShowsAllThreePeriodPercentagesPopulatedWhenGapFreeHistoryCoversAllThreeWindows(): void
+    {
+        $this->seedMatchedUniverse();
+
+        // 366 consecutive gap-free days -> the last row has an exact-match
+        // comparison row for all three windows (7/90/365 calendar days back).
+        $start = new DateTimeImmutable('2025-09-01');
+        for ($i = 0; $i < 366; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
+        }
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+
+        self::assertStringContainsString('class="period-pcts"', $rowHtml);
+        self::assertStringContainsString('>V<', $rowHtml);
+        self::assertStringContainsString('>90d<', $rowHtml);
+        self::assertStringContainsString('>År<', $rowHtml);
+        // 366 gap-free daily rows growing by 5/day -> all three windows have
+        // a real comparison row; none of them should fall back to "–".
+        self::assertSame(0, substr_count($rowHtml, 'period-pct--nohist'), 'all three periods must be populated with this much gap-free history');
+        self::assertStringContainsString('period-pct--positive', $rowHtml);
+    }
+
+    public function testRootShowsInsufficientHistoryMarkForPeriodsWithoutEnoughData(): void
+    {
+        $this->seedMatchedUniverse();
+        // A single stored day -> none of the three periods has a
+        // calendar-days-back comparison row yet.
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+
+        self::assertSame(3, substr_count($rowHtml, 'period-pct--nohist'), 'all three periods must show the insufficient-history mark');
+        self::assertStringContainsString('title="Otillräcklig historik"', $rowHtml);
+        self::assertStringContainsString('–', $rowHtml);
+    }
+
+    public function testRootWithSourceAllaShowsAvanzaDerivedPeriodPercentagesNeverNordnets(): void
+    {
+        $this->seedMatchedUniverse();
+
+        // Avanza: 1000 -> 1070 over 7 days (+7.0%).
+        foreach ([1000, 1010, 1020, 1030, 1040, 1050, 1060, 1070] as $i => $v) {
+            $this->seedOwnerCount('SE0000001001', sprintf('2026-05-%02d', $i + 1), $v, NormalizedRow::SOURCE_AVANZA);
+        }
+        // Nordnet: 500 -> 430 over the same 7 days (-14.0%) -- must never
+        // leak into the rendered period percentages, even though Alla mode
+        // shows Nordnet's owner count alongside Avanza's.
+        foreach ([500, 490, 480, 470, 460, 450, 440, 430] as $i => $v) {
+            $this->seedOwnerCount('SE0000001001', sprintf('2026-05-%02d', $i + 1), $v, NormalizedRow::SOURCE_NORDNET);
+        }
+
+        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+
+        self::assertStringContainsString('+7,0 %', $rowHtml, 'the period percentage must be Avanza\'s (ranking basis), not Nordnet\'s');
+        self::assertStringNotContainsString('-14,0 %', $rowHtml, 'Nordnet\'s own delta must never appear as a period percentage');
+    }
+
     public function testListAndWatchlistAreUnaffectedBySourceAllaFallingBackToTheirOwnAvanzaDefault(): void
     {
         $this->seedMatchedUniverse();
