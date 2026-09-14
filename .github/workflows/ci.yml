@@ -26,7 +26,7 @@ jobs:
           --health-retries=12
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # PHP 8.3 is composer.json's declared floor (require.php: ">=8.3"), not
       # pinned via config.platform.php -- CI on 8.3 is what actually catches a
