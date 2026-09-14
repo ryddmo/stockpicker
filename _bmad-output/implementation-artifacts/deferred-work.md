@@ -56,7 +56,7 @@
   summary: The Epic 1 end-to-end guard (`EndToEndSmokeTest`) runs in no unattended path — it self-skips without a manually-started docker-compose MariaDB and the repo has no CI.
   evidence: Story 1.11 review (verification-gap, iteration 1). `StoreTestCase` calls `markTestSkipped()` when `127.0.0.1:3306` is unreachable and `phunit` does not fail on skips; the frozen spec bars adding CI, and every existing `StoreTestCase` test shares this behaviour. Real but pre-existing — the fix is a CI job (or a documented pre-acceptance step) that runs `docker compose up -d && composer test`. Until then the epic must not be accepted without one manual `docker compose up -d && composer test` run confirming `EndToEndSmokeTest` executed and passed.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
-  summary: The interim `bin/resolve-ids.php` / `SourceIdResolver` ISIN search fails to resolve three correct-ISIN large caps on the scraped endpoints — Svenska Handelsbanken A (SE0007100599) and Nordea Bank Abp (FI4000297767) on Avanza, and Epiroc A (SE0011166933) on both Avanza and Nordnet.
+  summary: RESOLVED 2026-09-14 — The interim `bin/resolve-ids.php` / `SourceIdResolver` ISIN search fails to resolve three correct-ISIN large caps on the scraped endpoints — Svenska Handelsbanken A (SE0007100599) and Nordea Bank Abp (FI4000297767) on Avanza, and Epiroc A (SE0011166933) on both Avanza and Nordnet.
   evidence: First Loopia production deploy 2026-09-09 — `resolve-ids` reported 36 resolved / 4 failed, all `NotFound` (not `SchemaMismatch`). ISINs verified current and correct. Avanza returns "no STOCK hit"; Nordnet "no result with isin". The scraped search-by-ISIN strategy is too brittle for reliable universe coverage. Partial fix from Epic 2 Story 2.1 v2 (`AvanzaUniverseAdapter`): the Avanza `orderbookId` comes straight out of the listing, so the Avanza side of this stops depending on ISIN search. The Nordnet id is still resolved by search in Story 2.2 — if Nordnet's ISIN search keeps missing names, hand-cache those `nordnet_instrument_id`s via a direct `instrument` UPDATE, or match on ticker/name.
 
   RE-INVESTIGATED 2026-09-14, production DB checked directly: Handelsbanken A and
@@ -69,12 +69,14 @@
   data nightly since); the original seed row (`SE0011166933`, both ids still `NULL`)
   is a permanent ghost duplicate — still `last_seen IS NULL` (active), enqueued and
   fetched every night, always `not_found` on both sources (harmless, no alarm, but a
-  second data-less "Epiroc A" would appear in Fullständig lista). There is no
-  Nordnet id to hand-cache here; the fix is to mark `SE0011166933` inactive
-  (`UPDATE instrument SET last_seen = '<today>' WHERE isin = 'SE0011166933'`, the
-  same effect a real delisting has) — deliberately left undone 2026-09-14 (a
-  production data write, and low urgency: harmless duplicate, not a pipeline
-  failure). Do this before trusting "Epiroc A" counts/rankings in the UI.
+  second data-less "Epiroc A" would appear in Fullständig lista). There was no
+  Nordnet id to hand-cache here; the fix applied on production 2026-09-14 was
+  `UPDATE instrument SET last_seen = '2026-09-14' WHERE isin = 'SE0011166933' AND
+  last_seen IS NULL` (the same effect a real delisting has, via
+  `InstrumentRepository::markInactive()`'s exact guard) — verified the row now has
+  `last_seen` set and will no longer be enqueued. The real "Epiroc A"
+  (`SE0015658109`) is unaffected and keeps collecting data as it has since
+  2026-09-11.
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-borsdata-adapter-for-universumlistan.md`
   summary: MOOT 2026-09-10 — Börsdata universe source dropped (paid Pro subscription required, no free tier). The live `bin/show-universe.php` run, the `EQUITY_TYPE_IDS` / market-name pinning, the listing-status filter question, and the `docs/deploy.md` `borsdata.api_key` item all fall away.
   evidence: Course correction 2026-09-10 (see `_bmad-output/planning-artifacts/sprint-change-proposal-2026-09-10.md`). Story 2.1 v2 (`AvanzaUniverseAdapter`) replaces the Börsdata adapter and carries its own live-verification step against the real Avanza listing response — including a delisted/non-tradable spot-check.
