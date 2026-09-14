@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Stockpicker\Adapter;
 
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\ResponseException;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Error\NotFound;
 use Stockpicker\Error\SchemaMismatch;
@@ -161,7 +161,7 @@ final class AvanzaUniverseAdapter implements UniverseLister
             ));
         } catch (SchemaMismatch $e) {
             $previous = $e->getPrevious();
-            if ($previous instanceof RequestException && $previous->getResponse()?->getStatusCode() === 404) {
+            if ($previous instanceof ResponseException && $previous->getResponse()->getStatusCode() === 404) {
                 throw new NotFound(
                     sprintf('avanza market-guide/stock/%s: orderbook not found', $orderbookId),
                     0,
@@ -277,7 +277,7 @@ final class AvanzaUniverseAdapter implements UniverseLister
      * A scalar as-is, otherwise its type name — so a warning about a non-scalar
      * value still records what was actually there instead of a bare null.
      */
-    private static function preview(mixed $value): string|int|float|bool|null
+    private static function preview(mixed $value): string|int|float|bool
     {
         return is_scalar($value) ? $value : get_debug_type($value);
     }

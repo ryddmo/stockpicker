@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stockpicker\Tests\Adapter;
 
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Psr\Log\NullLogger;
@@ -72,6 +73,22 @@ final class NordnetAdapterTest extends AdapterTestCase
         $this->queue([
             new Response(503),
             new ConnectException('timeout', new Request('GET', 'stocklist')),
+        ]);
+
+        $this->expectException(Transient::class);
+        $this->adapter()->resolveId($this->instrument());
+    }
+
+    public function testThrowsTransientOnABareRequestExceptionWithNoResponse(): void
+    {
+        // Guzzle 8's cURL/stream handlers throw a plain RequestException (no
+        // response at all) for transport failures other than a straight
+        // connect failure -- e.g. a mid-transfer reset. Only ResponseException
+        // and its subtypes (ClientException/ServerException/...) carry a
+        // response; requestJson() must not call ->getResponse() on this one.
+        $this->queue([
+            new RequestException('mid-transfer reset', new Request('GET', 'stocklist')),
+            new RequestException('mid-transfer reset', new Request('GET', 'stocklist')),
         ]);
 
         $this->expectException(Transient::class);

@@ -7,6 +7,7 @@ namespace Stockpicker\Adapter;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\ResponseException;
 use Stockpicker\Error\RateLimited;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Error\Transient;
@@ -35,7 +36,17 @@ trait HandlesTransientHttp
         } catch (ConnectException $e) {
             throw new Transient(sprintf('%s %s: connection failed (%s)', $method, $uri, $e->getMessage()), 0, $e);
         } catch (RequestException $e) {
-            $status = $e->getResponse()?->getStatusCode() ?? 0;
+            // Guzzle 8 only puts getResponse() on ResponseException (and its
+            // ClientException/ServerException/etc. subtypes) -- a bare
+            // RequestException (cURL/stream transport failure with no response
+            // at all, e.g. CurlFactory's generic throws) doesn't have one.
+            // Treat it like ConnectException above: no response is a network
+            // failure, not a schema problem.
+            if (!$e instanceof ResponseException) {
+                throw new Transient(sprintf('%s %s: request failed (%s)', $method, $uri, $e->getMessage()), 0, $e);
+            }
+
+            $status = $e->getResponse()->getStatusCode();
 
             if ($status === 429) {
                 throw new RateLimited(sprintf('%s %s: HTTP 429 (rate limited)', $method, $uri), 0, $e);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stockpicker\Tests\Adapter;
 
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Psr\Log\NullLogger;
@@ -86,6 +87,22 @@ final class AvanzaAdapterTest extends AdapterTestCase
         $this->queue([
             new ConnectException('timeout', new Request('POST', 'filtered-search')),
             new Response(503),
+        ]);
+
+        $this->expectException(Transient::class);
+        $this->adapter()->resolveId($this->instrument());
+    }
+
+    public function testThrowsTransientOnABareRequestExceptionWithNoResponse(): void
+    {
+        // Guzzle 8's cURL/stream handlers throw a plain RequestException (no
+        // response at all) for transport failures other than a straight
+        // connect failure -- e.g. a mid-transfer reset. Only ResponseException
+        // and its subtypes (ClientException/ServerException/...) carry a
+        // response; requestJson() must not call ->getResponse() on this one.
+        $this->queue([
+            new RequestException('mid-transfer reset', new Request('POST', 'filtered-search')),
+            new RequestException('mid-transfer reset', new Request('POST', 'filtered-search')),
         ]);
 
         $this->expectException(Transient::class);

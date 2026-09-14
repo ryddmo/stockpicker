@@ -7,7 +7,7 @@ namespace Stockpicker\Adapter;
 use DateTimeImmutable;
 use DateTimeZone;
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\ResponseException;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Error\AdapterError;
 use Stockpicker\Error\NotFound;
@@ -118,7 +118,7 @@ final class AvanzaAdapter implements SourceAdapter
             );
         } catch (SchemaMismatch $e) {
             $previous = $e->getPrevious();
-            if ($previous instanceof RequestException && $previous->getResponse()?->getStatusCode() === 404) {
+            if ($previous instanceof ResponseException && $previous->getResponse()->getStatusCode() === 404) {
                 throw new NotFound(
                     sprintf('avanza: orderbook %s not found (stale id for %s)', $orderBookId, $isinForMessage),
                     0,
