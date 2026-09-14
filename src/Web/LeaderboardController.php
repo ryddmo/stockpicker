@@ -219,6 +219,57 @@ final class LeaderboardController
     }
 
     /**
+     * spec-5-5 — one labeled period percentage ("V"/"90d"/"År" + `pct_7d`/
+     * `pct_90d`/`pct_365d`): `+2,1 %`/`-2,1 %`/`0,0 %`, signed and colored by
+     * sign (same positive/negative/neutral convention as deltaChipHtml()),
+     * or a `period-pct--nohist` "–" mark with a title when `$pct` is `null`
+     * (the view's gap-aware NULL — insufficient/gapped history for that
+     * window, never rendered as a misleading number).
+     */
+    public static function periodPctItemHtml(string $label, ?float $pct): string
+    {
+        $eLabel = self::e($label);
+
+        if ($pct === null) {
+            return sprintf(
+                '<span class="period-pct period-pct--nohist" title="Otillräcklig historik">'
+                    . '<span class="period-pct-label">%s</span><span class="period-pct-value">–</span></span>',
+                $eLabel,
+            );
+        }
+
+        // Sign/color must come from the *rounded* value (review round,
+        // iteration 1): a tiny raw pct like -0.00001 rounds to a displayed
+        // "0,0 %" but a sign/class derived from the unrounded float would
+        // still show it as negative -- a self-contradictory "-0,0 %".
+        $roundedPct = round($pct * 100, 1);
+        $sign = $roundedPct > 0 ? '+' : ($roundedPct < 0 ? '-' : '');
+        $valueText = $sign . number_format(abs($roundedPct), 1, ',', '') . ' %';
+        $cls = $roundedPct > 0 ? 'positive' : ($roundedPct < 0 ? 'negative' : 'neutral');
+
+        return sprintf(
+            '<span class="period-pct period-pct--%s"><span class="period-pct-label">%s</span><span class="period-pct-value">%s</span></span>',
+            $cls,
+            $eLabel,
+            self::e($valueText),
+        );
+    }
+
+    /**
+     * spec-5-5 — the Vecka/90d/År line below a Topplista row. Today's
+     * percentage is intentionally NOT repeated here — it's already shown via
+     * deltaChipHtml()'s output in `.statcol`.
+     */
+    public static function periodPctsHtml(?float $pct7d, ?float $pct90d, ?float $pct365d): string
+    {
+        return '<span class="period-pcts">'
+            . self::periodPctItemHtml('V', $pct7d)
+            . self::periodPctItemHtml('90d', $pct90d)
+            . self::periodPctItemHtml('År', $pct365d)
+            . '</span>';
+    }
+
+    /**
      * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQuality() row
      * @param ?int $nordnetOwners only meaningful when $source is
      *   self::SOURCE_ALL (null otherwise) — Nordnet's latest owner count for
@@ -232,6 +283,9 @@ final class LeaderboardController
         $owners = (int) $row['number_of_owners'];
         $delta = $row['delta_1d'] !== null ? (int) $row['delta_1d'] : null;
         $pct = $row['pct_1d'] !== null ? (float) $row['pct_1d'] : null;
+        $pct7d = $row['pct_7d'] !== null ? (float) $row['pct_7d'] : null;
+        $pct90d = $row['pct_90d'] !== null ? (float) $row['pct_90d'] : null;
+        $pct365d = $row['pct_365d'] !== null ? (float) $row['pct_365d'] : null;
         $upStreak = $row['up_streak'] !== null ? (int) $row['up_streak'] : null;
         $spikeScore = $row['spike_score'] !== null ? (float) $row['spike_score'] : null;
         $muted = self::isSparklineMuted($row['sma_7']);
@@ -247,6 +301,7 @@ final class LeaderboardController
         $badgesHtml = self::streakBadgeHtml($upStreak) . self::spikeBadgeHtml($spikeScore);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
         $deltaChipHtml = self::deltaChipHtml($delta, $pct);
+        $periodPctsHtml = self::periodPctsHtml($pct7d, $pct90d, $pct365d);
 
         $eIsin = self::e($isin);
         $eName = self::e($name);
@@ -266,6 +321,7 @@ final class LeaderboardController
           <a class="row-body" href="/stock/{$eIsin}">
             {$rowBodyHtml}
           </a>
+          {$periodPctsHtml}
         </div>
 
         HTML;
@@ -594,7 +650,7 @@ final class LeaderboardController
         }
         .rows { display: flex; flex-direction: column; gap: 8px; }
         .row {
-          display: flex; align-items: center; gap: 10px;
+          display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
           background: var(--bg-surface); border: 1px solid var(--row-border);
           border-radius: 16px; padding: 10px 12px;
         }
@@ -647,6 +703,20 @@ final class LeaderboardController
         .delta-chip--positive { background: var(--positive-tint); color: var(--positive); }
         .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
         .delta-chip--neutral { background: var(--nohist-bg); color: var(--text-secondary); }
+        .period-pcts {
+          flex: 1 0 100%; display: flex; gap: 14px;
+          padding-top: 8px; margin-top: 2px; border-top: 1px solid var(--row-border);
+        }
+        .period-pct { display: flex; flex-direction: column; gap: 1px; }
+        .period-pct-label {
+          font-size: 9px; font-weight: 800; text-transform: uppercase;
+          letter-spacing: 0.04em; color: var(--text-muted);
+        }
+        .period-pct-value { font-size: 12px; font-weight: 800; }
+        .period-pct--positive .period-pct-value { color: var(--positive); }
+        .period-pct--negative .period-pct-value { color: var(--negative); }
+        .period-pct--neutral .period-pct-value { color: var(--text-secondary); }
+        .period-pct--nohist .period-pct-value { color: var(--text-muted); }
         .empty-state { color: var(--text-secondary); font-size: 13.5px; }
         .full-list-link { text-align: center; margin: 16px 0 4px; }
         .full-list-link a { color: var(--brand); font-size: 13px; font-weight: 700; text-decoration: none; }

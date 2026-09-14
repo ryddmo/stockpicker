@@ -81,7 +81,9 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
         self::assertCount(1, $rows);
 
-        foreach (['delta_1d', 'pct_1d', 'sma_7', 'sma_30', 'sma_90', 'up_streak', 'spike_score'] as $field) {
+        // spec-5-5: pct_7d/pct_90d/pct_365d added to the same NULL-on-
+        // first-row assertion loop as the original seven.
+        foreach (['delta_1d', 'pct_1d', 'pct_7d', 'pct_90d', 'pct_365d', 'sma_7', 'sma_30', 'sma_90', 'up_streak', 'spike_score'] as $field) {
             self::assertNull($rows[0][$field], "{$field} should be NULL on the first-ever row");
         }
     }
@@ -233,6 +235,116 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         // Row-based metrics stay unaffected by the gap.
         self::assertEqualsWithDelta(1030.0, (float) $afterGap['sma_7'], 0.0001, 'sma_7 across the gap');
         self::assertSame(6, (int) $afterGap['up_streak'], 'raw_delta is still positive across the gap');
+    }
+
+    // -- spec-5-5: pct_7d/pct_90d/pct_365d (same gap-aware rule as pct_1d) ---
+
+    public function testPct7dPopulatesWhenExactlySevenCalendarDaysOfHistoryExist(): void
+    {
+        $values = [1000, 1010, 1020, 1030, 1040, 1050, 1060, 1070];
+        foreach ($values as $i => $v) {
+            $this->seed(sprintf('2026-02-%02d', $i + 1), $v);
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        self::assertCount(8, $rows);
+        $last = $rows[7];
+
+        self::assertSame('2026-02-08', $last['as_of_date']);
+        self::assertNotNull($last['pct_7d']);
+        self::assertEqualsWithDelta((1070 - 1000) / 1000, (float) $last['pct_7d'], 0.0000001, 'pct_7d');
+        // Not enough calendar-days-back history yet for the two longer windows.
+        self::assertNull($last['pct_90d']);
+        self::assertNull($last['pct_365d']);
+    }
+
+    public function testPct7dIsNullWhenFewerThanSevenRowsOfHistoryExist(): void
+    {
+        $values = [1000, 1010, 1020];
+        foreach ($values as $i => $v) {
+            $this->seed(sprintf('2026-02-%02d', $i + 1), $v);
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[count($rows) - 1];
+
+        self::assertNull($last['pct_7d'], 'not enough rows for a 7-calendar-day-back comparison yet');
+    }
+
+    public function testGapCrossingTheSevenDayBoundaryNullsPct7dDespiteEnoughRowsExisting(): void
+    {
+        // 6 consecutive days, then a 1-day gap (2026-03-07 skipped), then 2
+        // more days -> 8 total rows, enough for a row 7 positions back to
+        // exist, but that row is 8 calendar days earlier, not 7 -- must
+        // still NULL, mirroring testGapLargerThanOneDayNullsDeltaAndPctButNotRowBasedMetrics's
+        // pct_1d guard, extended to pct_7d (spec's I/O & Edge-Case Matrix:
+        // "a data gap crosses exactly the 7/90/365-day boundary").
+        $values = [1000, 1010, 1020, 1030, 1040, 1050];
+        foreach ($values as $i => $v) {
+            $this->seed(sprintf('2026-03-%02d', $i + 1), $v);
+        }
+        $this->seed('2026-03-08', 1060); // gap: 03-06 -> 03-08
+        $this->seed('2026-03-09', 1070);
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        self::assertCount(8, $rows);
+        $last = $rows[7];
+
+        self::assertSame('2026-03-09', $last['as_of_date']);
+        self::assertNull(
+            $last['pct_7d'],
+            'a data gap crossing the 7-day window must null pct_7d, even though a row 7 positions back exists',
+        );
+    }
+
+    public function testPct7dZeroChangeShowsAsExactlyZeroNotNull(): void
+    {
+        $values = array_fill(0, 8, 1000);
+        foreach ($values as $i => $v) {
+            $this->seed(sprintf('2026-04-%02d', $i + 1), $v);
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[7];
+
+        self::assertNotNull($last['pct_7d'], 'an unchanged owner count is still a valid comparison, not insufficient history');
+        self::assertEqualsWithDelta(0.0, (float) $last['pct_7d'], 0.0000001);
+    }
+
+    public function testPct90dPopulatesWithTheCorrectValueWhenExactlyNinetyCalendarDaysOfHistoryExist(): void
+    {
+        // Review round (iteration 1): pct_7d had a value-correctness test but
+        // pct_90d/pct_365d did not -- only their NULL path was ever checked,
+        // so a copy-paste slip in the hand-duplicated CASE WHEN block (e.g.
+        // reusing prev_owners_7 while leaving the DATEDIFF(...) = 90 guard
+        // intact) would ship a wrong number with the full suite green.
+        $start = new DateTimeImmutable('2026-01-01');
+        for ($i = 0; $i <= 90; ++$i) {
+            $this->seed($start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 2);
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        self::assertCount(91, $rows);
+        $last = $rows[90];
+
+        self::assertNotNull($last['pct_90d']);
+        self::assertEqualsWithDelta((1180 - 1000) / 1000, (float) $last['pct_90d'], 0.0000001, 'pct_90d');
+        self::assertNull($last['pct_365d'], 'not enough calendar-days-back history yet for the 365-day window');
+    }
+
+    public function testPct365dPopulatesWithTheCorrectValueWhenExactlyThreeHundredSixtyFiveCalendarDaysOfHistoryExist(): void
+    {
+        $start = new DateTimeImmutable('2025-01-01');
+        for ($i = 0; $i <= 365; ++$i) {
+            $this->seed($start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i);
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        self::assertCount(366, $rows);
+        $last = $rows[365];
+
+        self::assertNotNull($last['pct_365d']);
+        self::assertEqualsWithDelta((1365 - 1000) / 1000, (float) $last['pct_365d'], 0.0000001, 'pct_365d');
     }
 
     public function testPriorCountOfZeroNullsPctButStillComputesDelta(): void

@@ -149,8 +149,11 @@ abstract class StoreTestCase extends TestCase
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
-        // Story 3.1 — mirrors db/migrations/20260911170000_create_owner_count_metrics_view.php.
-        // Keep this in step with the migration; there is no automated check.
+        // Story 3.1 — mirrors db/migrations/20260911170000_create_owner_count_metrics_view.php,
+        // extended by spec-5-5 to mirror
+        // db/migrations/20260914000000_extend_owner_count_metrics_view_multi_period_pct.php
+        // (pct_7d/pct_90d/pct_365d). Keep this in step with the migrations;
+        // there is no automated check.
         $this->pdo->exec(
             <<<'SQL'
             CREATE VIEW owner_count_metrics AS
@@ -162,6 +165,12 @@ abstract class StoreTestCase extends TestCase
                     number_of_owners,
                     LAG(number_of_owners) OVER w AS prev_owners,
                     LAG(as_of_date) OVER w AS prev_date,
+                    LAG(number_of_owners, 7) OVER w AS prev_owners_7,
+                    LAG(as_of_date, 7) OVER w AS prev_date_7,
+                    LAG(number_of_owners, 90) OVER w AS prev_owners_90,
+                    LAG(as_of_date, 90) OVER w AS prev_date_90,
+                    LAG(number_of_owners, 365) OVER w AS prev_owners_365,
+                    LAG(as_of_date, 365) OVER w AS prev_date_365,
                     ROW_NUMBER() OVER w AS rn
                 FROM owner_count_daily
                 WINDOW w AS (PARTITION BY isin, source ORDER BY as_of_date)
@@ -175,6 +184,12 @@ abstract class StoreTestCase extends TestCase
                     rn,
                     prev_owners,
                     prev_date,
+                    prev_owners_7,
+                    prev_date_7,
+                    prev_owners_90,
+                    prev_date_90,
+                    prev_owners_365,
+                    prev_date_365,
                     (CAST(number_of_owners AS SIGNED) - CAST(prev_owners AS SIGNED)) AS raw_delta
                 FROM base
             ),
@@ -191,7 +206,16 @@ abstract class StoreTestCase extends TestCase
                     END AS delta_1d,
                     CASE WHEN prev_date IS NOT NULL AND DATEDIFF(as_of_date, prev_date) = 1
                          THEN CAST(raw_delta AS DECIMAL(20,10)) / NULLIF(CAST(prev_owners AS DECIMAL(20,10)), 0)
-                    END AS pct_1d
+                    END AS pct_1d,
+                    CASE WHEN prev_date_7 IS NOT NULL AND DATEDIFF(as_of_date, prev_date_7) = 7
+                         THEN CAST(CAST(number_of_owners AS SIGNED) - CAST(prev_owners_7 AS SIGNED) AS DECIMAL(20,10)) / NULLIF(CAST(prev_owners_7 AS DECIMAL(20,10)), 0)
+                    END AS pct_7d,
+                    CASE WHEN prev_date_90 IS NOT NULL AND DATEDIFF(as_of_date, prev_date_90) = 90
+                         THEN CAST(CAST(number_of_owners AS SIGNED) - CAST(prev_owners_90 AS SIGNED) AS DECIMAL(20,10)) / NULLIF(CAST(prev_owners_90 AS DECIMAL(20,10)), 0)
+                    END AS pct_90d,
+                    CASE WHEN prev_date_365 IS NOT NULL AND DATEDIFF(as_of_date, prev_date_365) = 365
+                         THEN CAST(CAST(number_of_owners AS SIGNED) - CAST(prev_owners_365 AS SIGNED) AS DECIMAL(20,10)) / NULLIF(CAST(prev_owners_365 AS DECIMAL(20,10)), 0)
+                    END AS pct_365d
                 FROM deltas
             ),
             streaks AS (
@@ -204,6 +228,9 @@ abstract class StoreTestCase extends TestCase
                     raw_delta,
                     delta_1d,
                     pct_1d,
+                    pct_7d,
+                    pct_90d,
+                    pct_365d,
                     SUM(CASE WHEN raw_delta > 0 THEN 0 ELSE 1 END)
                         OVER (PARTITION BY isin, source ORDER BY as_of_date) AS grp
                 FROM gapped
@@ -218,6 +245,9 @@ abstract class StoreTestCase extends TestCase
                     raw_delta,
                     delta_1d,
                     pct_1d,
+                    pct_7d,
+                    pct_90d,
+                    pct_365d,
                     COUNT(*) OVER (PARTITION BY isin, source, grp ORDER BY as_of_date) AS grp_count
                 FROM streaks
             ),
@@ -231,6 +261,9 @@ abstract class StoreTestCase extends TestCase
                     raw_delta,
                     delta_1d,
                     pct_1d,
+                    pct_7d,
+                    pct_90d,
+                    pct_365d,
                     grp_count,
                     AVG(number_of_owners) OVER w7 AS sma_7_raw,
                     AVG(number_of_owners) OVER w30 AS sma_30_raw,
@@ -249,6 +282,9 @@ abstract class StoreTestCase extends TestCase
                 number_of_owners,
                 delta_1d,
                 pct_1d,
+                pct_7d,
+                pct_90d,
+                pct_365d,
                 CASE WHEN rn >= 7  THEN sma_7_raw  END AS sma_7,
                 CASE WHEN rn >= 30 THEN sma_30_raw END AS sma_30,
                 CASE WHEN rn >= 90 THEN sma_90_raw END AS sma_90,
