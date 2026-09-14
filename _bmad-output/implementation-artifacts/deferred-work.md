@@ -58,6 +58,23 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
   summary: The interim `bin/resolve-ids.php` / `SourceIdResolver` ISIN search fails to resolve three correct-ISIN large caps on the scraped endpoints — Svenska Handelsbanken A (SE0007100599) and Nordea Bank Abp (FI4000297767) on Avanza, and Epiroc A (SE0011166933) on both Avanza and Nordnet.
   evidence: First Loopia production deploy 2026-09-09 — `resolve-ids` reported 36 resolved / 4 failed, all `NotFound` (not `SchemaMismatch`). ISINs verified current and correct. Avanza returns "no STOCK hit"; Nordnet "no result with isin". The scraped search-by-ISIN strategy is too brittle for reliable universe coverage. Partial fix from Epic 2 Story 2.1 v2 (`AvanzaUniverseAdapter`): the Avanza `orderbookId` comes straight out of the listing, so the Avanza side of this stops depending on ISIN search. The Nordnet id is still resolved by search in Story 2.2 — if Nordnet's ISIN search keeps missing names, hand-cache those `nordnet_instrument_id`s via a direct `instrument` UPDATE, or match on ticker/name.
+
+  RE-INVESTIGATED 2026-09-14, production DB checked directly: Handelsbanken A and
+  Nordea are already fully resolved (`UniverseSync`'s nightly retry healed both — no
+  action needed). Epiroc A is a different, more specific problem: `SE0011166933`
+  (the seed list's ISIN for it) is simply **wrong** — Avanza's live
+  `market-guide/stock/861430` reports `SE0015658109` for the real "Epiroc A".
+  `UniverseSync` correctly resolved the true ISIN on 2026-09-11 and inserted a
+  *second*, fully-populated row (`SE0015658109`, both source ids cached, collecting
+  data nightly since); the original seed row (`SE0011166933`, both ids still `NULL`)
+  is a permanent ghost duplicate — still `last_seen IS NULL` (active), enqueued and
+  fetched every night, always `not_found` on both sources (harmless, no alarm, but a
+  second data-less "Epiroc A" would appear in Fullständig lista). There is no
+  Nordnet id to hand-cache here; the fix is to mark `SE0011166933` inactive
+  (`UPDATE instrument SET last_seen = '<today>' WHERE isin = 'SE0011166933'`, the
+  same effect a real delisting has) — deliberately left undone 2026-09-14 (a
+  production data write, and low urgency: harmless duplicate, not a pipeline
+  failure). Do this before trusting "Epiroc A" counts/rankings in the UI.
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-borsdata-adapter-for-universumlistan.md`
   summary: MOOT 2026-09-10 — Börsdata universe source dropped (paid Pro subscription required, no free tier). The live `bin/show-universe.php` run, the `EQUITY_TYPE_IDS` / market-name pinning, the listing-status filter question, and the `docs/deploy.md` `borsdata.api_key` item all fall away.
   evidence: Course correction 2026-09-10 (see `_bmad-output/planning-artifacts/sprint-change-proposal-2026-09-10.md`). Story 2.1 v2 (`AvanzaUniverseAdapter`) replaces the Börsdata adapter and carries its own live-verification step against the real Avanza listing response — including a delisted/non-tradable spot-check.
