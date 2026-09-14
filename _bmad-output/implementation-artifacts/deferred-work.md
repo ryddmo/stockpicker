@@ -11,8 +11,18 @@
   summary: Reject the placeholder `cron_token` value (`change-me`) so a misconfigured deploy fails closed.
   evidence: `Config::cronToken()` rejects only an empty string. No `/cron/*` endpoints exist yet; Story 1.9 (cron endpoints + token check) should reject the known default or warn loudly.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-projektskelett-och-gemensam-grund.md`
-  summary: Decide whether to pin `config.platform.php` in `composer.json` for the 8.3 floor.
+  summary: RESOLVED 2026-09-14 — Decide whether to pin `config.platform.php` in `composer.json` for the 8.3 floor.
   evidence: Without `config.platform.php`, a `composer update` on an 8.5 dev machine can lock dependencies requiring >8.3 and silently break the minimum-supported environment. All currently-locked deps are 8.1/8.2-compatible, so no impact today. The frozen spec comments that `require.php` is "not pinned", so this is a deliberate dependency-policy decision.
+
+  This stopped being theoretical the moment CI (added same day) ran on real
+  PHP 8.3: `composer require --dev phpstan/phpstan` on this local 8.5 machine
+  had locked `symfony/config` v8.1.5 (a `robmorgan/phinx` transitive dep),
+  which requires PHP >=8.4.1 -- `composer install` failed outright in CI on
+  8.3. Added `config.platform.php: 8.3.0` and re-ran `composer update`, which
+  downgraded `symfony/config`/`console`/`filesystem`/`string` to their 7.4.x
+  releases (8.3-compatible) and dropped the now-unneeded
+  `symfony/polyfill-php85`. `composer test` and `composer run analyse` still
+  pass locally against the downgraded lock.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-1-projektskelett-och-gemensam-grund.md`
   summary: RESOLVED 2026-09-14 — Add static analysis (PHPStan) and CI to enforce the baseline type-safety bar.
   evidence: The scaffold is written to a high type-safety standard (array-shape annotations, `declare(strict_types=1)`, `@throws`) but nothing enforces it and nothing runs the smoke suite automatically. Reasonable as its own tooling story.
