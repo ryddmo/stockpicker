@@ -34,6 +34,13 @@ Run inspection is available over SSH with `php bin/show-runs.php`; use
 `php bin/show-runs.php --alarms` to list recent schema-mismatch alarms. Configure
 the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
 
+`work_queue` (`done`/`failed` rows) and `ingest_run` grow forever otherwise —
+`php bin/prune.php` deletes rows older than `--work-queue-days` (default 30) /
+`--ingest-run-days` (default 180). It is a **dry run by default**; add `--apply`
+to actually delete. Not wired into any cron endpoint — run it manually over SSH
+occasionally. `pending`/`claimed` `work_queue` rows and `owner_count_daily` are
+never touched.
+
 ---
 
 ## Prerequisites

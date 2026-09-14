@@ -186,4 +186,56 @@ final class QueueRepositoryTest extends StoreTestCase
         self::assertSame(['pending' => 2], $repo->countByStatus('2026-09-10'));
         self::assertSame([], $repo->countByStatus('2099-01-01'));
     }
+
+    public function testCountPrunableCountsOnlyDoneOrFailedRowsStrictlyBeforeTheCutoff(): void
+    {
+        $repo = $this->repo(5);
+        $repo->enqueue($this->isins[0], '2026-08-01');
+        $repo->enqueue($this->isins[1], '2026-08-01');
+        $repo->enqueue($this->isins[2], '2026-08-01');
+        $repo->enqueue($this->isins[3], '2026-08-01');
+        $repo->enqueue($this->isins[4], '2026-09-01');
+
+        $jobs = $repo->claimBatch('2026-08-01', 4, $this->utc('2026-08-01T18:00:00Z'));
+        $repo->markDone($jobs[0]->id);
+        $repo->markFailed($jobs[1]->id);
+        // jobs[2] stays claimed, jobs[3] goes back to pending -- neither ever counts.
+        $repo->reopen($jobs[3]->id);
+
+        $boundaryJob = $repo->claimBatch('2026-09-01', 1, $this->utc('2026-09-01T18:00:00Z'));
+        $repo->markDone($boundaryJob[0]->id);
+
+        self::assertSame(2, $repo->countPrunable('2026-09-01'));
+        self::assertSame(3, $repo->countPrunable('2026-09-02'));
+        self::assertSame(0, $repo->countPrunable('2026-08-01'));
+    }
+
+    public function testPruneDeletesOnlyDoneOrFailedRowsBeforeTheCutoffAndReturnsHowMany(): void
+    {
+        $repo = $this->repo(4);
+        $repo->enqueue($this->isins[0], '2026-08-01');
+        $repo->enqueue($this->isins[1], '2026-08-01');
+        $repo->enqueue($this->isins[2], '2026-08-01');
+        $repo->enqueue($this->isins[3], '2026-09-01');
+
+        $jobs = $repo->claimBatch('2026-08-01', 3, $this->utc('2026-08-01T18:00:00Z'));
+        $repo->markDone($jobs[0]->id);
+        $repo->markFailed($jobs[1]->id);
+        // jobs[2] stays claimed -- must survive prune regardless of age.
+
+        $boundaryJob = $repo->claimBatch('2026-09-01', 1, $this->utc('2026-09-01T18:00:00Z'));
+        $repo->markDone($boundaryJob[0]->id);
+
+        self::assertSame(2, $repo->prune('2026-09-01'));
+        self::assertSame(0, $repo->prune('2026-09-01'), 'idempotent -- nothing left to prune');
+
+        $remaining = $this->pdo->query('SELECT status, run_date FROM work_queue ORDER BY id')->fetchAll(\PDO::FETCH_ASSOC);
+        self::assertSame(
+            [
+                ['status' => 'claimed', 'run_date' => '2026-08-01'],
+                ['status' => 'done', 'run_date' => '2026-09-01'],
+            ],
+            $remaining,
+        );
+    }
 }

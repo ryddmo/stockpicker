@@ -156,6 +156,39 @@ final class QueueRepository
         return $out;
     }
 
+    /**
+     * Count of `done`/`failed` rows for a run date strictly before
+     * `$beforeRunDate` — the rows `prune()` would delete. Never counts
+     * `pending`/`claimed` rows regardless of age.
+     */
+    public function countPrunable(string $beforeRunDate): int
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT COUNT(*) FROM `work_queue`
+              WHERE `status` IN ('done', 'failed') AND `run_date` < :before"
+        );
+        $stmt->execute(['before' => $beforeRunDate]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Delete `done`/`failed` rows for a run date strictly before
+     * `$beforeRunDate`, bounding the table's growth on shared hosting. Never
+     * touches `pending`/`claimed` rows regardless of age. Returns the number
+     * of rows deleted.
+     */
+    public function prune(string $beforeRunDate): int
+    {
+        $stmt = $this->pdo->prepare(
+            "DELETE FROM `work_queue`
+              WHERE `status` IN ('done', 'failed') AND `run_date` < :before"
+        );
+        $stmt->execute(['before' => $beforeRunDate]);
+
+        return $stmt->rowCount();
+    }
+
     private function transition(int $id, string $to, ?string $claimedAt): void
     {
         $set = '`status` = :to';

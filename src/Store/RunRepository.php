@@ -171,6 +171,33 @@ final class RunRepository
         );
     }
 
+    /**
+     * Count of rows for a run date strictly before `$beforeRunDate` — the
+     * rows `prune()` would delete.
+     */
+    public function countPrunable(string $beforeRunDate): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM `ingest_run` WHERE `run_date` < :before');
+        $stmt->execute(['before' => $beforeRunDate]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Delete rows for a run date strictly before `$beforeRunDate`, bounding
+     * the table's growth on shared hosting. Any `owner_count_daily.ingest_run_id`
+     * pointing at a deleted run is set to NULL by the FK (ON DELETE SET NULL)
+     * — the owner-count history itself is untouched, only its provenance link
+     * to that old run. Returns the number of rows deleted.
+     */
+    public function prune(string $beforeRunDate): int
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM `ingest_run` WHERE `run_date` < :before');
+        $stmt->execute(['before' => $beforeRunDate]);
+
+        return $stmt->rowCount();
+    }
+
     private function utc(DateTimeImmutable $t): string
     {
         return $t->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');

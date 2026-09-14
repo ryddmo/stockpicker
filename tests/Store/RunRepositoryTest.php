@@ -6,7 +6,9 @@ namespace Stockpicker\Tests\Store;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\IngestRun;
+use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\RunRepository;
 
 final class RunRepositoryTest extends StoreTestCase
@@ -152,5 +154,54 @@ final class RunRepositoryTest extends StoreTestCase
 
         self::assertCount(1, $repo->forRunDate('2026-09-10'));
         self::assertSame([], $repo->forRunDate('2099-01-01'));
+    }
+
+    public function testCountPrunableCountsRowsStrictlyBeforeTheCutoff(): void
+    {
+        $repo = new RunRepository($this->pdo);
+        $repo->record('fetch', '2026-08-01', $this->utc('2026-08-01T18:00:00Z'), $this->utc('2026-08-01T18:00:01Z'), 1, 1, 0);
+        $repo->record('fetch', '2026-08-15', $this->utc('2026-08-15T18:00:00Z'), $this->utc('2026-08-15T18:00:01Z'), 1, 1, 0);
+        $repo->record('fetch', '2026-09-01', $this->utc('2026-09-01T18:00:00Z'), $this->utc('2026-09-01T18:00:01Z'), 1, 1, 0);
+
+        self::assertSame(2, $repo->countPrunable('2026-09-01'));
+        self::assertSame(3, $repo->countPrunable('2026-09-02'));
+        self::assertSame(0, $repo->countPrunable('2026-08-01'));
+    }
+
+    public function testPruneDeletesRowsStrictlyBeforeTheCutoffAndReturnsHowMany(): void
+    {
+        $repo = new RunRepository($this->pdo);
+        $repo->record('fetch', '2026-08-01', $this->utc('2026-08-01T18:00:00Z'), $this->utc('2026-08-01T18:00:01Z'), 1, 1, 0);
+        $repo->record('fetch', '2026-08-15', $this->utc('2026-08-15T18:00:00Z'), $this->utc('2026-08-15T18:00:01Z'), 1, 1, 0);
+        $repo->record('fetch', '2026-09-01', $this->utc('2026-09-01T18:00:00Z'), $this->utc('2026-09-01T18:00:01Z'), 1, 1, 0);
+
+        self::assertSame(2, $repo->prune('2026-09-01'));
+        self::assertSame(0, $repo->prune('2026-09-01'), 'idempotent -- nothing left to prune');
+
+        $remaining = $repo->recent();
+        self::assertCount(1, $remaining);
+        self::assertSame('2026-09-01', $remaining[0]->runDate);
+    }
+
+    public function testPruneNullsOutOwnerCountDailyProvenanceRatherThanFailing(): void
+    {
+        $this->pdo->exec(
+            "INSERT INTO instrument (isin, name, list, first_seen)
+             VALUES ('SE0000000001', 'Test', 'LC', '2026-01-01')"
+        );
+        $repo = new RunRepository($this->pdo);
+        $runId = $repo->record('fetch', '2026-08-01', $this->utc('2026-08-01T18:00:00Z'), $this->utc('2026-08-01T18:00:01Z'), 1, 1, 0);
+
+        $owners = new OwnerCountRepository($this->pdo);
+        $owners->upsert(
+            new NormalizedRow('SE0000000001', NormalizedRow::SOURCE_AVANZA, 100, 10.0, 1000.0, null, $this->utc('2026-08-01T18:00:00Z')),
+            '2026-08-01',
+            $runId,
+        );
+
+        self::assertSame(1, $repo->prune('2026-09-01'));
+
+        $ingestRunId = $this->pdo->query('SELECT ingest_run_id FROM owner_count_daily')->fetchColumn();
+        self::assertNull($ingestRunId);
     }
 }
