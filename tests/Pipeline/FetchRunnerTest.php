@@ -607,6 +607,27 @@ final class FetchRunnerTest extends StoreTestCase
         self::assertSame(1, (new QueueRepository($this->pdo))->countByStatus(self::RUN_DATE)['pending']);
     }
 
+    public function testBatchSizeSettingIsClampedToTheHardCeiling(): void
+    {
+        (new SettingsRepository($this->pdo))->set('batch_size', '999999');
+        $isins = ['SE0000000001', 'SE0000000002', 'SE0000000003'];
+        $this->seedInstruments(array_map(static fn (string $i): array => [$i, 'a', 'nx'], $isins));
+        $this->enqueueAll();
+        $ts = new DateTimeImmutable('2026-09-09T12:00:00Z', new DateTimeZone('UTC'));
+        foreach ($isins as $isin) {
+            $this->avanza->fetchResponses[] = $this->row('avanza', $isin, 1);
+            $this->nordnet->fetchResponses[] = $this->row('nordnet', $isin, 2, $ts);
+        }
+
+        $result = $this->runner()->run(self::RUN_DATE, 60.0);
+
+        // A wildly oversized batch_size never claims more than the queue holds;
+        // the ceiling only guards claimBatch's own SELECT/array size, not this.
+        self::assertSame(3, $result->claimed);
+        self::assertSame(3, $result->done);
+        self::assertTrue($this->logHandler->hasWarningThatContains('batch_size setting exceeds the hard ceiling'));
+    }
+
     public function testRateSettingChangesTheSameSourceSpacing(): void
     {
         (new SettingsRepository($this->pdo))->set('rate.avanza', '1'); // 1/s -> 1 s spacing

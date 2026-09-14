@@ -73,6 +73,15 @@ final class FetchRunner
     private const RATE_LIMIT_BACKOFF_FACTOR = 4.0;
     private const RATE_LIMIT_RATE_FLOOR_DIVISOR = 8.0;
 
+    /**
+     * Hard ceiling on `batch_size` regardless of the settings value: `claimBatch`
+     * loads that many `QueueJob` rows into memory at once, and this bounds a
+     * mis-set value (e.g. an extra zero) from voiding NFR8's 256 MB margin. Well
+     * above the full active universe (~740 today), so it never limits a normal
+     * slice — only a misconfiguration.
+     */
+    private const MAX_BATCH_SIZE = 1000;
+
     /** @var callable(float): void */
     private $sleep;
 
@@ -144,6 +153,13 @@ final class FetchRunner
         $start = microtime(true);
 
         $batchSize = $this->intSetting('batch_size');
+        if ($batchSize > self::MAX_BATCH_SIZE) {
+            $this->logger->warning('fetchrunner: batch_size setting exceeds the hard ceiling, clamping', [
+                'value' => $batchSize,
+                'ceiling' => self::MAX_BATCH_SIZE,
+            ]);
+            $batchSize = self::MAX_BATCH_SIZE;
+        }
         $staleAfter = $this->intSetting('queue.stale_after');
         $rate = [
             'avanza' => $this->floatSetting('rate.avanza'),
