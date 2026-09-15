@@ -313,7 +313,7 @@ final class WatchlistController
           --negative: #F04438;
           --negative-tint: #FEECEB;
           --spike-bg: #FEF0C7;
-          --spike-text: #B54708;
+          --spike-text: #7C5800;
           --star-filled: #F5A623;
           --star-empty: #D0D5DD;
           --nohist-bg: #F2F4F7;
