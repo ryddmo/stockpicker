@@ -36,9 +36,32 @@ independent of a review pass.
 
 ## 2026-09-15
 
-- **"Stadig tillväxt" (steady growth) filter returns an empty list for Avanza, but
-  works for Nordnet.** On Fullständig lista, switching source to Avanza with "Stadig
-  tillväxt" selected shows "Inga resultat för dessa filter." — Nordnet shows real rows
-  under the same filter. Reported with two screenshots (Avanza empty vs. Nordnet
-  populated). Not yet investigated — likely something specific to how the steady-growth
-  qualifier query filters/joins per source in `DerivedMetricsRepository` or the view.
+- **INVESTIGATED 2026-09-15, not a bug, left as-is — "Stadig tillväxt" (steady
+  growth) filter returns an empty list for Avanza, but works for Nordnet.** On
+  Fullständig lista, switching source to Avanza with "Stadig tillväxt" selected shows
+  "Inga resultat för dessa filter." — Nordnet shows real rows under the same filter.
+  Reported with two screenshots (Avanza empty vs. Nordnet populated).
+
+  Root cause: `owner_count_metrics`'s `up_streak` is computed from `raw_delta`, which
+  compares each row to the immediately preceding *row* (`LAG(...) OVER (PARTITION BY
+  isin, source ORDER BY as_of_date)`) with no check that the two rows are actually 1
+  calendar day apart — unlike `delta_1d`/`pct_1d`, which correctly null out across a
+  gap. This is a **deliberate, human-confirmed frozen-spec decision**
+  (spec-3-1-deriver-berakna-harledda-matt.md, 2026-09-11, reconfirmed on review): "up_streak"
+  stays row-based specifically so it "tolerates the occasional missing day" — locked in
+  by a passing test (`DerivedMetricsRepositoryTest::testGapLargerThanOneDayNullsDeltaAndPctButNotRowBasedMetrics`)
+  that asserts a streak survives a 2-day gap.
+
+  On production 2026-09-14/15 this backfired: Avanza has zero gaps (fetched every day,
+  including weekends) and its real owner counts happened to be flat Sat/Sun/Mon —
+  since there's no gap to hop over, that flat stretch *correctly* resets every single
+  active instrument's streak to 0 (741/741 had `up_streak = 0`). Nordnet has actual
+  missing rows over the same weekend, so the gap-tolerant design hops right over them
+  and keeps counting whatever streak existed before the gap — the source with *more
+  complete* data is penalized relative to the one with real gaps in it.
+
+  Presented the tradeoff to Stefan (make `up_streak` gap-aware like `delta_1d`, which
+  would very likely also shrink Nordnet's currently-inflated results) vs. leaving it —
+  **decision: leave the frozen design as-is**, this is a temporary side-effect of a
+  real flat stretch in Avanza's data that resolves itself once the count moves again,
+  not a defect to fix.
