@@ -149,6 +149,35 @@ final class Config
     }
 
     /**
+     * SMTP credentials + recipient for the daily top-10 digest (spec-5-6,
+     * TopTenDigest). Host/port are not part of this — they are hardcoded
+     * class constants on TopTenDigest (not secrets), same discipline as
+     * DerivedMetricsRepository::SPIKE_THRESHOLD.
+     *
+     * @return array{username: string, password: string, recipient: string}
+     */
+    public function digest(): array
+    {
+        $digest = $this->data['digest'] ?? null;
+
+        if (!\is_array($digest)) {
+            throw new RuntimeException('config.php is missing the "digest" section');
+        }
+
+        foreach (['username', 'password', 'recipient'] as $key) {
+            if (!isset($digest[$key]) || !\is_string($digest[$key]) || $digest[$key] === '') {
+                throw new RuntimeException(sprintf('config.php "digest" section is missing a non-empty "%s" key', $key));
+            }
+        }
+
+        return [
+            'username' => $digest['username'],
+            'password' => $digest['password'],
+            'recipient' => $digest['recipient'],
+        ];
+    }
+
+    /**
      * Absolute path to the log file. A relative log_path is resolved against
      * the project root; the default is var/log/stockpicker.log.
      */

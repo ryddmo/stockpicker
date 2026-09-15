@@ -18,6 +18,7 @@ use Stockpicker\Error\AdapterError;
 use Stockpicker\Logging;
 use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
+use Stockpicker\Pipeline\TopTenDigest;
 use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
 use Stockpicker\Store\DerivedMetricsRepository;
@@ -325,7 +326,8 @@ try {
         case '/cron/derive':
             // View-based design (Story 3.1): owner_count_metrics is a plain SQL view, so
             // there is nothing to materialize here. This deliberately never touches
-            // Deriver/DerivedMetricsRepository — it only logs that the stage ran.
+            // Deriver — it only logs that the stage ran, then (spec-5-6) runs the
+            // isolated top-10 digest step below, which only *reads* DerivedMetricsRepository.
             $gate = cron_gate($services['config']);
             if (isset($gate['response'])) {
                 send_json($gate['response']['status'], $gate['response']['body']);
@@ -337,6 +339,44 @@ try {
             $now = $gate['now'];
             $count = count((new InstrumentRepository($pdo))->allActive());
             (new RunRepository($pdo))->record('derive', $runDate, $now, $now, $count, $count, 0);
+
+            // spec-5-6 — isolated digest step, strictly after derive's own
+            // recorded work. Any failure (bad/missing config, SMTP down,
+            // whatever) is caught and logged here and must never affect the
+            // response below or the ingest_run row just written above.
+            //
+            // STOCKPICKER_DIGEST_SPY_FILE is a test-only seam, same idiom as
+            // STOCKPICKER_AVANZA_UNIVERSE_BASE_URI above: unset in production,
+            // it changes nothing (the real PHPMailer sender is used). Set by
+            // FrontControllerIntegrationTest's EndpointFixture, it swaps in a
+            // sender that appends the call to a file instead of touching
+            // SMTP, so the integration test can observe a real send crossing
+            // the subprocess boundary without ever needing live SMTP.
+            $digestSpyFile = getenv('STOCKPICKER_DIGEST_SPY_FILE');
+            $digestMailSender = null;
+            if (is_string($digestSpyFile) && $digestSpyFile !== '') {
+                $digestMailSender = static function (string $to, string $subject, string $message) use ($digestSpyFile): bool {
+                    return file_put_contents(
+                        $digestSpyFile,
+                        json_encode(['to' => $to, 'subject' => $subject, 'message' => $message], JSON_THROW_ON_ERROR) . "\n",
+                        FILE_APPEND,
+                    ) !== false;
+                };
+            }
+
+            try {
+                (new TopTenDigest(
+                    new DerivedMetricsRepository($pdo),
+                    new TradingHolidayRepository($pdo),
+                    $services['config'],
+                    $digestMailSender,
+                ))->run($runDate);
+            } catch (\Throwable $e) {
+                $logger->error('top-10 digest failed', [
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+            }
 
             send_json(200, [
                 'status' => 'ok',

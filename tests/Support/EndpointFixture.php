@@ -29,6 +29,8 @@ final class EndpointFixture
 
     private ?string $universeBase = null;
 
+    private ?string $digestSpyFile = null;
+
     /**
      * Start an opt-in canned Avanza universe source (a second `php -S`) BEFORE
      * `start()`, so the front controller's `AvanzaUniverseAdapter` points at it
@@ -48,6 +50,28 @@ final class EndpointFixture
     }
 
     /**
+     * spec-5-6 — opt-in, call BEFORE `start()`: makes `/cron/derive`'s
+     * TopTenDigest step write every (to, subject, message) it would have
+     * sent as one JSON line to a temp file instead of touching real SMTP
+     * (via the front controller's STOCKPICKER_DIGEST_SPY_FILE test seam),
+     * so a test can observe the digest crossing the real subprocess
+     * boundary. Returns the file's path (`digestSpyContents()` reads it back).
+     */
+    public function enableDigestSpy(): string
+    {
+        $this->digestSpyFile = sys_get_temp_dir() . '/stockpicker-digest-spy-' . bin2hex(random_bytes(6)) . '.ndjson';
+        file_put_contents($this->digestSpyFile, '');
+
+        return $this->digestSpyFile;
+    }
+
+    /** The digest spy file's contents (one JSON line per attempted send), or '' if never enabled/never sent. */
+    public function digestSpyContents(): string
+    {
+        return $this->digestSpyFile !== null ? (string) file_get_contents($this->digestSpyFile) : '';
+    }
+
+    /**
      * @param array{host: string, name: string, user: string, pass: string, charset: string} $db
      */
     public function start(array $db, string $cronToken = 'test-token'): void
@@ -63,18 +87,33 @@ final class EndpointFixture
         copy($repoRoot . '/public_html/cron_helpers.php', $this->root . '/public_html/cron_helpers.php');
         copy($repoRoot . '/public_html/.htaccess', $this->root . '/public_html/.htaccess');
 
-        file_put_contents($this->root . '/config.php', "<?php\nreturn " . var_export([
+        $configData = [
             'db' => $db,
             'cron_token' => $cronToken,
             'log_path' => 'var/log/stockpicker.log',
             'login_username' => self::LOGIN_USERNAME,
             'login_password_hash' => password_hash('endpoint-fixture-password', PASSWORD_BCRYPT),
             'session_key' => self::SESSION_KEY,
-        ], true) . ";\n");
+        ];
+        if ($this->digestSpyFile !== null) {
+            // The spy replaces TopTenDigest's mail sender entirely (real
+            // PHPMailer/SMTP is never touched), but TopTenDigest::run() still
+            // reads Config::digest()['recipient'] before invoking it -- so a
+            // test that enabled the spy needs a "digest" section present.
+            // Deliberately absent otherwise, so the default fixture still
+            // exercises the "digest config missing" failure path as-is.
+            $configData['digest'] = [
+                'username' => 'digest-fixture@example.com',
+                'password' => 'unused-with-spy',
+                'recipient' => 'stockpicker@ryddmo.se',
+            ];
+        }
+        file_put_contents($this->root . '/config.php', "<?php\nreturn " . var_export($configData, true) . ";\n");
 
-        [$this->server, $this->base] = $this->spawnServer($this->root . '/public_html', null, [
+        [$this->server, $this->base] = $this->spawnServer($this->root . '/public_html', null, array_filter([
             'STOCKPICKER_AVANZA_UNIVERSE_BASE_URI' => $this->universeBase ?? self::DEAD_UNIVERSE_BASE_URI,
-        ]);
+            'STOCKPICKER_DIGEST_SPY_FILE' => $this->digestSpyFile,
+        ], static fn (?string $v): bool => $v !== null));
     }
 
     /**
@@ -207,11 +246,22 @@ final class EndpointFixture
                 $this->removeDir($dir);
             }
         }
+
+        if ($this->digestSpyFile !== null && is_file($this->digestSpyFile)) {
+            unlink($this->digestSpyFile);
+        }
+        $this->digestSpyFile = null;
     }
 
     public function logContents(): string
     {
-        return (string) file_get_contents($this->root . '/var/log/stockpicker.log');
+        $path = $this->root . '/var/log/stockpicker.log';
+
+        // The log file is created lazily by Monolog's StreamHandler on its
+        // first write -- a request that never logs anything (e.g. a clean
+        // digest skip) leaves it absent entirely. Absent is just "no log
+        // output yet", not an error worth a PHP warning.
+        return is_file($path) ? (string) file_get_contents($path) : '';
     }
 
     private function removeDir(string $dir): void

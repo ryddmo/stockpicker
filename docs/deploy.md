@@ -175,14 +175,20 @@ never touched.
 2. Create `config.php` by hand from the committed template (never rsynced, never in git —
    AD-8). The template documents every key; `Stockpicker\Config` is the contract it must
    satisfy (`db`, `cron_token`, `login_username`, `login_password_hash`, `session_key`,
-   optional `log_path`) — see `config.php.dist`'s comments for the exact commands to
-   generate the bcrypt password hash and the session key:
+   `digest`, optional `log_path`) — see `config.php.dist`'s comments for the exact commands
+   to generate the bcrypt password hash and the session key:
 
    ```sh
    cp ~/stockpicker.ryddmo.se/config.php.dist ~/stockpicker.ryddmo.se/config.php
    nano ~/stockpicker.ryddmo.se/config.php   # real DB creds, a strong cron_token, login credentials, session_key
    chmod 600 ~/stockpicker.ryddmo.se/config.php
    ```
+
+   `digest` (spec-5-6, `TopTenDigest`) is another secret that must be filled in by hand,
+   same as everything else in this file: `'digest' => ['username' => ..., 'password' => ...,
+   'recipient' => ...]` — the SMTP username/password for `mailcluster.loopia.se:587` (the
+   username also doubles as the From address) and the recipient address for the daily
+   top-10 digest email.
 
    **The file must be `<?php return [ ... ];`** — a config with no `return` makes
    `require` yield `int(1)` and phinx fails with _"config.php … must return an array, got

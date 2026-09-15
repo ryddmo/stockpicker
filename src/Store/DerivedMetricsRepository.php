@@ -360,6 +360,83 @@ final class DerivedMetricsRepository
     }
 
     /**
+     * spec-5-6 — TopTenDigest's "Flest ägare" snapshot for one exact
+     * calendar date: mirrors topByOwnerCount()'s column list, JOIN and
+     * "active only" filter, but queries `m.as_of_date = :date` directly
+     * instead of the ROW_NUMBER "latest" CTE — one row per isin/source/date
+     * already exists, so no window function is needed to pin a specific day.
+     * Empty when there is no data at all for that date (e.g. the very first
+     * derive run, or a day before the instrument existed).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function topByOwnerCountAsOf(string $source, string $asOfDate, int $limit): array
+    {
+        $stmt = $this->pdo->prepare(
+            <<<'SQL'
+            SELECT
+                m.isin, m.source, m.as_of_date, m.number_of_owners,
+                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_90d, m.pct_365d,
+                m.sma_7, m.sma_30, m.sma_90,
+                m.up_streak, m.spike_score,
+                i.name, i.list
+            FROM owner_count_metrics m
+            JOIN instrument i ON i.isin = m.isin
+            WHERE m.source = :source
+              AND m.as_of_date = :date
+              AND i.last_seen IS NULL
+            ORDER BY m.number_of_owners DESC, m.isin ASC
+            LIMIT :lim
+            SQL
+        );
+        $stmt->bindValue(':source', $source, PDO::PARAM_STR);
+        $stmt->bindValue(':date', $asOfDate, PDO::PARAM_STR);
+        $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+
+        return array_values($stmt->fetchAll());
+    }
+
+    /**
+     * spec-5-6 — TopTenDigest's "Stadig tillväxt" snapshot for one exact
+     * calendar date: same qualifying rule as topByTrendQuality() (`up_streak
+     * >= 1`, spike-excluded), pinned to `m.as_of_date = :date` instead of the
+     * "latest per isin" CTE. See topByOwnerCountAsOf() for why no window
+     * function is needed here.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function topByTrendQualityAsOf(string $source, string $asOfDate, int $limit): array
+    {
+        $stmt = $this->pdo->prepare(
+            <<<'SQL'
+            SELECT
+                m.isin, m.source, m.as_of_date, m.number_of_owners,
+                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_90d, m.pct_365d,
+                m.sma_7, m.sma_30, m.sma_90,
+                m.up_streak, m.spike_score,
+                i.name, i.list
+            FROM owner_count_metrics m
+            JOIN instrument i ON i.isin = m.isin
+            WHERE m.source = :source
+              AND m.as_of_date = :date
+              AND i.last_seen IS NULL
+              AND m.up_streak >= 1
+              AND (m.spike_score IS NULL OR m.spike_score < :spike_threshold)
+            ORDER BY m.up_streak DESC, m.isin ASC
+            LIMIT :lim
+            SQL
+        );
+        $stmt->bindValue(':source', $source, PDO::PARAM_STR);
+        $stmt->bindValue(':date', $asOfDate, PDO::PARAM_STR);
+        $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
+        $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+
+        return array_values($stmt->fetchAll());
+    }
+
+    /**
      * spec-5-4 — Topplista's "Alla" mode: each isin's *latest*
      * `number_of_owners` for `$source`, keyed by isin. Mirrors
      * recentSeriesForIsins()'s batch-over-isins shape (one query, a

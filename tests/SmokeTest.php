@@ -120,6 +120,44 @@ final class SmokeTest extends TestCase
         $config->loginPasswordHash();
     }
 
+    public function testConfigDigestThrowsWhenSectionAbsent(): void
+    {
+        $config = Config::fromArray(['cron_token' => 't'], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->digest();
+    }
+
+    public function testConfigDigestThrowsWhenKeyIsMissing(): void
+    {
+        $config = Config::fromArray([
+            'digest' => ['username' => 'u', 'password' => 'p'],
+        ], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->digest();
+    }
+
+    public function testConfigDigestThrowsWhenKeyIsNonString(): void
+    {
+        $config = Config::fromArray([
+            'digest' => ['username' => 'u', 'password' => 123, 'recipient' => 'r'],
+        ], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->digest();
+    }
+
+    public function testConfigDigestThrowsWhenKeyIsEmptyString(): void
+    {
+        $config = Config::fromArray([
+            'digest' => ['username' => 'u', 'password' => 'p', 'recipient' => ''],
+        ], $this->fixtureRoot);
+
+        $this->expectException(RuntimeException::class);
+        $config->digest();
+    }
+
     public function testConfigLoadThrowsWhenMissingAndNamesThePath(): void
     {
         $expectedPath = $this->fixtureRoot . '/config.php';

@@ -908,4 +908,163 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         self::assertSame([self::ISIN => 1000], $result);
     }
+
+    // -- topByOwnerCountAsOf() (spec-5-6) ----------------------------------------
+
+    public function testTopByOwnerCountAsOfReturnsTheRowForThePinnedDateOnly(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor(self::ISIN, '2026-01-02', 1500); // a later day: must not leak in
+        $this->seedFor('SE0000108656', '2026-01-01', 5000);
+        $this->seedFor('SE0000108656', '2026-01-02', 6000);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-01', 10);
+
+        self::assertCount(2, $top);
+        self::assertSame('SE0000108656', $top[0]['isin']);
+        self::assertSame(5000, (int) $top[0]['number_of_owners']);
+        self::assertSame(self::ISIN, $top[1]['isin']);
+        self::assertSame(1000, (int) $top[1]['number_of_owners']);
+    }
+
+    public function testTopByOwnerCountAsOfIsEmptyWhenNoDataExistsForThatDate(): void
+    {
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-02', 10);
+
+        self::assertSame([], $top);
+    }
+
+    public function testTopByOwnerCountAsOfExcludesDelistedInstruments(): void
+    {
+        $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
+        $this->seedFor('SE0000199999', '2026-01-01', 9000);
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-01', 10);
+
+        self::assertCount(1, $top, 'the delisted instrument must never appear');
+        self::assertSame(self::ISIN, $top[0]['isin']);
+    }
+
+    public function testTopByOwnerCountAsOfNeverMergesTwoSourcesForTheSameIsin(): void
+    {
+        $this->seedFor(self::ISIN, '2026-01-01', 1000, NormalizedRow::SOURCE_AVANZA);
+        $this->seedFor(self::ISIN, '2026-01-01', 500000, NormalizedRow::SOURCE_NORDNET);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-01', 10);
+
+        self::assertCount(1, $top);
+        self::assertSame(1000, (int) $top[0]['number_of_owners']);
+    }
+
+    public function testTopByOwnerCountAsOfRespectsTheLimit(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+        $this->insertInstrument('SE0000222222', 'SSAB B');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 2000);
+        $this->seedFor('SE0000222222', '2026-01-01', 3000);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-01', 2);
+
+        self::assertCount(2, $top);
+        self::assertSame('SE0000222222', $top[0]['isin']);
+        self::assertSame('SE0000108656', $top[1]['isin']);
+    }
+
+    public function testTopByOwnerCountAsOfBreaksATieByIsinAscending(): void
+    {
+        // self::ISIN is 'SE0015811963'; this one sorts before it alphabetically.
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        $this->seedFor(self::ISIN, '2026-01-01', 1000);
+        $this->seedFor('SE0000108656', '2026-01-01', 1000);
+
+        $top = $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-01', 10);
+
+        self::assertCount(2, $top);
+        self::assertSame('SE0000108656', $top[0]['isin'], 'tied number_of_owners must break by isin ASC');
+        self::assertSame(self::ISIN, $top[1]['isin']);
+    }
+
+    // -- topByTrendQualityAsOf() (spec-5-6) --------------------------------------
+
+    public function testTopByTrendQualityAsOfReturnsTheRowForThePinnedDateOnly(): void
+    {
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        // self::ISIN: qualifies (up_streak >= 1) on 2026-04-02, but the run
+        // continues into 2026-04-03 with another up day. Pinning the query
+        // to 2026-04-02 must return that day's up_streak (1), not the later
+        // day's (2).
+        $this->seedFor(self::ISIN, '2026-04-01', 1000);
+        $this->seedFor(self::ISIN, '2026-04-02', 1010);
+        $this->seedFor(self::ISIN, '2026-04-03', 1020);
+
+        $this->seedFor('SE0000108656', '2026-04-01', 2000);
+        $this->seedFor('SE0000108656', '2026-04-02', 1900); // down day: no streak on this date
+
+        $top = $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-04-02', 10);
+
+        self::assertCount(1, $top, 'only the qualifying isin on this exact date, not the later day\'s state');
+        self::assertSame(self::ISIN, $top[0]['isin']);
+        self::assertSame(1, (int) $top[0]['up_streak']);
+    }
+
+    public function testTopByTrendQualityAsOfIsEmptyWhenNoDataExistsForThatDate(): void
+    {
+        $this->seed('2026-01-01', 1000);
+        $this->seed('2026-01-02', 1010);
+
+        $top = $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-05', 10);
+
+        self::assertSame([], $top);
+    }
+
+    public function testTopByTrendQualityAsOfExcludesASpikingRowOnThatExactDate(): void
+    {
+        $start = new DateTimeImmutable('2026-03-01');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $spikeDate = $start->modify('+29 days')->format('Y-m-d');
+        $this->seedFor(self::ISIN, $spikeDate, 1280 + 5000);
+
+        $top = $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, $spikeDate, 10);
+
+        self::assertSame([], $top, 'a spiking row must never qualify, even pinned to its own date');
+    }
+
+    public function testTopByTrendQualityAsOfExcludesFlatOrNoStreakInstrumentsOnThatDate(): void
+    {
+        $this->seed('2026-06-01', 1000);
+        $this->seed('2026-06-02', 990); // down day -> up_streak 0 on this date
+
+        $top = $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-06-02', 10);
+
+        self::assertSame([], $top);
+    }
+
+    public function testTopByTrendQualityAsOfBreaksATieByIsinAscending(): void
+    {
+        // self::ISIN is 'SE0015811963'; this one sorts before it alphabetically.
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        $this->seedFor(self::ISIN, '2026-07-01', 1000);
+        $this->seedFor(self::ISIN, '2026-07-02', 1010); // up_streak 1
+
+        $this->seedFor('SE0000108656', '2026-07-01', 2000);
+        $this->seedFor('SE0000108656', '2026-07-02', 2010); // up_streak 1, tied
+
+        $top = $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-07-02', 10);
+
+        self::assertCount(2, $top);
+        self::assertSame('SE0000108656', $top[0]['isin'], 'tied up_streak must break by isin ASC');
+        self::assertSame(self::ISIN, $top[1]['isin']);
+    }
 }

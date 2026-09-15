@@ -281,6 +281,107 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    // -- /cron/derive: TopTenDigest (spec-5-6) -----------------------------------
+
+    public function testDeriveSendsDigestEmailViaTheInjectedSpyOnAGenuineTopTenChange(): void
+    {
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->enableDigestSpy();
+        $this->startEndpoint();
+
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $previousTradingDay = $this->previousWeekday(new DateTimeImmutable($runDate));
+
+        // Prior trading day: Alpha AB ahead of Beta AB.
+        $this->seedOwnerCount('SE0000001001', $previousTradingDay, 3000);
+        $this->seedOwnerCount('SE0000001002', $previousTradingDay, 2000);
+        // Today: Beta AB overtakes Alpha AB -> a genuine rank-move diff.
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+        $this->seedOwnerCount('SE0000001002', $runDate, 3500);
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status'], "digest wiring must never affect derive's own response");
+        self::assertSame($runDate, $json['run_date']);
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'derive'")->fetchColumn(),
+        );
+
+        $spied = trim($this->endpoint->digestSpyContents());
+        self::assertNotSame('', $spied, 'a genuine top-10 change must reach the injected mail sender');
+        $sent = json_decode($spied, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame('stockpicker@ryddmo.se', $sent['to']);
+        self::assertStringContainsString($runDate, $sent['subject']);
+        self::assertStringContainsString('Flest ägare:', $sent['message']);
+        self::assertStringContainsString('Beta AB ↑ #2→#1', $sent['message']);
+    }
+
+    public function testDeriveDigestFailureNeverAffectsDerivesOwnResponseOrIngestRunRow(): void
+    {
+        // The default EndpointFixture config.php carries no "digest" section
+        // at all, so Config::digest() throws the moment TopTenDigest tries
+        // to actually send -- the exact same try/catch in index.php that
+        // would catch a real PHPMailer\Exception from a failed SMTP send
+        // catches this too, so this exercises that failure path end to end
+        // without ever needing a live SMTP connection in a test.
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $previousTradingDay = $this->previousWeekday(new DateTimeImmutable($runDate));
+
+        $this->seedOwnerCount('SE0000001001', $previousTradingDay, 3000);
+        $this->seedOwnerCount('SE0000001002', $previousTradingDay, 2000);
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+        $this->seedOwnerCount('SE0000001002', $runDate, 3500);
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status']);
+        self::assertSame(4, $json['instrument_count']);
+        self::assertSame(
+            1,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'derive'")->fetchColumn(),
+        );
+        self::assertSame(
+            'completed',
+            $this->pdo->query("SELECT status FROM ingest_run WHERE run_type = 'derive'")->fetchColumn(),
+        );
+        self::assertStringContainsString('top-10 digest failed', $this->endpoint->logContents());
+    }
+
+    public function testDeriveSkipsDigestSilentlyWhenNoPreviousTradingDayHasDataYet(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status']);
+        self::assertStringNotContainsString(
+            'top-10 digest failed',
+            $this->endpoint->logContents(),
+            'a first-ever run (no prior trading day data) must skip cleanly, without even needing digest config',
+        );
+    }
+
     public function testRefillClosedWindowDoesNotRunPipeline(): void
     {
         $this->seedInstrument();
@@ -1470,6 +1571,20 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         $today = (int) (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('N');
 
         return (string) (($today % 7) + 1);
+    }
+
+    /**
+     * The nearest earlier weekday (Mon-Fri), skipping Sat/Sun only -- mirrors
+     * TopTenDigest::resolvePreviousTradingDay()'s weekday rule for a test
+     * environment where no trading_holiday rows are marked.
+     */
+    private function previousWeekday(DateTimeImmutable $date): string
+    {
+        do {
+            $date = $date->modify('-1 day');
+        } while ((int) $date->format('N') >= 6);
+
+        return $date->format('Y-m-d');
     }
 
     /** Inserts today's date into trading_holiday, for exercising the holiday-skip gate. */

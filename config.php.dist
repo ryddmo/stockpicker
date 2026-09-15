@@ -39,4 +39,13 @@ return [
 
     // Log file, relative to the project root or absolute. Must be outside public_html/.
     'log_path' => 'var/log/stockpicker.log',
+
+    // SMTP credentials + recipient for the daily top-10 digest (spec-5-6,
+    // TopTenDigest), sent via mailcluster.loopia.se:587 (STARTTLS) after
+    // /cron/derive. 'username' is also used as the From address.
+    'digest' => [
+        'username' => 'change-me',
+        'password' => 'change-me',
+        'recipient' => 'stockpicker@ryddmo.se',
+    ],
 ];
