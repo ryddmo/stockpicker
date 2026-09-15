@@ -85,3 +85,24 @@ independent of a review pass.
   `#7C5800` (deep gold/olive) in all four controllers — validated against every other
   trend color, and badge text-on-background contrast against `--spike-bg` still
   passes.
+- **FIXED 2026-09-15 — weekday-only gating (dfe705e) still let full-day exchange
+  holidays through, storing flat/noisy owner-count rows on days Nasdaq Stockholm
+  never opened.** Stefan noticed spikes/pct-1d being messed up and suspected
+  activity landing on non-trading days. `run_weekdays` already skips
+  Saturday/Sunday, but a weekday holiday (Midsommarafton, Juldagen, ...) still
+  passed that gate — the same "flat day resets streak / adds noise to sma_30 and
+  spike_score" mechanism as the weekend contamination described in the "Stadig
+  tillväxt" Avanza-empty note above, just for holidays. Delta alone can't signal
+  a non-trading day (a real trading day can post delta 0; a closed day can still
+  post a nonzero delta from settlement lag) — added a hand-maintained
+  `trading_holiday` table instead (`TradingHolidayRepository`, migration
+  `20260915120000_create_trading_holiday.php`, seeded with 2026's known Nasdaq
+  Stockholm full closures) and gated all three cron endpoints on it alongside
+  the existing weekday check (`holiday_skipped` status, mirrors
+  `weekend_skipped`). No backfill migration for already-stored holiday/weekend
+  rows — `sma_7`/`sma_30`/`spike_score` self-clean as new rows push old ones out
+  of their rolling windows (up to ~90 trading days for `sma_90`), `up_streak`
+  heals immediately since it only looks back to the nearest non-up row. One seed
+  date (2026-01-06, Trettondedag jul) is flagged in the migration as worth a
+  final check against Nasdaq's own notice — sources disagreed on whether it's a
+  full closure or a half-day.

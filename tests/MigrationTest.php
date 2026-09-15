@@ -65,6 +65,7 @@ final class MigrationTest extends TestCase
         self::assertTrue($this->tableExists('work_queue'));
         self::assertTrue($this->tableExists('ingest_run'));
         self::assertTrue($this->tableExists('watchlist'));
+        self::assertTrue($this->tableExists('trading_holiday'));
 
         // Story 1.6 widened this column to hold the 36-char nnx UUID.
         self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
@@ -189,6 +190,13 @@ final class MigrationTest extends TestCase
         } catch (\PDOException $e) {
             self::assertSame('23000', $e->getCode());
         }
+
+        // trading_holiday: date PK, seeded with the known 2026 Nasdaq
+        // Stockholm full-day closures used by the cron holiday gate.
+        self::assertSame(['holiday_date'], $this->primaryKey('trading_holiday'));
+        self::assertTrue((bool) $this->pdo->query(
+            "SELECT 1 FROM trading_holiday WHERE holiday_date = '2026-06-19'"
+        )->fetchColumn());
     }
 
     public function testRollbackDropsEverything(): void
@@ -205,6 +213,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('ingest_run'));
         self::assertFalse($this->tableExists('owner_count_metrics'));
         self::assertFalse($this->tableExists('watchlist'));
+        self::assertFalse($this->tableExists('trading_holiday'));
     }
 
     /**
@@ -281,7 +290,7 @@ final class MigrationTest extends TestCase
         $this->pdo->exec('DROP VIEW IF EXISTS `owner_count_metrics`');
         // watchlist and owner_count_daily next — both reference instrument
         // (owner_count_daily also references ingest_run). Story 4.2.
-        foreach (['watchlist', 'owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'phinxlog'] as $table) {
+        foreach (['watchlist', 'owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'trading_holiday', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }

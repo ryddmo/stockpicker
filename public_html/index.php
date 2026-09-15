@@ -26,6 +26,7 @@ use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+use Stockpicker\Store\TradingHolidayRepository;
 use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
 use Stockpicker\Web\FullListController;
@@ -248,44 +249,15 @@ try {
 
         case '/cron/refill':
         case '/cron/work':
-            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
-                send_json(405, ['error' => 'method not allowed']);
+            $gate = cron_gate($services['config']);
+            if (isset($gate['response'])) {
+                send_json($gate['response']['status'], $gate['response']['body']);
                 break;
             }
 
-            authorize_cron($services['config']);
-
-            if (count($_GET) !== 1 || !array_key_exists('token', $_GET)) {
-                send_json(400, ['error' => 'invalid request']);
-                break;
-            }
-
-            $pdo = Database::connect($services['config']);
-            $settings = new SettingsRepository($pdo);
-            $runAfter = $settings->get('run_after');
-            if ($runAfter === null) {
-                throw new \RuntimeException('missing required setting: run_after');
-            }
-
-            $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm'));
-            $runAfterTime = cron_time($runAfter, $now);
-            if ($now < $runAfterTime) {
-                send_json(200, [
-                    'status' => 'window_closed',
-                    'run_date' => $now->format('Y-m-d'),
-                ]);
-                break;
-            }
-
-            if (!cron_is_allowed_weekday($settings->get('run_weekdays'), $now)) {
-                send_json(200, [
-                    'status' => 'weekend_skipped',
-                    'run_date' => $now->format('Y-m-d'),
-                ]);
-                break;
-            }
-
-            $runDate = $now->format('Y-m-d');
+            $pdo = $gate['pdo'];
+            $settings = $gate['settings'];
+            $runDate = $gate['runDate'];
             $instruments = new InstrumentRepository($pdo);
             $queue = new QueueRepository($pdo);
             $runs = new RunRepository($pdo);
@@ -354,44 +326,15 @@ try {
             // View-based design (Story 3.1): owner_count_metrics is a plain SQL view, so
             // there is nothing to materialize here. This deliberately never touches
             // Deriver/DerivedMetricsRepository — it only logs that the stage ran.
-            if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
-                send_json(405, ['error' => 'method not allowed']);
+            $gate = cron_gate($services['config']);
+            if (isset($gate['response'])) {
+                send_json($gate['response']['status'], $gate['response']['body']);
                 break;
             }
 
-            authorize_cron($services['config']);
-
-            if (count($_GET) !== 1 || !array_key_exists('token', $_GET)) {
-                send_json(400, ['error' => 'invalid request']);
-                break;
-            }
-
-            $pdo = Database::connect($services['config']);
-            $settings = new SettingsRepository($pdo);
-            $runAfter = $settings->get('run_after');
-            if ($runAfter === null) {
-                throw new \RuntimeException('missing required setting: run_after');
-            }
-
-            $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm'));
-            $runAfterTime = cron_time($runAfter, $now);
-            if ($now < $runAfterTime) {
-                send_json(200, [
-                    'status' => 'window_closed',
-                    'run_date' => $now->format('Y-m-d'),
-                ]);
-                break;
-            }
-
-            if (!cron_is_allowed_weekday($settings->get('run_weekdays'), $now)) {
-                send_json(200, [
-                    'status' => 'weekend_skipped',
-                    'run_date' => $now->format('Y-m-d'),
-                ]);
-                break;
-            }
-
-            $runDate = $now->format('Y-m-d');
+            $pdo = $gate['pdo'];
+            $runDate = $gate['runDate'];
+            $now = $gate['now'];
             $count = count((new InstrumentRepository($pdo))->allActive());
             (new RunRepository($pdo))->record('derive', $runDate, $now, $now, $count, $count, 0);
 
@@ -435,6 +378,68 @@ function authorize_cron(Config $config): void
         send_json(403, ['error' => 'forbidden']);
         exit;
     }
+}
+
+/**
+ * Shared prelude for /cron/refill, /cron/work, /cron/derive: HTTP method,
+ * cron-token auth, the exactly-one-query-param shape, then the three
+ * run-day gates in order — settings.run_after's time window,
+ * settings.run_weekdays, and trading_holiday. Collapses what had become a
+ * ~40-line block duplicated identically across all three routes (a
+ * deferred-work.md item since spec-3-2, grown by one more copy with the
+ * 2026-09-15 holiday gate) into one place.
+ *
+ * authorize_cron() still exits the script directly on a bad token, same as
+ * before this refactor. A missing/malformed run_after setting still throws
+ * (unchanged 500 behavior) rather than being represented here. Everything
+ * else that used to `send_json(...); break;` inline is returned as a
+ * `response`-only result for the caller to send and break on; a result with
+ * no `response` key means the caller should proceed using `pdo`/`settings`/
+ * `now`/`runDate` — check with `isset($gate['response'])`, not `=== null`,
+ * so PHPStan can tell the two shapes apart at the call site.
+ *
+ * @return array{response: array{status: int, body: array<string, mixed>}}
+ *       | array{pdo: PDO, settings: SettingsRepository, now: \DateTimeImmutable, runDate: string}
+ */
+function cron_gate(Config $config): array
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+        return ['response' => ['status' => 405, 'body' => ['error' => 'method not allowed']]];
+    }
+
+    authorize_cron($config);
+
+    if (count($_GET) !== 1 || !array_key_exists('token', $_GET)) {
+        return ['response' => ['status' => 400, 'body' => ['error' => 'invalid request']]];
+    }
+
+    $pdo = Database::connect($config);
+    $settings = new SettingsRepository($pdo);
+    $runAfter = $settings->get('run_after');
+    if ($runAfter === null) {
+        throw new \RuntimeException('missing required setting: run_after');
+    }
+
+    $now = new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm'));
+    $runAfterTime = cron_time($runAfter, $now);
+    if ($now < $runAfterTime) {
+        return ['response' => ['status' => 200, 'body' => ['status' => 'window_closed', 'run_date' => $now->format('Y-m-d')]]];
+    }
+
+    if (!cron_is_allowed_weekday($settings->get('run_weekdays'), $now)) {
+        return ['response' => ['status' => 200, 'body' => ['status' => 'weekend_skipped', 'run_date' => $now->format('Y-m-d')]]];
+    }
+
+    if ((new TradingHolidayRepository($pdo))->isHoliday($now->format('Y-m-d'))) {
+        return ['response' => ['status' => 200, 'body' => ['status' => 'holiday_skipped', 'run_date' => $now->format('Y-m-d')]]];
+    }
+
+    return [
+        'pdo' => $pdo,
+        'settings' => $settings,
+        'now' => $now,
+        'runDate' => $now->format('Y-m-d'),
+    ];
 }
 
 /**

@@ -143,6 +143,15 @@ never touched.
    same `settings.run_after` window as `refill`/`work`; before 18:30 it returns
    `window_closed` and writes no `ingest_run` row.
 
+   All three endpoints also skip non-trading days: `settings.run_weekdays` (default
+   Mon-Fri) returns `weekend_skipped`, and a full-day exchange holiday listed in the
+   `trading_holiday` table (Nasdaq Stockholm closures — New Year's Day, Good Friday,
+   Midsommarafton, Juldagen, etc.) returns `holiday_skipped`. Neither writes any
+   `work_queue`/`ingest_run` rows. `trading_holiday` is hand-maintained, once a year —
+   add next year's dates the same way `20260915120000_create_trading_holiday.php`
+   seeded 2026's (`INSERT INTO trading_holiday (holiday_date, description) VALUES (...)`),
+   since movable holidays (Easter, Ascension) have no fixed formula.
+
    Leave **"E-postadress för utmatning"** empty. Confirm **"Aktiv körning"** is ticked.
 
 ### C. Loopia shell (over SSH)
@@ -436,6 +445,8 @@ There is no automated rollback. Options, simplest first:
 | `/cron/work` returns `window_closed`                              | `settings.run_after` is later than now (Europe/Stockholm) — expected outside the run window                                                                                                                                                                                             |
 | `/cron/refill` created nothing all evening                        | scheduled before `run_after` (18:30) — it returns `window_closed` and enqueues nothing. Run it hourly, not at 00:00                                                                                                                                                                     |
 | `/cron/refill` returns `{"status":"universe_sync_failed"}`        | the Avanza listing was unreachable / changed shape, or the run would delist > `universe.max_delist` names. No rows changed, `Enqueue` skipped. Check the log `warning`/`error` line; the next hourly call retries. A genuine large delisting needs a one-run `universe.max_delist` bump |
+| any cron endpoint returns `weekend_skipped`                       | today isn't in `settings.run_weekdays` (default Mon-Fri) — expected on a Saturday/Sunday                                                                                                                                                                                                |
+| any cron endpoint returns `holiday_skipped`                       | today's date is a row in `trading_holiday` — a known Nasdaq Stockholm full-day closure. Add or remove rows there to correct the calendar                                                                                                                                                |
 | `deploy: cannot reach 'loopia-stockpicker'`                       | SSH alias/key wrong, or SSH not enabled in Kundzon — the preflight aborted before rsync                                                                                                                                                                                                 |
 | Migrations fail with access denied                                | wrong `db.user` (copy the `@…`-suffixed string verbatim from Kundzon), wrong password, or DB user lacks rights                                                                                                                                                                          |
 | `composer` not found over SSH                                     | use `php composer.phar …`, or deploy with `--with-local-vendor`                                                                                                                                                                                                                         |

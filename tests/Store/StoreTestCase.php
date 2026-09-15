@@ -78,6 +78,7 @@ abstract class StoreTestCase extends TestCase
         $this->pdo->exec('DROP TABLE IF EXISTS ingest_run');
         $this->pdo->exec('DROP TABLE IF EXISTS instrument');
         $this->pdo->exec('DROP TABLE IF EXISTS settings');
+        $this->pdo->exec('DROP TABLE IF EXISTS trading_holiday');
     }
 
     private function createSchema(): void
@@ -100,6 +101,15 @@ abstract class StoreTestCase extends TestCase
             'CREATE TABLE settings (
                 `key` VARCHAR(64) NOT NULL PRIMARY KEY,
                 `value` VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        // Mirrors db/migrations/20260915120000_create_trading_holiday.php.
+        // Keep this in step with the migration; there is no automated check.
+        $this->pdo->exec(
+            'CREATE TABLE trading_holiday (
+                holiday_date DATE NOT NULL PRIMARY KEY,
+                description VARCHAR(120) NOT NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 

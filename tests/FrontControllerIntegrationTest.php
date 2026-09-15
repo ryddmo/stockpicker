@@ -196,6 +196,22 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    public function testWorkHolidaySkippedDoesNotRunPipeline(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+        $this->markTodayAsHoliday();
+
+        [$status, $body] = $this->endpoint->get('/cron/work?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('holiday_skipped', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
     public function testDeriveWritesOneIngestRunRowAndReturnsCounts(): void
     {
         $this->seedMatchedUniverse();
@@ -250,6 +266,21 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
 
+    public function testDeriveHolidaySkippedDoesNotWriteARun(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+        $this->markTodayAsHoliday();
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('holiday_skipped', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
     public function testRefillClosedWindowDoesNotRunPipeline(): void
     {
         $this->seedInstrument();
@@ -275,6 +306,22 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertSame('weekend_skipped', $json['status']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
+    }
+
+    public function testRefillHolidaySkippedDoesNotRunPipeline(): void
+    {
+        $this->seedInstrument();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+        $this->markTodayAsHoliday();
+
+        [$status, $body] = $this->endpoint->get('/cron/refill?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status);
+        self::assertSame('holiday_skipped', $json['status']);
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM work_queue')->fetchColumn());
         self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM ingest_run')->fetchColumn());
     }
@@ -1400,5 +1447,15 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         $today = (int) (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('N');
 
         return (string) (($today % 7) + 1);
+    }
+
+    /** Inserts today's date into trading_holiday, for exercising the holiday-skip gate. */
+    private function markTodayAsHoliday(): void
+    {
+        $today = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO trading_holiday (holiday_date, description) VALUES (:date, :description)'
+        );
+        $stmt->execute(['date' => $today, 'description' => 'Test holiday']);
     }
 }
