@@ -77,8 +77,13 @@
   summary: Validate `run_date` format where Story 1.9 derives it — the pipeline passes it straight to SQL.
   evidence: `Enqueue::run()` / `QueueRepository` bind `$runDate` unchecked. A malformed string (`''`, `'2026-9-9'`, trailing space) makes MySQL coerce the key and `FetchRunner` silently claim nothing, indistinguishable from an empty queue. Not reachable from current callers (tests pass `Y-m-d`; Story 1.9 will mint it via `->format('Y-m-d')`), so the guard belongs at the derivation site in Story 1.9.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-7-work-queue-och-tidsboxad-fetchrunner.md`
-  summary: A source stuck on `Transient` has no retry cap — the job ping-pongs `pending ↔ claimed` every slice until it eventually succeeds.
+  summary: RESOLVED (Story 2.4) — A source stuck on `Transient` has no retry cap — the job ping-pongs `pending ↔ claimed` every slice until it eventually succeeds.
   evidence: `FetchRunner` reopens the job on any `Transient` with no attempt counter. Explicitly Epic 2 by the FR coverage map (FR9: exponential backoff, rate-limit-aware, retry caps — Story 2.4). `upsert` idempotency makes the re-store of an already-healthy source benign.
+
+  Confirmed shipped: `FetchRunner::$maxAttempts` (from `retry.max_attempts`, default 3)
+  bounds attempts with exponential backoff (`retry.backoff_base`/`retry.backoff_max`) —
+  see `src/Pipeline/FetchRunner.php`. This item was already stale, just never marked;
+  no code change made here.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-minimal-korningslogg.md`
   summary: Add the per-datum `owner_count_daily.ingest_run_id` link (spine ER diagram `ingest_run ||--o{ owner_count_daily`).
   evidence: Story 1.8 keeps the körningslogg minimal — one appended summary row per run, `RunRepository` append-only, no change to `OwnerCountRepository::upsert()`. Story 1.6's spec flagged "Story 1.8 adds the run link" but the epic's 1.8 ACs only ask for the summary row. Home: Story 2.6 (full körningslogg) — add a nullable `ingest_run_id BIGINT UNSIGNED` column + FK, no backfill (NFR7: series starts empty); `RunRepository` gains `start()`/`finish()` and `FetchRunner` threads the id into each `upsert()`.
@@ -86,7 +91,12 @@
   summary: RESOLVED 2026-09-14 — Add retention / pruning for `ingest_run` rows (one per slice, forever).
   evidence: Same `bin/prune.php` (`RunRepository::countPrunable()`/`prune()`) deletes rows older than `--ingest-run-days` (default 180). Deleting a run nulls out `owner_count_daily.ingest_run_id` for any row that pointed at it (ON DELETE SET NULL) — the owner-count history itself is never touched, only that old run's provenance link.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
-  summary: Run the first production deploy to Loopia and record the results — probe web-PHP `memory_limit` / `max_execution_time` and the URL-cron execution-time limit + minimum interval, fill those blanks in `docs/deploy.md`, register the `/cron/refill` + `/cron/work` URL-cron jobs in Kundzon, and clamp/tune `settings` (`batch_size`, the 75 s `/cron/work` timebox) against the measured web-PHP limit.
+  summary: RESOLVED (Story 1.10, 2026-09-10) — Run the first production deploy to Loopia and record the results — probe web-PHP `memory_limit` / `max_execution_time` and the URL-cron execution-time limit + minimum interval, fill those blanks in `docs/deploy.md`, register the `/cron/refill` + `/cron/work` URL-cron jobs in Kundzon, and clamp/tune `settings` (`batch_size`, the 75 s `/cron/work` timebox) against the measured web-PHP limit.
+
+  Confirmed done: `docs/deploy.md`'s "Open items — closed on the first deploy
+  (2026-09-10)" section has every measured value filled in (PHP 8.4, 256M/180s,
+  5 min URL-cron interval, all three jobs registered). Stale, just never marked;
+  no code change made here.
   evidence: Split from Story 1.10 at planning (2026-09-09). The spec ships the deploy tooling + runbook as one reviewable PR; the live deploy needs Loopia credentials + Kundzon access and produces real numbers that can only be measured against the server. Independent, small follow-up PR (runbook blanks + a possible `batch_size` ceiling — see the Story 1.7 `batch_size` item above). To be walked through in-session with the operator immediately after the Story 1.10 tooling lands. Story 1.11 (end-to-end smoke test) also depends on this being done.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
   summary: Add a TLS / Let's Encrypt enablement step to the `docs/deploy.md` Kundzon one-time setup, and a "`mysqldump` before `phinx migrate`" note to the Rollback section + first-deploy checklist.
