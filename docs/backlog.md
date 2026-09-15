@@ -65,3 +65,23 @@ independent of a review pass.
   **decision: leave the frozen design as-is**, this is a temporary side-effect of a
   real flat stretch in Avanza's data that resolves itself once the count moves again,
   not a defect to fix.
+- **Add a Y-axis to Aktiedetalj's trend-overlay chart.** Right now the chart shows
+  direction only (up/down/flat) with no scale — no numbers anywhere on the page tell
+  you the actual owner count, just the line's shape. A few rounded tick labels (e.g.
+  "530k / 532k / 534k") in recessive gray, no heavy gridlines, per the dataviz skill's
+  convention (hairline recessive axes, clean rounded tick numbers, direct labels before
+  gridlines). Skip an X-axis — the Dag/Vecka/30d/90d/År range tabs already convey the
+  timeframe, and date labels would clutter a chart this narrow on mobile. Real feature
+  work (tick-position computation per range mode), not a one-line change — scope it as
+  its own story when picked up.
+- **FIXED 2026-09-15 — Spike vs. negative trend colors too close to tell apart.**
+  Flagged while fixing the Aktiedetalj secondary-line contrast above: `--spike-text`
+  (#B54708) and `--negative` (#F04438), duplicated identically across Leaderboard,
+  FullList, Watchlist, and StockDetail, failed the dataviz palette validator's
+  normal-vision floor (Delta E 12.1, below the 15 threshold) — sparkline mini-charts
+  carry no secondary encoding (no dash/icon, unlike the badges/delta chips which stay
+  readable via icon/sign regardless), so a spiking stock's sparkline and a declining
+  one could be hard to tell apart scanning down a list. Replaced `--spike-text` with
+  `#7C5800` (deep gold/olive) in all four controllers — validated against every other
+  trend color, and badge text-on-background contrast against `--spike-bg` still
+  passes.
