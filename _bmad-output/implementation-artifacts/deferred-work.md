@@ -59,8 +59,12 @@
   This CI job also closes the separate Story 1.11 item below (`EndToEndSmokeTest`
   runs in no unattended path) — it now gets a real MariaDB on every push/PR.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sourceadapter-port-feltyper-och-id-uppslag.md`
-  summary: Widen `instrument.nordnet_instrument_id` (or change which Nordnet id is cached) before anything persists it.
+  summary: RESOLVED 2026-09-15 (found already shipped, stale, never marked) — Widen `instrument.nordnet_instrument_id` (or change which Nordnet id is cached) before anything persists it.
   evidence: Live smoke in Story 1.3 showed `nnx_info.nnx_instrument_id` is a 36-char UUID (`19fa390b-040f-45a9-8fa2-e7fd34e319ab`); Story 1.2's column is `VARCHAR(32)`. Story 1.3 does not persist, so nothing is broken yet. The story that first caches Nordnet ids (Epic 2 `UniverseSync` or an interim resolver) must add a migration to widen the column to `VARCHAR(64)` / `CHAR(36)`, or cache `instrument_info.instrument_id` (integer) instead — which would mean renegotiating Story 1.3's frozen "return `nnx_instrument_id`" decision.
+
+  Confirmed done: `db/migrations/20260909140100_widen_nordnet_instrument_id.php` widens the
+  column to `VARCHAR(64)`, and `MigrationTest` pins `varchar(64)` for it. Stale, just never
+  marked; no code change made here.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-append-only-tidsserielagring.md`
   summary: Make the store integration tests run the real Phinx migrations instead of hand-written mirror DDL (or assert the two schemas match).
   evidence: `tests/Store/StoreTestCase::createSchema()` rebuilds instrument/settings/owner_count_daily from DDL that only "mirrors" the migrations and is kept in step by hand — Story 1.6 had to edit two places for one column change, and the mirror already omits constraint names, column comments, and FK ON UPDATE. A migration-only change (index, type) passes the store suite silently. `MigrationTest` now pins owner_count_daily's PK + uniqueness against the real migration; the general fix is broader.
@@ -85,8 +89,13 @@
   see `src/Pipeline/FetchRunner.php`. This item was already stale, just never marked;
   no code change made here.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-minimal-korningslogg.md`
-  summary: Add the per-datum `owner_count_daily.ingest_run_id` link (spine ER diagram `ingest_run ||--o{ owner_count_daily`).
+  summary: RESOLVED 2026-09-15 (found already shipped, stale, never marked) — Add the per-datum `owner_count_daily.ingest_run_id` link (spine ER diagram `ingest_run ||--o{ owner_count_daily`).
   evidence: Story 1.8 keeps the körningslogg minimal — one appended summary row per run, `RunRepository` append-only, no change to `OwnerCountRepository::upsert()`. Story 1.6's spec flagged "Story 1.8 adds the run link" but the epic's 1.8 ACs only ask for the summary row. Home: Story 2.6 (full körningslogg) — add a nullable `ingest_run_id BIGINT UNSIGNED` column + FK, no backfill (NFR7: series starts empty); `RunRepository` gains `start()`/`finish()` and `FetchRunner` threads the id into each `upsert()`.
+
+  Confirmed done: `db/migrations/20260911100000_enrich_ingest_run.php` adds the nullable
+  `ingest_run_id` FK (`ON DELETE SET NULL`) to `owner_count_daily`, and
+  `OwnerCountRepository::upsert()` accepts and writes it, threaded in by `FetchRunner`.
+  Stale, just never marked; no code change made here.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-minimal-korningslogg.md`
   summary: RESOLVED 2026-09-14 — Add retention / pruning for `ingest_run` rows (one per slice, forever).
   evidence: Same `bin/prune.php` (`RunRepository::countPrunable()`/`prune()`) deletes rows older than `--ingest-run-days` (default 180). Deleting a run nulls out `owner_count_daily.ingest_run_id` for any row that pointed at it (ON DELETE SET NULL) — the owner-count history itself is never touched, only that old run's provenance link.
@@ -99,8 +108,12 @@
   no code change made here.
   evidence: Split from Story 1.10 at planning (2026-09-09). The spec ships the deploy tooling + runbook as one reviewable PR; the live deploy needs Loopia credentials + Kundzon access and produces real numbers that can only be measured against the server. Independent, small follow-up PR (runbook blanks + a possible `batch_size` ceiling — see the Story 1.7 `batch_size` item above). To be walked through in-session with the operator immediately after the Story 1.10 tooling lands. Story 1.11 (end-to-end smoke test) also depends on this being done.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
-  summary: Add a TLS / Let's Encrypt enablement step to the `docs/deploy.md` Kundzon one-time setup, and a "`mysqldump` before `phinx migrate`" note to the Rollback section + first-deploy checklist.
+  summary: RESOLVED 2026-09-15 (found already shipped, stale, never marked) — Add a TLS / Let's Encrypt enablement step to the `docs/deploy.md` Kundzon one-time setup, and a "`mysqldump` before `phinx migrate`" note to the Rollback section + first-deploy checklist.
   evidence: Story 1.10 review (blind-hunter, iteration 1). Every cron and verify URL in the runbook is `https://stockpicker.ryddmo.se` but section B never enables the certificate. Separately, MariaDB DDL is non-transactional so a migration that fails partway half-applies, and Rollback only covers reversible migrations. Both are runbook completeness gaps that land naturally with the split-off first production deploy.
+
+  Confirmed done: `docs/deploy.md` step B.3 covers Kundzon SSL/Let's Encrypt enablement, and
+  the deploy step + "Database migrations" section both call out taking a `mysqldump` before
+  `phinx migrate -e production`. Stale, just never marked; no code change made here.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-10-loopia-deploy-och-runbook.md`
   summary: Bound the `bin/deploy.sh` SSH preflight probe against a post-connect stall (banner/auth hang), and guard `git rev-parse --short HEAD` against an unborn HEAD under `set -e`.
   evidence: Story 1.10 review (edge-case-hunter, iteration 1). `ssh -o ConnectTimeout=10` bounds only the TCP connect, so a server that accepts the connection then stalls in the SSH banner or auth hangs the deploy with no upper bound; `timeout`/`gtimeout` is not standard on macOS so the fix needs design. The `commit="$(git rev-parse --short HEAD)"` assignment aborts the script silently under `set -e` if the repo has zero commits — unreachable in a real deploy but a cheap `|| echo '(unknown)'` guard closes it.
