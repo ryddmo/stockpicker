@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-08-2026 15:06
-last_updated: 09-14-2026 01:20
+last_updated: 09-15-2026 12:00
 project: stockpicker
 project_key: NOKEY
 tracking_system: file-system
@@ -50,32 +50,32 @@ development_status:
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-avanza-universumadapter-listning: review
-  2-2-universesync-daglig-avstämning: review
-  2-3-delfeltolerans-och-fellogg-per-instrument: review
-  2-4-retry-med-exponentiell-backoff: review
-  2-5-återöppning-av-fastnade-jobb: review
-  2-6-full-körningslogg-och-schemaavvikelse-larm: review
+  2-1-avanza-universumadapter-listning: done
+  2-2-universesync-daglig-avstämning: done
+  2-3-delfeltolerans-och-fellogg-per-instrument: done
+  2-4-retry-med-exponentiell-backoff: done
+  2-5-återöppning-av-fastnade-jobb: done
+  2-6-full-körningslogg-och-schemaavvikelse-larm: done
   epic-2-retrospective: optional
 
   epic-3: in-progress
-  3-1-deriver-beräkna-härledda-mått: review
-  3-2-cron-derive-endpoint: review
-  3-3-uttag-av-en-akties-serie-och-mått: review
+  3-1-deriver-beräkna-härledda-mått: done
+  3-2-cron-derive-endpoint: done
+  3-3-uttag-av-en-akties-serie-och-mått: done
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-inloggning: review
-  4-2-topplista-med-bevakningsstjärnans-mekanik: review
-  4-3-aktiedetalj: review
-  4-4-fullständig-lista: review
-  4-5-bevakningslista-flik: review
+  4-1-inloggning: done
+  4-2-topplista-med-bevakningsstjärnans-mekanik: done
+  4-3-aktiedetalj: done
+  4-4-fullständig-lista: done
+  4-5-bevakningslista-flik: done
   epic-4-retrospective: optional
 
   epic-5: in-progress
-  5-1-mobil-layoutbugg-på-listornas-rader: review
-  5-2-länk-till-aktien-på-avanza: review
-  5-3-informationssida: review
-  5-4-källäge-alla-på-topplista: review
-  5-5-procentuell-utveckling-över-flera-perioder: review
+  5-1-mobil-layoutbugg-på-listornas-rader: done
+  5-2-länk-till-aktien-på-avanza: done
+  5-3-informationssida: done
+  5-4-källäge-alla-på-topplista: done
+  5-5-procentuell-utveckling-över-flera-perioder: done
   epic-5-retrospective: optional
