@@ -160,7 +160,7 @@ Ovanpå tidsserien och de härledda måtten (Epic 1–3) får Stefan en autentis
 **FRs covered:** FR14, FR15, FR16, FR17, FR18, FR19
 
 ### Epic 5: Post-launch-förbättringar av webb-UI
-Efter Epic 4:s driftsättning (2026-09-13) märker Stefan fem saker i verklig användning: en mobil layoutbugg som klipper av rader, avsaknad av en direktlänk till Avanzas egen aktiesida, ingen förklaring av vad sidorna/symbolerna betyder eller vad som styr Stadig tillväxt-sorteringen, önskan om att se båda källornas ägarantal sida vid sida utan att slå ihop dem, och önskan om procentuell utveckling över fler perioder än bara dagens delta. Fem ordnade stories i `src/Web/` (en av dem — multi-periods %-förändring — sträcker sig även in i `src/Pipeline/Deriver` för nya beräknade kolumner). Efter epicen är Topplistan läsbar på mobil, varje aktie går att öppna direkt på Avanza, en informationssida förklarar verktyget, källväxlaren har ett tredje "Alla"-läge (aldrig summerat, NFR6 oförändrat), och raderna visar utveckling över flera tidsperioder.
+Efter Epic 4:s driftsättning (2026-09-13) märker eller vill Stefan ha sex saker i verklig användning: en mobil layoutbugg som klipper av rader, avsaknad av en direktlänk till Avanzas egen aktiesida, ingen förklaring av vad sidorna/symbolerna betyder eller vad som styr Stadig tillväxt-sorteringen, önskan om att se båda källornas ägarantal sida vid sida utan att slå ihop dem, önskan om procentuell utveckling över fler perioder än bara dagens delta, och en daglig e-postdigest som sammanfattar vad som ändrats i topp 10 sedan föregående handelsdag. Sex ordnade stories i `src/Web/` respektive `src/Pipeline/` (multi-periods %-förändring sträcker sig in i `src/Pipeline/Deriver` för nya beräknade kolumner; e-postdigesten är ett eget, isolerat steg som körs efter `/cron/derive`). Efter epicen är Topplistan läsbar på mobil, varje aktie går att öppna direkt på Avanza, en informationssida förklarar verktyget, källväxlaren har ett tredje "Alla"-läge (aldrig summerat, NFR6 oförändrat), raderna visar utveckling över flera tidsperioder, och Stefan får ett dagligt sammandrag av topp 10-förändringar via e-post.
 **FRs covered:** FR20, FR21, FR22, FR23, FR24, FR25
 
 ---
@@ -844,9 +844,10 @@ So that jag snabbt kan se om momentum håller i sig utan att vada genom hela lis
 
 ## Epic 5: Post-launch-förbättringar av webb-UI
 
-Fem saker Stefan märker i verklig användning efter Epic 4:s driftsättning (2026-09-13):
-en mobil layoutbugg, en saknad länk till Avanza, avsaknad av förklarande text, ett
-önskat tredje källäge, och önskan om utveckling över fler tidsperioder.
+Sex saker Stefan märker eller vill ha i verklig användning efter Epic 4:s
+driftsättning (2026-09-13): en mobil layoutbugg, en saknad länk till Avanza,
+avsaknad av förklarande text, ett önskat tredje källäge, önskan om utveckling
+över fler tidsperioder, och en daglig e-postdigest över förändringar i topp 10.
 
 ### Story 5.1: Mobil layoutbugg på listornas rader
 
@@ -970,3 +971,54 @@ So that jag snabbt kan bedöma om en trend håller i sig över flera tidshorison
 **Given** detta är den enda story i Epic 5 som ändrar `src/Pipeline/Deriver`
 **When** story implementeras
 **Then** följer ändringen samma disciplin som Story 3.1 (MariaDB window functions, SQL-vy, gap-medveten null-hantering) — Epic 4/5:s övriga "rör aldrig `src/Pipeline/`"-regel gäller inte just denna story
+
+### Story 5.6: Daglig e-postdigest över förändringar i topp 10
+
+As Stefan,
+I want ett dagligt e-postmeddelande som visar vad som förändrats i topp 10 för
+Flest ägare och Stadig tillväxt jämfört med föregående handelsdag,
+So that jag kan se nya och försvunna namn samt rankningsförflyttningar utan att
+själv behöva öppna Topplistan varje dag.
+
+**Acceptance Criteria:**
+
+**Given** dagens och föregående handelsdags `owner_count_metrics`-topp-10 för både
+Flest ägare och Stadig tillväxt
+**When** `/cron/derive` har beräknat dagens mått färdigt
+**Then** skickas ett e-postmeddelande till `stockpicker@ryddmo.se` via SMTP
+(`mailcluster.loopia.se`) som sammanfattar förändringarna i båda topplistorna
+
+**Given** `run_date` inte var en riktig handelsdag (helg, eller en `trading_holiday`
+— samma grind `cron_gate()` redan använder för övriga cron-rutter)
+**When** derive körs
+**Then** skickas inget e-postmeddelande alls den dagen, och ingen diff beräknas
+
+**Given** ett instrument som kommit in i eller fallit ur topp 10 sedan föregående
+handelsdag
+**When** e-postmeddelandet byggs
+**Then** listas det under "IN"/"UT" för respektive topplista
+
+**Given** ett instrument som fanns i topp 10 både igår och idag men bytt placering
+**When** e-postmeddelandet byggs
+**Then** visas förflyttningen med en riktningspil och plats-siffror (t.ex.
+"Investor B ↑ #7→#4")
+
+**Given** fler än 5 förändringar (in/ut/förflyttning sammanräknat) i en topplista
+**When** e-postmeddelandet byggs
+**Then** listas de fem första individuellt och resten som "+N till"
+
+**Given** SMTP-uppgifterna för `stockpicker@ryddmo.se`
+**When** de konfigureras
+**Then** hämtas de från miljövariabler, aldrig hårdkodade eller committade —
+samma mönster som `Config::cronToken()`
+
+**Given** en misslyckad SMTP-sändning (fel lösenord, cluster nere, etc.)
+**When** felet inträffar
+**Then** loggas det via `Logging::logger()` precis som andra cron-fel, och
+derive:s egentliga jobb (att beräkna måtten) påverkas inte — digest-steget är
+en egen, isolerad klass som inte kan fälla resten av `/cron/derive`
+
+**Given** den allra första körningen, utan en "igår"-rad att jämföra mot
+**When** e-postmeddelandet byggs
+**Then** hanteras avsaknaden av föregående dag utan krasch (t.ex. genom att
+hoppa över sändningen den dagen tills det finns något att diffa mot)

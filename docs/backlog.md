@@ -119,3 +119,13 @@ independent of a review pass.
   date (2026-01-06, Trettondedag jul) is flagged in the migration as worth a
   final check against Nasdaq's own notice — sources disagreed on whether it's a
   full closure or a half-day.
+- **SCOPED 2026-09-15 — Daily email digest — today vs. yesterday movers in top
+  10.** Moved into `epics.md` as Story 5.6 after a design discussion (party
+  mode). Scoped: entries/exits AND rank moves (with direction arrows) for both
+  Flest ägare and Stadig tillväxt, diffed against the previous *trading* day
+  (suppressed via the existing `cron_gate()`/`trading_holiday` gate — no
+  digest on a non-trading day), sent via SMTP (`mailcluster.loopia.se`) to
+  `stockpicker@ryddmo.se`, credentials from env only (never committed, same
+  pattern as `Config::cronToken()`), as its own isolated step tacked onto
+  `/cron/derive`'s tail so a send failure can't fail derive's real job. See
+  Story 5.6 for full acceptance criteria.
