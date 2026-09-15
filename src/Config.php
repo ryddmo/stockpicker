@@ -149,12 +149,15 @@ final class Config
     }
 
     /**
-     * SMTP credentials + recipient for the daily top-10 digest (spec-5-6,
-     * TopTenDigest). Host/port are not part of this — they are hardcoded
-     * class constants on TopTenDigest (not secrets), same discipline as
-     * DerivedMetricsRepository::SPIKE_THRESHOLD.
+     * From-address + recipient for the daily top-10 digest (spec-5-6,
+     * TopTenDigest). Sent via PHP's local mail()/sendmail, not authenticated
+     * SMTP (Loopia's shared-hosting firewall blocks outbound SMTP to
+     * mailcluster.loopia.se on every port — confirmed live, 2026-09-15), so
+     * no password is required here. A "password" key left over in an
+     * existing config.php from before this correction is harmless and
+     * simply ignored.
      *
-     * @return array{username: string, password: string, recipient: string}
+     * @return array{username: string, recipient: string}
      */
     public function digest(): array
     {
@@ -164,7 +167,7 @@ final class Config
             throw new RuntimeException('config.php is missing the "digest" section');
         }
 
-        foreach (['username', 'password', 'recipient'] as $key) {
+        foreach (['username', 'recipient'] as $key) {
             if (!isset($digest[$key]) || !\is_string($digest[$key]) || $digest[$key] === '') {
                 throw new RuntimeException(sprintf('config.php "digest" section is missing a non-empty "%s" key', $key));
             }
@@ -172,7 +175,6 @@ final class Config
 
         return [
             'username' => $digest['username'],
-            'password' => $digest['password'],
             'recipient' => $digest['recipient'],
         ];
     }

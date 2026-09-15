@@ -341,17 +341,18 @@ try {
             (new RunRepository($pdo))->record('derive', $runDate, $now, $now, $count, $count, 0);
 
             // spec-5-6 — isolated digest step, strictly after derive's own
-            // recorded work. Any failure (bad/missing config, SMTP down,
+            // recorded work. Any failure (bad/missing config, mail() down,
             // whatever) is caught and logged here and must never affect the
             // response below or the ingest_run row just written above.
             //
             // STOCKPICKER_DIGEST_SPY_FILE is a test-only seam, same idiom as
             // STOCKPICKER_AVANZA_UNIVERSE_BASE_URI above: unset in production,
-            // it changes nothing (the real PHPMailer sender is used). Set by
-            // FrontControllerIntegrationTest's EndpointFixture, it swaps in a
-            // sender that appends the call to a file instead of touching
-            // SMTP, so the integration test can observe a real send crossing
-            // the subprocess boundary without ever needing live SMTP.
+            // it changes nothing (the real local mail() sender is used). Set
+            // by FrontControllerIntegrationTest's EndpointFixture, it swaps
+            // in a sender that appends the call to a file instead of
+            // touching mail(), so the integration test can observe a real
+            // send crossing the subprocess boundary without ever needing a
+            // live mail transport.
             $digestSpyFile = getenv('STOCKPICKER_DIGEST_SPY_FILE');
             $digestMailSender = null;
             if (is_string($digestSpyFile) && $digestSpyFile !== '') {

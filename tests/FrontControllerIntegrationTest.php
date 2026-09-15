@@ -329,9 +329,9 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // The default EndpointFixture config.php carries no "digest" section
         // at all, so Config::digest() throws the moment TopTenDigest tries
         // to actually send -- the exact same try/catch in index.php that
-        // would catch a real PHPMailer\Exception from a failed SMTP send
-        // catches this too, so this exercises that failure path end to end
-        // without ever needing a live SMTP connection in a test.
+        // would catch a real mail()-send failure catches this too, so this
+        // exercises that failure path end to end without ever needing a
+        // live mail transport in a test.
         $this->seedMatchedUniverse();
         $this->setRunAfter('00:00');
         $this->allowAllWeekdays();

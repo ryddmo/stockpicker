@@ -97,14 +97,14 @@ final class EndpointFixture
         ];
         if ($this->digestSpyFile !== null) {
             // The spy replaces TopTenDigest's mail sender entirely (real
-            // PHPMailer/SMTP is never touched), but TopTenDigest::run() still
-            // reads Config::digest()['recipient'] before invoking it -- so a
-            // test that enabled the spy needs a "digest" section present.
-            // Deliberately absent otherwise, so the default fixture still
-            // exercises the "digest config missing" failure path as-is.
+            // local mail() is never touched), but TopTenDigest::run() still
+            // reads Config::digest()['recipient']/['username'] before
+            // invoking it -- so a test that enabled the spy needs a "digest"
+            // section present. Deliberately absent otherwise, so the default
+            // fixture still exercises the "digest config missing" failure
+            // path as-is.
             $configData['digest'] = [
                 'username' => 'digest-fixture@example.com',
-                'password' => 'unused-with-spy',
                 'recipient' => 'stockpicker@ryddmo.se',
             ];
         }

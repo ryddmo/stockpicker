@@ -20,20 +20,30 @@ that automatically.
 
 **Approach:** After `/cron/derive`'s existing work, a new isolated pipeline step diffs
 today's Avanza-sourced top-10 (both rankings) against the previous trading day's, and
-emails a plain-text Swedish summary to `stockpicker@ryddmo.se` via authenticated SMTP
-(`mailcluster.loopia.se`), gated by the same `cron_gate()`/trading-day logic already in
+emails a plain-text Swedish summary to the configured recipient via PHP's local
+`mail()`/`sendmail`, gated by the same `cron_gate()`/trading-day logic already in
 place — a send failure never affects derive's own response.
+
+**Amended 2026-09-15 (post-deploy, human-approved):** originally specified authenticated
+SMTP to `mailcluster.loopia.se`. Live verification on the actual Loopia production server
+after the first deploy showed the shared-hosting firewall blocks outbound connections to
+that host on every port (587/465/25), for both IPv4 and IPv6 — a hard infrastructure
+constraint, not a code defect. Switched to PHP's local `mail()`/`sendmail`, the same
+already-proven mechanism `UniverseSync`/`FetchRunner`'s `alarm.email` already uses; no
+SMTP host/port/auth, no `phpmailer/phpmailer` dependency.
 
 ## Boundaries & Constraints
 
 **Always:** Reuse `cron_gate()`'s existing trading-day gate — the digest only runs when
 derive itself runs. Ranking basis is Avanza only, matching Topplista's default/Alla-mode
-basis. SMTP credentials + recipient live in `config.php` via a new `Config::digest()`
+basis. The From address + recipient live in `config.php` via a new `Config::digest()`
 accessor (documented in `config.php.dist`), never hardcoded or committed — the same
 discipline as every other secret here, not real environment variables (see Design
-Notes). Digest failures are caught, logged via `Logging::logger()`, and never affect
+Notes). No password/credential is needed or read (local `mail()`, not authenticated
+SMTP). Digest failures are caught, logged via `Logging::logger()`, and never affect
 `/cron/derive`'s existing response or `ingest_run` row. Body text is Swedish, plain/
-skeptical tone, matching this project's established microcopy convention.
+skeptical tone, matching this project's established microcopy convention; subject/body
+are explicitly UTF-8/MIME-encoded since `mail()` does not do this on its own.
 
 **Never:** No new database table or migration. No change to `Deriver.php` or the
 `owner_count_metrics` view. No change to `/cron/refill`/`/cron/work` behavior. No email
@@ -49,7 +59,7 @@ crash. No email when nothing changed.
 | Weekend/holiday | `cron_gate()` already returns a skip response | Digest never computed or sent | N/A |
 | No previous trading day has data yet | first-ever derive run | No email sent | No crash |
 | More than 5 changes in one ranking | e.g. 8 entries/exits/moves combined | First 5 listed individually, rest as "+N till" | N/A |
-| SMTP send fails | wrong password / cluster unreachable | `derive`'s normal 200 response and `ingest_run` row unaffected | Caught, logged via `Logging::logger()`, swallowed |
+| mail() send fails / digest config missing | `Config::digest()` throws, or `mail()` itself fails | `derive`'s normal 200 response and `ingest_run` row unaffected | Caught, logged via `Logging::logger()`, swallowed |
 
 </frozen-after-approval>
 
@@ -99,7 +109,7 @@ crash. No email when nothing changed.
 - Given two trading days of `owner_count_metrics` data with a genuine top-10 change, when `/cron/derive` runs and its gate passes, then an email is sent to the configured recipient summarizing both rankings' IN/UT and rank moves with direction arrows
 - Given no previous trading day has any data yet, when `/cron/derive` runs, then no email is sent and derive's normal response is unaffected
 - Given `cron_gate()` would already skip (weekend/holiday/window-closed), when `/cron/derive` is hit, then no digest is computed or sent
-- Given the SMTP send throws, when `/cron/derive` runs, then the failure is logged via `Logging::logger()` and derive's own response/`ingest_run` row are unaffected
+- Given the mail send throws (or `Config::digest()` is missing/invalid), when `/cron/derive` runs, then the failure is logged via `Logging::logger()` and derive's own response/`ingest_run` row are unaffected
 
 ## Implementation Notes
 
@@ -150,6 +160,37 @@ directly (IN/UT/move+arrow, 5-item cap + "+N till", no-change skip,
 no-prior-day skip, weekend/holiday lookback, Avanza-only basis) via an
 injected spy `$mailSender`, no real SMTP, per the task's own instruction.
 
+**Post-deploy correction (2026-09-15):** the two paragraphs above describe the
+original PHPMailer/SMTP implementation, which is now superseded — kept for
+the historical record of why the spy-file test seam exists in `index.php`,
+not as a description of current behavior. After the first production deploy,
+live verification (SSH into the Loopia server, raw `curl telnet://` probes
+against `mailcluster.loopia.se` on ports 587/465/25, then an actual PHPMailer
+send attempt) showed every outbound connection attempt failed with
+`Permission denied` at the OS/firewall level — Loopia's shared-hosting
+environment blocks outbound SMTP entirely, regardless of credentials. Human
+approved switching to PHP's local `mail()`/`sendmail` (already proven by
+`UniverseSync`/`FetchRunner`'s `alarm.email`). Changes: `TopTenDigest::
+defaultMailSender()` now builds a `From:`/`Content-Type: charset=UTF-8`
+header block and calls `@mail()` directly (no PHPMailer, no SMTP host/port
+constants); `Config::digest()` narrowed to `array{username, recipient}` — no
+password field, since local `mail()` needs no auth (an existing `password`
+key in a previously-configured `config.php` is simply ignored, not an
+error); `phpmailer/phpmailer` removed from `composer.json`/`composer.lock`;
+`config.php.dist`, `docs/deploy.md`, and this spec's own frozen Intent/
+Boundaries/I-O-matrix/AC updated to match (frozen-block edit is
+human-approved per this project's own rule for renegotiating intent).
+`tests/SmokeTest.php`'s three `Config::digest()` validation tests updated to
+stop asserting on the now-unchecked `password` key. Re-verified after the
+change: `composer test` (555 tests, 2963 assertions, all green), `composer
+run analyse` (PHPStan level 8, clean), and a real production SSH check
+confirming `Config::digest()` loads correctly with the server's actual
+`config.php`. Redeployed via `bin/deploy.sh`; production `/` and `/health`
+both verified 200 after redeploy. Not yet verified: an actual `mail()` send
+succeeding end-to-end in production (no genuine top-10 change has occurred
+since the redeploy to trigger a real send) — the next night a real diff
+exists will be the first live proof.
+
 ## Spec Change Log
 
 ## Review Triage Log
@@ -175,21 +216,25 @@ Ranking basis is Avanza-only, matching Topplista's default/Alla-mode basis
 (`LeaderboardController::render()`) — not user-configurable, since the digest is meant
 to mirror what Stefan already sees by default.
 
-SMTP credentials live in `config.php` (`Config::digest()`), not real environment
-variables — this corrects an assumption from the original design discussion, which
-isn't how this codebase's `Config` class actually works: every existing secret
-(`cron_token`, login credentials, DB password) reads from the untracked `config.php`
-array via a typed accessor, never `getenv()`. Host (`mailcluster.loopia.se`) and port
-(587, STARTTLS) are hardcoded class constants, not secrets, mirroring how
-`SPIKE_THRESHOLD` is already a constant rather than a setting.
+The From address + recipient live in `config.php` (`Config::digest()`), not real
+environment variables — every existing secret in this codebase (`cron_token`, login
+credentials, DB password) reads from the untracked `config.php` array via a typed
+accessor, never `getenv()`.
 
-PHPMailer is chosen over hand-rolling an SMTP/STARTTLS/AUTH client, for the same reason
-Guzzle was chosen over raw cURL: a well-tested library for a fiddly protocol beats
-reinventing it — the one new dependency this story needs.
+**Mail transport, superseded 2026-09-15:** originally PHPMailer over authenticated SMTP
+to `mailcluster.loopia.se:587`, chosen for the same reason Guzzle was chosen over raw
+cURL (a well-tested library for a fiddly protocol). Live verification on the production
+server showed Loopia's shared-hosting firewall blocks outbound SMTP entirely (every
+port, confirmed via raw TCP probes and an actual failed PHPMailer send) — an
+infrastructure constraint no library choice could work around. Now: PHP's local
+`mail()`/`sendmail`, the same mechanism `UniverseSync`/`FetchRunner`'s `alarm.email`
+already proves works from this environment. No host/port/auth, no dependency; the
+subject/body are explicitly MIME/UTF-8-encoded by hand since `mail()` doesn't do that on
+its own (Swedish `ä`/`ö`/`å` throughout the digest text).
 
-`TopTenDigest` takes an injectable `?callable $mailSender` (default wraps PHPMailer),
+`TopTenDigest` takes an injectable `?callable $mailSender` (default wraps `mail()`),
 mirroring `UniverseSync`'s/`FetchRunner`'s existing `?callable $sendMail` precedent —
-keeps the diff/formatting logic testable without a real SMTP connection.
+keeps the diff/formatting logic testable without touching the real mail transport.
 
 Previous-trading-day resolution walks backward from `$runDate` day by day (capped at 10
 days as a sanity bound) skipping Sat/Sun and `TradingHolidayRepository::isHoliday()`

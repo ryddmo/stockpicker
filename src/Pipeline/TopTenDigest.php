@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Stockpicker\Pipeline;
 
 use DateTimeImmutable;
-use PHPMailer\PHPMailer\Exception as PHPMailerException;
-use PHPMailer\PHPMailer\PHPMailer;
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Config;
 use Stockpicker\Store\DerivedMetricsRepository;
@@ -28,10 +26,6 @@ use Stockpicker\Store\TradingHolidayRepository;
  */
 final class TopTenDigest
 {
-    /** Loopia's outgoing mail cluster — a fact, not a secret, hence a constant. */
-    private const SMTP_HOST = 'mailcluster.loopia.se';
-    private const SMTP_PORT = 587;
-
     /** How many top-10 slots each ranking is diffed over. */
     private const RANKING_LIMIT = 10;
 
@@ -46,8 +40,12 @@ final class TopTenDigest
 
     /**
      * @param (callable(string, string, string): bool)|null $mailSender injected
-     *        spy for tests; default wraps PHPMailer configured from
-     *        Config::digest(), talking to self::SMTP_HOST/self::SMTP_PORT.
+     *        spy for tests; default wraps PHP's local mail()/sendmail, using
+     *        Config::digest()'s From address. Not authenticated SMTP —
+     *        Loopia's shared-hosting firewall blocks outbound SMTP to
+     *        mailcluster.loopia.se entirely (confirmed live, 2026-09-15) —
+     *        same local-delivery mechanism already used by
+     *        UniverseSync/FetchRunner's alarm.email.
      */
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
@@ -232,44 +230,33 @@ final class TopTenDigest
     }
 
     /**
-     * Default sender: PHPMailer over SMTP/STARTTLS to self::SMTP_HOST:self::SMTP_PORT,
-     * authenticated with Config::digest()'s credentials — chosen over
-     * hand-rolling SMTP/STARTTLS/AUTH the same way Guzzle was chosen over raw
-     * cURL. `Config::digest()` is only read lazily, when a send is actually
-     * about to happen (run() already returned early on every skip path), so a
-     * dev/test environment with no "digest" config section never needs one
-     * unless a real change is being emailed. Any PHPMailer\Exception
-     * propagates to the caller (public_html/index.php), which catches and
-     * logs it via Logging::logger() — never rethrown from here.
+     * Default sender: PHP's local mail()/sendmail, `From:` set to
+     * Config::digest()'s address — chosen over authenticated SMTP because
+     * Loopia's shared-hosting firewall blocks outbound connections to
+     * mailcluster.loopia.se on every port (confirmed live, 2026-09-15;
+     * PHPMailer's SMTP transport could not connect at all). Local mail()
+     * goes through the server's own pickup, not an outbound network hop, so
+     * it isn't subject to that block — the same mechanism already proven by
+     * UniverseSync/FetchRunner's alarm.email. `Config::digest()` is only
+     * read lazily, when a send is actually about to happen (run() already
+     * returned early on every skip path). The subject/body carry Swedish
+     * characters, so both are MIME/charset-encoded explicitly — mail() does
+     * not do this on its own. `@mail()`'s bool return already matches this
+     * callable's contract directly; a `false` return is handled by run()'s
+     * own check, not raised here.
      *
      * @return callable(string, string, string): bool
      */
     private function defaultMailSender(): callable
     {
         return function (string $to, string $subject, string $message): bool {
-            $credentials = $this->config->digest();
+            $from = $this->config->digest()['username'];
+            $encodedSubject = '=?UTF-8?B?' . base64_encode($subject) . '?=';
+            $headers = "From: {$from}\r\n"
+                . "Content-Type: text/plain; charset=UTF-8\r\n"
+                . 'Content-Transfer-Encoding: 8bit';
 
-            $mail = new PHPMailer(true);
-            $mail->isSMTP();
-            $mail->Host = self::SMTP_HOST;
-            $mail->Port = self::SMTP_PORT;
-            $mail->SMTPAuth = true;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->CharSet = PHPMailer::CHARSET_UTF8;
-            $mail->Username = $credentials['username'];
-            $mail->Password = $credentials['password'];
-            $mail->Subject = $subject;
-            $mail->Body = $message;
-            $mail->isHTML(false);
-
-            try {
-                $mail->setFrom($credentials['username']);
-                $mail->addAddress($to);
-
-                return $mail->send();
-            } catch (PHPMailerException $e) {
-                throw new \RuntimeException('TopTenDigest: SMTP send failed: ' . $e->getMessage(), 0, $e);
-            }
+            return @mail($to, $encodedSubject, $message, $headers);
         };
     }
 }

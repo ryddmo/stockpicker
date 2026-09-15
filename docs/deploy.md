@@ -184,11 +184,12 @@ never touched.
    chmod 600 ~/stockpicker.ryddmo.se/config.php
    ```
 
-   `digest` (spec-5-6, `TopTenDigest`) is another secret that must be filled in by hand,
-   same as everything else in this file: `'digest' => ['username' => ..., 'password' => ...,
-   'recipient' => ...]` — the SMTP username/password for `mailcluster.loopia.se:587` (the
-   username also doubles as the From address) and the recipient address for the daily
-   top-10 digest email.
+   `digest` (spec-5-6, `TopTenDigest`) is another value that must be filled in by hand,
+   same as everything else in this file: `'digest' => ['username' => ..., 'recipient' =>
+   ...]` — the From address and the recipient address for the daily top-10 digest email,
+   sent via PHP's local `mail()`/`sendmail`, not authenticated SMTP. Loopia's shared-hosting
+   firewall blocks outbound SMTP to `mailcluster.loopia.se` on every port (confirmed live,
+   2026-09-15) — no password is needed or read.
 
    **The file must be `<?php return [ ... ];`** — a config with no `return` makes
    `require` yield `int(1)` and phinx fails with _"config.php … must return an array, got

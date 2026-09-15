@@ -131,7 +131,7 @@ final class SmokeTest extends TestCase
     public function testConfigDigestThrowsWhenKeyIsMissing(): void
     {
         $config = Config::fromArray([
-            'digest' => ['username' => 'u', 'password' => 'p'],
+            'digest' => ['username' => 'u'],
         ], $this->fixtureRoot);
 
         $this->expectException(RuntimeException::class);
@@ -141,7 +141,7 @@ final class SmokeTest extends TestCase
     public function testConfigDigestThrowsWhenKeyIsNonString(): void
     {
         $config = Config::fromArray([
-            'digest' => ['username' => 'u', 'password' => 123, 'recipient' => 'r'],
+            'digest' => ['username' => 'u', 'recipient' => 123],
         ], $this->fixtureRoot);
 
         $this->expectException(RuntimeException::class);
@@ -151,7 +151,7 @@ final class SmokeTest extends TestCase
     public function testConfigDigestThrowsWhenKeyIsEmptyString(): void
     {
         $config = Config::fromArray([
-            'digest' => ['username' => 'u', 'password' => 'p', 'recipient' => ''],
+            'digest' => ['username' => 'u', 'recipient' => ''],
         ], $this->fixtureRoot);
 
         $this->expectException(RuntimeException::class);
