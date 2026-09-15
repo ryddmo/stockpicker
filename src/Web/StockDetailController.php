@@ -568,7 +568,7 @@ final class StockDetailController
           --star-filled: #F5A623;
           --star-empty: #D0D5DD;
           --nohist-bg: #F2F4F7;
-          --secondary-line: #98A2B3;
+          --secondary-line: #475467;
         }
         * { box-sizing: border-box; }
         body {
