@@ -65,15 +65,28 @@ independent of a review pass.
   **decision: leave the frozen design as-is**, this is a temporary side-effect of a
   real flat stretch in Avanza's data that resolves itself once the count moves again,
   not a defect to fix.
-- **Add a Y-axis to Aktiedetalj's trend-overlay chart.** Right now the chart shows
-  direction only (up/down/flat) with no scale — no numbers anywhere on the page tell
-  you the actual owner count, just the line's shape. A few rounded tick labels (e.g.
-  "530k / 532k / 534k") in recessive gray, no heavy gridlines, per the dataviz skill's
-  convention (hairline recessive axes, clean rounded tick numbers, direct labels before
-  gridlines). Skip an X-axis — the Dag/Vecka/30d/90d/År range tabs already convey the
-  timeframe, and date labels would clutter a chart this narrow on mobile. Real feature
-  work (tick-position computation per range mode), not a one-line change — scope it as
-  its own story when picked up.
+- **FIXED 2026-09-15 — Add a Y-axis to Aktiedetalj's trend-overlay chart.** Right now
+  the chart shows direction only (up/down/flat) with no scale — no numbers anywhere on
+  the page tell you the actual owner count, just the line's shape. A few rounded tick
+  labels (e.g. "530k / 532k / 534k") in recessive gray, no heavy gridlines, per the
+  dataviz skill's convention (hairline recessive axes, clean rounded tick numbers,
+  direct labels before gridlines). Skip an X-axis — the Dag/Vecka/30d/90d/År range tabs
+  already convey the timeframe, and date labels would clutter a chart this narrow on
+  mobile.
+
+  Built as plain HTML/CSS, not SVG `<text>`: the chart's `<svg>` uses
+  `preserveAspectRatio="none"` (stretches x/y independently to fill the container —
+  fine for a line's shape, but it would non-uniformly squash/stretch SVG text on every
+  viewport but the one matching the viewBox's exact aspect ratio). `StockDetailController
+  ::yAxisTicks()` computes up to 3 anchors (max/mid/min of the *primary* slice's actual
+  values, NFR6 — the secondary source never gets numbers) positioned by `top: n%` in a
+  column the same height as the chart; `tickLabel()` rounds each to ~3 significant
+  figures for display only ("532481" -> "532k"), never the position. One case found
+  only by actually looking at a rendered chart (Volvo B's real dev data): a "Dag"
+  slice's mid and min values can round to the *same* display label while sitting at
+  very different heights — "210k" stacked twice reads as a mistake, not a clean axis.
+  `dedupeAdjacentLabels()` drops the mid tick when its rounded label collides with
+  either extreme; the two extremes always stay.
 - **FIXED 2026-09-15 — Spike vs. negative trend colors too close to tell apart.**
   Flagged while fixing the Aktiedetalj secondary-line contrast above: `--spike-text`
   (#B54708) and `--negative` (#F04438), duplicated identically across Leaderboard,

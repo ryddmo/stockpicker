@@ -1094,6 +1094,29 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status);
         self::assertStringContainsString('trend-overlay', $body);
         self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+
+        // Y-axis (backlog 2026-09-15): max 1030 -> "1,03k", mid 1015 -> "1,02k", min 1000 -> "1k".
+        self::assertSame(3, substr_count($body, 'class="y-axis-tick"'));
+        self::assertStringContainsString('>1,03k<', $body);
+        self::assertStringContainsString('>1,02k<', $body);
+        self::assertStringContainsString('>1k<', $body);
+    }
+
+    public function testStockDetailYAxisDropsTheMidTickWhenItsRoundedLabelCollidesWithAnExtreme(): void
+    {
+        $this->seedMatchedUniverse();
+        // max 100999 -> "101k", mid 100499 -> "100k" (rounds down, same as
+        // min) -> the mid tick must be dropped rather than stacking a second
+        // "100k" at a different height on top of the real min tick.
+        $this->seedOwnerCount('SE0000001001', '2026-01-01', 100000);
+        $this->seedOwnerCount('SE0000001001', '2026-01-02', 100999);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(2, substr_count($body, 'class="y-axis-tick"'));
+        self::assertStringContainsString('>101k<', $body);
+        self::assertStringContainsString('>100k<', $body);
     }
 
     public function testStockDetailRange30dShowsInsufficientHistoryMessageWhenPrimaryHasFewerThan30Rows(): void

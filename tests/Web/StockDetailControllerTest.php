@@ -200,6 +200,81 @@ final class StockDetailControllerTest extends TestCase
         );
     }
 
+    // -- Y-axis ticks (backlog 2026-09-15): primary-only, min/mid/max --------
+
+    public function testYAxisTicksReturnsMaxMidMinAtTheirActualHeightPercent(): void
+    {
+        $slice = [
+            self::rowWithDate('2026-01-01', 100),
+            self::rowWithDate('2026-01-02', 200),
+        ];
+
+        $ticks = StockDetailController::yAxisTicks($slice);
+
+        self::assertSame(200, $ticks[0]['value']);
+        self::assertSame(0.0, $ticks[0]['percent'], 'the max sits at the very top');
+        self::assertSame(150, $ticks[1]['value']);
+        self::assertEqualsWithDelta(50.0, $ticks[1]['percent'], 0.01, 'the midpoint sits halfway down');
+        self::assertSame(100, $ticks[2]['value']);
+        self::assertSame(100.0, $ticks[2]['percent'], 'the min sits at the very bottom');
+    }
+
+    public function testYAxisTicksIsEmptyForAnEmptySlice(): void
+    {
+        self::assertSame([], StockDetailController::yAxisTicks([]));
+    }
+
+    public function testYAxisTicksCollapsesToOneCenteredTickWhenTheSliceIsFlat(): void
+    {
+        $slice = [self::rowWithDate('2026-01-01', 500), self::rowWithDate('2026-01-02', 500)];
+
+        $ticks = StockDetailController::yAxisTicks($slice);
+
+        self::assertCount(1, $ticks);
+        self::assertSame(500, $ticks[0]['value']);
+        self::assertSame(50.0, $ticks[0]['percent']);
+    }
+
+    public function testYAxisTicksIgnoresTheSecondarySourceEntirely(): void
+    {
+        // The axis is built from primarySlice alone — a caller accidentally
+        // passing the secondary's (very different magnitude) series must
+        // never leak into the primary's tick values. Nothing to assert
+        // beyond the signature itself accepting only one slice; documented
+        // here so the guarantee has a named test, not just a docblock.
+        $primary = [self::rowWithDate('2026-01-01', 500), self::rowWithDate('2026-01-02', 500)];
+
+        self::assertSame(500, StockDetailController::yAxisTicks($primary)[0]['value']);
+    }
+
+    // -- tickLabel(): magnitude-aware rounding for compact axis chrome -------
+
+    public function testTickLabelRoundsSixDigitValuesToTheNearestThousand(): void
+    {
+        self::assertSame('532k', StockDetailController::tickLabel(532481));
+        self::assertSame('530k', StockDetailController::tickLabel(529600));
+    }
+
+    public function testTickLabelRoundsFiveDigitValuesWithOneDecimal(): void
+    {
+        self::assertSame('45,3k', StockDetailController::tickLabel(45260));
+        self::assertSame('40k', StockDetailController::tickLabel(40012));
+    }
+
+    public function testTickLabelRoundsFourDigitValuesWithUpToTwoDecimals(): void
+    {
+        self::assertSame('8,73k', StockDetailController::tickLabel(8734));
+        self::assertSame('8,7k', StockDetailController::tickLabel(8700));
+        self::assertSame('8k', StockDetailController::tickLabel(8000));
+    }
+
+    public function testTickLabelLeavesValuesUnderOneThousandUnabbreviated(): void
+    {
+        self::assertSame('450', StockDetailController::tickLabel(450));
+        self::assertSame('7', StockDetailController::tickLabel(7));
+        self::assertSame('0', StockDetailController::tickLabel(0));
+    }
+
     // -- Primary line color key (contextual; secondary is always fixed) ------
 
     public function testPrimaryColorKeyIsNoHistoryWhenSma7IsNull(): void

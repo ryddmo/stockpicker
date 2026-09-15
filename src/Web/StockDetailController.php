@@ -237,13 +237,146 @@ final class StockDetailController
             : '';
 
         // Secondary drawn first so the primary line renders on top.
-        return sprintf(
+        $svg = sprintf(
             '<svg class="trend-overlay" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="Trend">%s%s</svg>',
             $width,
             $height,
             $secondaryPolyline,
             $primaryPolyline,
         );
+
+        return '<div class="trend-plot">' . self::yAxisHtml($primarySlice) . $svg . '</div>';
+    }
+
+    /**
+     * The primary axis's tick column — min/mid/max of the *primary* slice's
+     * actual values (never the secondary's: NFR6, each source keeps its own
+     * scale, and this chart only ever numbers the source the reader picked).
+     * Plain HTML/CSS, not SVG text: the <svg> above uses
+     * `preserveAspectRatio="none"`, which stretches x and y independently to
+     * fill whatever width the container gets — fine for a line's shape, but
+     * it would non-uniformly squash/stretch SVG <text> glyphs on every
+     * viewport but the one matching the viewBox's exact aspect ratio.
+     * Positioning by `top: n%` inside a column the same height as the SVG
+     * keeps a label exactly level with its value regardless of that stretch.
+     *
+     * @param list<array<string, mixed>> $primarySlice
+     */
+    private static function yAxisHtml(array $primarySlice): string
+    {
+        $labeled = array_map(
+            static fn (array $tick): array => ['percent' => $tick['percent'], 'label' => self::tickLabel($tick['value'])],
+            self::yAxisTicks($primarySlice),
+        );
+        $labeled = self::dedupeAdjacentLabels($labeled);
+
+        $items = array_map(
+            static fn (array $tick): string => sprintf(
+                '<span class="y-axis-tick" style="top:%s%%">%s</span>',
+                sprintf('%.2f', $tick['percent']),
+                self::e($tick['label']),
+            ),
+            $labeled,
+        );
+
+        return '<div class="y-axis">' . implode('', $items) . '</div>';
+    }
+
+    /**
+     * Rounding two genuinely different values to the same display label
+     * (e.g. a "Dag" slice's two points, ~210963 and ~211050, both rounding
+     * to "210k"/"211k" is fine, but a min/mid pair like 210963/211006 can
+     * both land on "211k") would stack an identical-looking number twice at
+     * different heights — confusing, not clean. Drops the middle tick when
+     * it collides with either extreme; the two extremes always stay so the
+     * axis never disappears entirely.
+     *
+     * @param list<array{percent: float, label: string}> $ticks
+     *
+     * @return list<array{percent: float, label: string}>
+     */
+    private static function dedupeAdjacentLabels(array $ticks): array
+    {
+        if (count($ticks) !== 3) {
+            return $ticks;
+        }
+
+        if ($ticks[1]['label'] === $ticks[0]['label'] || $ticks[1]['label'] === $ticks[2]['label']) {
+            return [$ticks[0], $ticks[2]];
+        }
+
+        return $ticks;
+    }
+
+    /**
+     * Story backlog 2026-09-15 — up to 3 tick anchors (max, mid, min) at the
+     * *actual* values, so each sits at the exact height scaledPoints() would
+     * plot that value at (`percent` is measured from the top, matching
+     * scaledPoints()'s y = height - ...). Only the displayed label is
+     * rounded (tickLabel()); the position never is. A flat slice (every
+     * value equal) collapses to one centered tick — three identical numbers
+     * stacked on top of each other would say nothing a single one doesn't.
+     *
+     * @param list<array<string, mixed>> $primarySlice
+     *
+     * @return list<array{value: int, percent: float}>
+     */
+    public static function yAxisTicks(array $primarySlice): array
+    {
+        if ($primarySlice === []) {
+            return [];
+        }
+
+        $values = array_map(static fn (array $row): int => (int) $row['number_of_owners'], $primarySlice);
+        $min = min($values);
+        $max = max($values);
+
+        if ($min === $max) {
+            return [['value' => $min, 'percent' => 50.0]];
+        }
+
+        $mid = intdiv($min + $max, 2);
+        $range = $max - $min;
+
+        return [
+            ['value' => $max, 'percent' => 0.0],
+            ['value' => $mid, 'percent' => (($max - $mid) / $range) * 100],
+            ['value' => $min, 'percent' => 100.0],
+        ];
+    }
+
+    /**
+     * Rounds a raw owner count to a magnitude-appropriate "nice" number for
+     * axis chrome and formats it compactly (e.g. 532481 -> "532k",
+     * 8734 -> "8,73k", 450 -> "450") — the exact figure already lives
+     * elsewhere on the page (header, legend); the axis only needs to read at
+     * a glance. Rounds to roughly 3 significant figures: keeps the display
+     * stable (the tick for a ~530k series won't jitter by single digits
+     * between renders) without inventing a full nice-number/gridline
+     * algorithm this narrow, gridline-less axis doesn't need.
+     */
+    public static function tickLabel(int $value): string
+    {
+        $digits = strlen((string) $value);
+        $step = (int) (10 ** max(0, $digits - 3));
+        $rounded = (int) round($value / $step) * $step;
+
+        if ($rounded < 1000) {
+            return (string) $rounded;
+        }
+
+        $decimals = match (true) {
+            $digits >= 6 => 0,
+            $digits === 5 => 1,
+            default => 2,
+        };
+
+        $formatted = number_format($rounded / 1000, $decimals, '.', '');
+        if ($decimals > 0) {
+            $formatted = rtrim(rtrim($formatted, '0'), '.');
+        }
+
+        return str_replace('.', ',', $formatted) . 'k';
     }
 
     /**
@@ -620,7 +753,14 @@ final class StockDetailController
           background: var(--bg-surface); border: 1px solid var(--row-border);
           border-radius: 16px; padding: 16px;
         }
-        .trend-overlay { width: 100%; height: 220px; }
+        .trend-plot { display: flex; align-items: stretch; gap: 6px; }
+        .y-axis { position: relative; flex: 0 0 30px; width: 30px; height: 220px; }
+        .y-axis-tick {
+          position: absolute; right: 0; transform: translateY(-50%);
+          font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        .trend-overlay { width: 100%; height: 220px; flex: 1 1 auto; min-width: 0; }
         .trend-line { fill: none; stroke-width: 2.5px; }
         .trend-line--positive { stroke: var(--positive); }
         .trend-line--negative { stroke: var(--negative); }
