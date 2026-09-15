@@ -16,9 +16,29 @@ independent of a review pass.
   stocks/investing to help interpret the collected figures (owner-count trends,
   streak/spike/sma) before deciding what to build next — not a specific feature yet,
   more a "how should I think about these numbers" conversation.
-- **Mobile layout bug on Topplista's "Alla" source mode.** On a phone screen the
-  accumulated owner-count number (e.g. "Avanza 534 01…") is clipped by the right edge
-  of the screen instead of wrapping/shrinking — reported with a screenshot showing
-  Investor B / Volvo B / SAAB B rows all cut off mid-number. "Alla" mode is Story 5.4;
-  the mobile row-layout fix was Story 5.1, but that predates "Alla" and evidently
-  doesn't cover this wider combined-source number.
+- **FIXED 2026-09-15 — Mobile layout bug on Topplista's "Alla" source mode.** On a
+  phone screen the accumulated owner-count number (e.g. "Avanza 534 01…") is clipped
+  by the right edge of the screen instead of wrapping/shrinking — reported with a
+  screenshot showing Investor B / Volvo B / SAAB B rows all cut off mid-number. "Alla"
+  mode is Story 5.4; the mobile row-layout fix was Story 5.1, but that predates "Alla"
+  and evidently doesn't cover this wider combined-source number. `.statcol`/`.stat` was
+  `width: 70px; white-space: nowrap` with no wrap/shrink safety net (unlike `.name`'s
+  ellipsis or `.sparkline-label`'s existing wrap treatment) — sized for a plain number,
+  not `combinedOwnerCountText()`'s much longer "Avanza X · Nordnet Y" string. Widened
+  `.statcol` to 100px and let `.stat` wrap (`white-space: normal; overflow-wrap:
+  break-word`), mirroring `.sparkline-label`'s pattern. The text still wraps mid-number
+  on narrow phones (a `combinedOwnerCountText()` format change to fix that would break
+  its frozen-spec return value and the tests pinning it) but nothing is clipped/hidden
+  any more — verified in a real Chrome window at 390px width. Single-source mode
+  (short numbers) is unaffected. Scoped to `LeaderboardController.php` only — "Alla"
+  mode doesn't exist on FullListController/WatchlistController despite them sharing
+  the same duplicated `.statcol`/`.stat` CSS block.
+
+## 2026-09-15
+
+- **"Stadig tillväxt" (steady growth) filter returns an empty list for Avanza, but
+  works for Nordnet.** On Fullständig lista, switching source to Avanza with "Stadig
+  tillväxt" selected shows "Inga resultat för dessa filter." — Nordnet shows real rows
+  under the same filter. Reported with two screenshots (Avanza empty vs. Nordnet
+  populated). Not yet investigated — likely something specific to how the steady-growth
+  qualifier query filters/joins per source in `DerivedMetricsRepository` or the view.

@@ -693,8 +693,11 @@ final class LeaderboardController
         .sparkline-line--neutral { fill: none; stroke: var(--brand); stroke-width: 2px; }
         .sparkline-line--spike { fill: none; stroke: var(--spike-text); stroke-width: 2px; }
         .sparkline-line--nohistory { fill: none; stroke: var(--text-muted); stroke-width: 2px; stroke-dasharray: 2 3; }
-        .statcol { text-align: right; flex-shrink: 0; width: 70px; }
-        .stat { display: block; font-size: 13.5px; font-weight: 800; white-space: nowrap; }
+        .statcol { text-align: right; flex-shrink: 0; width: 100px; }
+        .stat {
+          display: block; font-size: 13.5px; font-weight: 800; white-space: normal;
+          overflow-wrap: break-word; line-height: 1.25;
+        }
         .delta-chip {
           display: inline-block; margin-top: 3px;
           font-size: 9.5px; font-weight: 800; border-radius: 6px; padding: 3px 6px;
