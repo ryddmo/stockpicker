@@ -129,3 +129,35 @@ independent of a review pass.
   pattern as `Config::cronToken()`), as its own isolated step tacked onto
   `/cron/derive`'s tail so a send failure can't fail derive's real job. See
   Story 5.6 for full acceptance criteria.
+
+## 2026-09-17
+
+- **BLOCKED — Story 5.6's digest email doesn't actually send in production.**
+  Built and deployed (twice — once with PHPMailer/SMTP, once with a
+  PHPMailer→local-`mail()` fallback after the first attempt failed), but
+  neither transport works from this specific Loopia hosting account:
+  - Authenticated SMTP to `mailcluster.loopia.se` (Loopia's own documented
+    method — see e.g. their "Post SMTP"/WordPress SMTP guidance) is blocked
+    at the network level: a live SSH probe on the production server got
+    `Permission denied` connecting to ports 587/465/25, both IPv4 and IPv6.
+  - PHP's local `mail()`/`sendmail` fallback (the same mechanism
+    `UniverseSync`/`FetchRunner`'s `alarm.email` already uses successfully)
+    also fails, but *silently* from PHP's perspective: `mail()` returns
+    `true` (the handoff to sendmail succeeded), but the local Postfix then
+    rejects the actual submission: `fatal: User u4g9m3(4499896) is not
+    allowed to submit mail`. `TopTenDigest` has no way to detect this today
+    — it looks like a successful send in the logs.
+
+  Both restrictions look account-specific (an anti-abuse limit on this
+  particular hosting plan/user), not a fundamental platform limitation —
+  Loopia's own docs assume SMTP-587 works for a normal customer site.
+  Likely fix: a support ticket to Loopia asking them to lift the outbound
+  mail restriction for this account, OR switch to an HTTPS-based
+  transactional email API (sidesteps the block entirely, since outbound
+  HTTPS already works for the Avanza/Nordnet adapter calls) — not pursued
+  yet, left as-is by Stefan's own call ("leave it broken for now").
+
+  Code/spec/deploy docs are otherwise complete and merged (`5adff12`,
+  `0ea391f`); this is purely the last-mile delivery mechanism. Revisit by
+  either filing the Loopia ticket or picking an email API and redoing just
+  `TopTenDigest::defaultMailSender()`.
