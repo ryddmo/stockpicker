@@ -338,45 +338,69 @@ try {
             $runDate = $gate['runDate'];
             $now = $gate['now'];
             $count = count((new InstrumentRepository($pdo))->allActive());
-            (new RunRepository($pdo))->record('derive', $runDate, $now, $now, $count, $count, 0);
+            $runRepository = new RunRepository($pdo);
 
-            // spec-5-6 — isolated digest step, strictly after derive's own
-            // recorded work. Any failure (bad/missing config, mail() down,
-            // whatever) is caught and logged here and must never affect the
-            // response below or the ingest_run row just written above.
-            //
-            // STOCKPICKER_DIGEST_SPY_FILE is a test-only seam, same idiom as
-            // STOCKPICKER_AVANZA_UNIVERSE_BASE_URI above: unset in production,
-            // it changes nothing (the real local mail() sender is used). Set
-            // by FrontControllerIntegrationTest's EndpointFixture, it swaps
-            // in a sender that appends the call to a file instead of
-            // touching mail(), so the integration test can observe a real
-            // send crossing the subprocess boundary without ever needing a
-            // live mail transport.
-            $digestSpyFile = getenv('STOCKPICKER_DIGEST_SPY_FILE');
-            $digestMailSender = null;
-            if (is_string($digestSpyFile) && $digestSpyFile !== '') {
-                $digestMailSender = static function (string $to, string $subject, string $message) use ($digestSpyFile): bool {
-                    return file_put_contents(
-                        $digestSpyFile,
-                        json_encode(['to' => $to, 'subject' => $subject, 'message' => $message], JSON_THROW_ON_ERROR) . "\n",
-                        FILE_APPEND,
-                    ) !== false;
-                };
+            // spec-5-6 hardening — Kundzon's URL-cron presets can't pin an
+            // exact time of day (only fixed intervals like "every hour"),
+            // so /cron/derive is expected to land inside the run_after
+            // window (and pass the gate above) more than once some
+            // evenings. Without this check every one of those hits would
+            // independently recompute the same today-vs-prior-day diff and
+            // re-send the same digest. Checked *before* this hit's own
+            // record() call below (which would otherwise always count as
+            // "already derived today" and defeat the check every time).
+            $alreadyDerivedToday = false;
+            foreach ($runRepository->forRunDate($runDate) as $priorRun) {
+                if ($priorRun->runType === 'derive') {
+                    $alreadyDerivedToday = true;
+
+                    break;
+                }
             }
 
-            try {
-                (new TopTenDigest(
-                    new DerivedMetricsRepository($pdo),
-                    new TradingHolidayRepository($pdo),
-                    $services['config'],
-                    $digestMailSender,
-                ))->run($runDate);
-            } catch (\Throwable $e) {
-                $logger->error('top-10 digest failed', [
-                    'exception' => $e::class,
-                    'message' => $e->getMessage(),
-                ]);
+            $runRepository->record('derive', $runDate, $now, $now, $count, $count, 0);
+
+            if (!$alreadyDerivedToday) {
+                // spec-5-6 — isolated digest step, strictly after derive's
+                // own recorded work. Any failure (bad/missing config,
+                // mail() down, whatever) is caught and logged here and must
+                // never affect the response below or the ingest_run row
+                // just written above.
+                //
+                // STOCKPICKER_DIGEST_SPY_FILE is a test-only seam, same idiom
+                // as STOCKPICKER_AVANZA_UNIVERSE_BASE_URI above: unset in
+                // production, it changes nothing (the real local mail()
+                // sender is used). Set by FrontControllerIntegrationTest's
+                // EndpointFixture, it swaps in a sender that appends the
+                // call to a file instead of touching mail(), so the
+                // integration test can observe a real send crossing the
+                // subprocess boundary without ever needing a live mail
+                // transport.
+                $digestSpyFile = getenv('STOCKPICKER_DIGEST_SPY_FILE');
+                $digestMailSender = null;
+                if (is_string($digestSpyFile) && $digestSpyFile !== '') {
+                    $digestMailSender = static function (string $to, string $subject, string $message) use ($digestSpyFile): bool {
+                        return file_put_contents(
+                            $digestSpyFile,
+                            json_encode(['to' => $to, 'subject' => $subject, 'message' => $message], JSON_THROW_ON_ERROR) . "\n",
+                            FILE_APPEND,
+                        ) !== false;
+                    };
+                }
+
+                try {
+                    (new TopTenDigest(
+                        new DerivedMetricsRepository($pdo),
+                        new TradingHolidayRepository($pdo),
+                        $services['config'],
+                        $digestMailSender,
+                    ))->run($runDate);
+                } catch (\Throwable $e) {
+                    $logger->error('top-10 digest failed', [
+                        'exception' => $e::class,
+                        'message' => $e->getMessage(),
+                    ]);
+                }
             }
 
             send_json(200, [

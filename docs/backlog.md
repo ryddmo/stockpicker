@@ -161,3 +161,25 @@ independent of a review pass.
   `0ea391f`); this is purely the last-mile delivery mechanism. Revisit by
   either filing the Loopia ticket or picking an email API and redoing just
   `TopTenDigest::defaultMailSender()`.
+
+- **FIXED 2026-09-18 — `/cron/derive` had never actually run in production
+  (registered nowhere).** Turned out `docs/deploy.md`'s own runbook
+  documented registering it as a third Kundzon URL-cron job (alongside
+  `/cron/refill`/`/cron/work`) back at Story 3.2, but that step was simply
+  never done — confirmed via zero `derive` rows in `ingest_run`'s entire
+  history and zero mentions of "derive" anywhere in the production log.
+  Stefan added the missing Kundzon job, but its first attempt (scheduled
+  "once a day," which Kundzon anchors to a fixed, non-adjustable midnight)
+  still didn't work — 00:00 is *before* `run_after`'s daily 18:30 Stockholm
+  threshold, so it always hit `window_closed`. Kundzon's URL-cron only
+  offers fixed intervals, not an arbitrary time-of-day, so the real fix was
+  scheduling it on an interval (every 1–2 hours, same shape as `/cron/refill`)
+  so it naturally lands inside the 18:30–23:59 window instead of trying to
+  pin an exact time.
+
+  That in turn exposed a real gap: an interval-based schedule means
+  `/cron/derive` now passes the gate more than once most evenings, and
+  `TopTenDigest` had no protection against re-sending the same digest on
+  every one of those hits (its diff doesn't change within the same evening).
+  Fixed same day — see Story 5.6's spec Implementation Notes for the
+  `ingest_run`-based idempotency guard added to `public_html/index.php`.

@@ -191,6 +191,36 @@ succeeding end-to-end in production (no genuine top-10 change has occurred
 since the redeploy to trigger a real send) — the next night a real diff
 exists will be the first live proof.
 
+**Post-deploy hardening (2026-09-18): idempotency guard for repeat `/cron/derive`
+hits on the same day.** `/cron/derive` was found to have never actually run in
+production at all — `docs/deploy.md` documents registering it as a third
+Kundzon URL-cron job (alongside `/cron/refill`/`/cron/work`), but that step was
+never done when Story 3.2 shipped. Once registered, it also turned out Kundzon's
+URL-cron presets only offer fixed intervals ("every hour", "every 2 hours",
+"once a day" — the last of which defaults to a non-adjustable midnight anchor,
+which is *before* `run_after`'s daily 18:30 threshold and so always gets
+`window_closed`), not an arbitrary time-of-day. The working fix was to schedule
+`derive` on an interval (e.g. every 1–2 hours, same as `/cron/refill`) so it
+naturally lands inside the 18:30–23:59 Stockholm window — but this means
+`/cron/derive` is expected to pass the gate more than once on a normal evening,
+not just once as originally assumed. `TopTenDigest` had no protection against
+this: its diff (today vs. the previous trading day) doesn't change between
+hits the same evening, so every gate-passed hit would independently detect the
+same change and re-send the same digest. Reused the *existing* `ingest_run`
+table (no new table needed, despite this spec's original "no new database
+table" boundary having been the stated reason a prior review finding here was
+rejected as low-risk/not-worth-fixing — that rejection assumed a fix would
+require new schema, which turned out not to be true): `public_html/index.php`'s
+`/cron/derive` case now checks, via `RunRepository::forRunDate($runDate)`,
+whether a `derive` row already exists for today *before* writing this hit's
+own row — if one does, `TopTenDigest` is skipped, though the hit still records
+its own `ingest_run` row (harmless, gives visibility into how many times it
+fired). Added `testDeriveOnlySendsTheDigestOnceEvenWhenHitTwiceForTheSameRunDate`
+to `tests/FrontControllerIntegrationTest.php` (asserts two `ingest_run` rows
+but exactly one digest-spy send across two hits for the same run date).
+Re-verified: `composer test` (556 tests, 2968 assertions, all green),
+`composer run analyse` (clean).
+
 ## Spec Change Log
 
 ## Review Triage Log

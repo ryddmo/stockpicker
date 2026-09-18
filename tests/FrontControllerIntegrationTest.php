@@ -324,6 +324,48 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Beta AB ↑ #2→#1', $sent['message']);
     }
 
+    public function testDeriveOnlySendsTheDigestOnceEvenWhenHitTwiceForTheSameRunDate(): void
+    {
+        // Kundzon's URL-cron presets can't pin an exact time of day, only
+        // fixed intervals (e.g. "every hour") -- so /cron/derive genuinely
+        // does land inside the run_after window more than once some
+        // evenings. A second hit for the same run_date must still write its
+        // own ingest_run row (visibility into how many times it fired) but
+        // must not re-send the digest.
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->enableDigestSpy();
+        $this->startEndpoint();
+
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $previousTradingDay = $this->previousWeekday(new DateTimeImmutable($runDate));
+
+        $this->seedOwnerCount('SE0000001001', $previousTradingDay, 3000);
+        $this->seedOwnerCount('SE0000001002', $previousTradingDay, 2000);
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+        $this->seedOwnerCount('SE0000001002', $runDate, 3500);
+
+        [$firstStatus] = $this->endpoint->get('/cron/derive?token=test-token');
+        [$secondStatus, $secondBody] = $this->endpoint->get('/cron/derive?token=test-token');
+        $secondJson = json_decode($secondBody, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $firstStatus);
+        self::assertSame(200, $secondStatus);
+        self::assertSame('ok', $secondJson['status'], "a repeat hit must not affect derive's own response");
+        self::assertSame(
+            2,
+            (int) $this->pdo->query("SELECT COUNT(*) FROM ingest_run WHERE run_type = 'derive'")->fetchColumn(),
+            'each hit still writes its own ingest_run row',
+        );
+
+        $spiedLines = array_filter(explode("\n", trim($this->endpoint->digestSpyContents())), static fn (string $l): bool => $l !== '');
+        self::assertCount(1, $spiedLines, 'exactly one digest send across both hits, not two');
+    }
+
     public function testDeriveDigestFailureNeverAffectsDerivesOwnResponseOrIngestRunRow(): void
     {
         // The default EndpointFixture config.php carries no "digest" section
