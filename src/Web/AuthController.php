@@ -95,9 +95,15 @@ final class AuthController
      */
     public function renderLoginPage(?string $message = null): string
     {
+        // Handbook §9 "Login-fel": the alert sits next to the form, is wired
+        // to it via aria-describedby, and takes focus on load — done here
+        // with a plain HTML `autofocus` on the alert itself (tabindex="-1"
+        // makes a non-interactive element focusable), no JS needed (AD-12).
         $messageHtml = $message !== null
-            ? '<p class="error">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . "</p>\n"
+            ? '<div class="error" id="login-error" role="alert" tabindex="-1" autofocus>'
+                . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . "</div>\n"
             : '';
+        $describedBy = $message !== null ? ' aria-describedby="login-error"' : '';
 
         return <<<HTML
         <!DOCTYPE html>
@@ -106,16 +112,21 @@ final class AuthController
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Logga in — stockpicker</title>
+        <link rel="stylesheet" href="/assets/app.css">
         </head>
         <body>
-        <h1>Logga in</h1>
-        {$messageHtml}<form method="post" action="/login">
-        <label>Användarnamn<br><input type="text" name="username" autocomplete="username" required></label>
-        <br>
-        <label>Lösenord<br><input type="password" name="password" autocomplete="current-password" required></label>
-        <br>
-        <button type="submit">Logga in</button>
-        </form>
+        <div class="auth-page">
+          <div class="auth-card">
+            <div class="wordmark">Stockpicker</div>
+            <h1>Logga in</h1>
+            <p class="subtitle">Ägarantalsdata för Avanza och Nordnet.</p>
+            {$messageHtml}<form method="post" action="/login">
+              <label class="field"><span>Användarnamn</span><input type="text" name="username" autocomplete="username" required{$describedBy}></label>
+              <label class="field"><span>Lösenord</span><input type="password" name="password" autocomplete="current-password" required{$describedBy}></label>
+              <button type="submit">Logga in</button>
+            </form>
+          </div>
+        </div>
         </body>
         </html>
 

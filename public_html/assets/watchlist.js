@@ -14,19 +14,41 @@
  *  - 401 (expired/invalid session — AuthController's session check, not the
  *    login page's HTML, per AD-12) triggers a full navigate to /login so the
  *    dead session is replaced with a real one.
- *  - Any other failure (network error, 404, 500) leaves the optimistic guess
- *    in place; a reload reconciles it against the server's real state.
+ *  - Any other failure (network error, 404, 500) reverts the optimistic
+ *    guess and shows a short message in the page's aria-live toast (design
+ *    handbook §9 "Stjärnfel") instead of silently keeping a state the server
+ *    never confirmed.
  *  - The button is disabled for the duration of its own in-flight request
  *    (re-enabled once fetch() settles, success or failure) so a rapid
  *    double-click/double-tap can't fire two concurrent toggles for the same
  *    isin — the practical trigger for a server-side toggle race.
  */
 (function () {
+  var TOAST_VISIBLE_MS = 4000;
+  var toastTimer = null;
+
   function setStarState(button, starred) {
     button.setAttribute('aria-pressed', starred ? 'true' : 'false');
     button.textContent = starred ? '★' : '☆';
     button.classList.toggle('star--filled', starred);
     button.classList.toggle('star--empty', !starred);
+  }
+
+  function showToast(message) {
+    var toast = document.getElementById('wl-toast');
+    if (!toast) {
+      return;
+    }
+
+    toast.textContent = message;
+    toast.classList.add('is-visible');
+
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+    }
+    toastTimer = setTimeout(function () {
+      toast.classList.remove('is-visible');
+    }, TOAST_VISIBLE_MS);
   }
 
   function handleClick(event) {
@@ -57,6 +79,8 @@
         }
 
         if (!response.ok) {
+          setStarState(button, wasStarred);
+          showToast('Kunde inte uppdatera bevakningen. Försök igen.');
           return null;
         }
 
@@ -68,7 +92,8 @@
         }
       })
       .catch(function () {
-        // Network failure: keep the optimistic state; a reload reconciles it.
+        setStarState(button, wasStarred);
+        showToast('Kunde inte uppdatera bevakningen. Kontrollera anslutningen.');
       })
       .finally(function () {
         button.disabled = false;

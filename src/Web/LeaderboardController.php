@@ -90,7 +90,7 @@ final class LeaderboardController
             }
         }
 
-        return self::pageHtml($source, $rankingMode, $bodyHtml);
+        return self::pageHtml($source, $rankingMode, $bodyHtml, $rows !== []);
     }
 
     /**
@@ -428,14 +428,14 @@ final class LeaderboardController
         return $svg;
     }
 
-    private static function pageHtml(string $source, string $rankingMode, string $rowsHtml): string
+    private static function pageHtml(string $source, string $rankingMode, string $rowsHtml, bool $hasRows): string
     {
         $tabBar = self::tabBarHtml('topplista', $source);
         $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode);
         $rankingToggle = self::rankingToggleHtml($source, $rankingMode);
         $fullListHref = self::e(self::fullListUrl($source));
         $infoHref = self::e(self::infoUrl($source));
-        $css = self::css();
+        $rowHead = $hasRows ? self::rowHeadHtml() : '';
 
         return <<<HTML
         <!DOCTYPE html>
@@ -444,13 +444,15 @@ final class LeaderboardController
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Topplista — stockpicker</title>
-        <style>{$css}</style>
+        <link rel="stylesheet" href="/assets/app.css">
         </head>
         <body>
         <div class="page">
-          {$tabBar}
+          <div class="nav-strip">
+            <div class="wordmark">Stockpicker</div>
+            {$tabBar}
+          </div>
           <header class="page-header">
-            <div class="wordmark">STOCKPICKER</div>
             <h1>Topplista</h1>
             <p class="subtitle">Ägarantal, rankade. Spikar uppmärksammas, döljs inte.</p>
             <div class="controls">
@@ -458,16 +460,39 @@ final class LeaderboardController
               {$rankingToggle}
             </div>
           </header>
-          <main class="rows">
+          <main class="rows rows--ranked">
+            {$rowHead}
             {$rowsHtml}
           </main>
           <p class="full-list-link"><a href="{$fullListHref}">Visa fullständig lista</a></p>
           <p class="info-link"><a href="{$infoHref}">Vad betyder allt detta?</a></p>
         </div>
+        <div class="wl-toast" id="wl-toast" role="status" aria-live="polite"></div>
         <script src="/assets/watchlist.js" defer></script>
         </body>
         </html>
 
+        HTML;
+    }
+
+    /**
+     * Desktop-only (≥900px, see app.css) column headers over the CSS-grid
+     * table layout — spec's "Kolumnrubriker visas" (design handbook §7).
+     * Suppressed entirely on an empty result set (render()'s $hasRows) so no
+     * header floats above the empty-state paragraph.
+     */
+    private static function rowHeadHtml(): string
+    {
+        return <<<HTML
+        <div class="row-head" role="row">
+          <span class="col" role="columnheader">#</span>
+          <span class="col" role="columnheader"><span class="visually-hidden">Bevakning</span></span>
+          <span class="col" role="columnheader">Bolag</span>
+          <span class="col" role="columnheader">Trend</span>
+          <span class="col" role="columnheader">Ägare</span>
+          <span class="col" role="columnheader">Förändring</span>
+          <span class="col" role="columnheader">Period</span>
+        </div>
         HTML;
     }
 
@@ -591,147 +616,5 @@ final class LeaderboardController
     private static function e(string $s): string
     {
         return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-    }
-
-    private static function css(): string
-    {
-        return <<<'CSS'
-        :root {
-          --bg-app: #F5F6FA;
-          --bg-surface: #FFFFFF;
-          --border: #E4E7EC;
-          --row-border: #EEF0F5;
-          --control-bg: #ECEEF3;
-          --text-primary: #101323;
-          --text-secondary: #667085;
-          --text-muted: #98A2B3;
-          --brand: #5B4FE9;
-          --brand-tint: #EEEDFD;
-          --positive: #12B76A;
-          --positive-tint: #E7F9F0;
-          --negative: #F04438;
-          --negative-tint: #FEECEB;
-          --spike-bg: #FEF0C7;
-          --spike-text: #7C5800;
-          --star-filled: #F5A623;
-          --star-empty: #D0D5DD;
-          --nohist-bg: #F2F4F7;
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          background: var(--bg-app);
-          color: var(--text-primary);
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        }
-        .page { max-width: 720px; margin: 0 auto; padding: 18px; }
-        .tab-bar {
-          display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
-          margin: 0 0 14px;
-        }
-        .wordmark {
-          font-size: 12px; font-weight: 800; letter-spacing: 0.06em;
-          color: var(--brand); text-transform: uppercase;
-        }
-        h1 { font-size: 22px; font-weight: 800; margin: 4px 0 2px; }
-        .subtitle { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 16px; }
-        .controls { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
-        .source-switcher, .ranking-toggle {
-          display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
-        }
-        .tab {
-          padding: 8px 14px; border-radius: 9999px; text-decoration: none;
-          font-size: 13px; font-weight: 700; color: var(--text-secondary);
-        }
-        .source-switcher .tab--active, .tab-bar .tab--active { background: var(--text-primary); color: var(--bg-surface); }
-        .ranking-toggle .tab--active {
-          background: var(--bg-surface); color: var(--brand);
-          box-shadow: 0 1px 3px rgba(16,19,31,0.12);
-        }
-        .rows { display: flex; flex-direction: column; gap: 8px; }
-        .row {
-          display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-          background: var(--bg-surface); border: 1px solid var(--row-border);
-          border-radius: 16px; padding: 10px 12px;
-        }
-        .rank { font-size: 12px; font-weight: 800; color: var(--text-muted); width: 1.5em; text-align: center; }
-        .star {
-          background: none; border: none; cursor: pointer; font-size: 18px; line-height: 1;
-          padding: 8px; min-width: 44px; min-height: 44px;
-        }
-        .star--filled { color: var(--star-filled); }
-        .star--empty { color: var(--star-empty); }
-        .row-body {
-          display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
-          text-decoration: none; color: inherit;
-        }
-        .namecol { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
-        .name {
-          display: block; font-size: 13.5px; font-weight: 700; overflow: hidden;
-          text-overflow: ellipsis; white-space: nowrap;
-        }
-        .badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
-        .badge {
-          font-size: 9px; font-weight: 800; text-transform: uppercase;
-          border-radius: 9999px; padding: 3px 7px; white-space: nowrap;
-        }
-        .badge--streak { background: var(--brand-tint); color: var(--brand); }
-        .badge--spike { background: var(--spike-bg); color: var(--spike-text); }
-        .badge--nohist { background: var(--nohist-bg); color: var(--text-muted); }
-        .trend {
-          flex: 0 0 auto; width: 52px; display: flex; flex-direction: column;
-          align-items: flex-start; gap: 2px;
-        }
-        .sparkline { width: 52px; height: 22px; }
-        .sparkline--empty { width: 52px; height: 22px; display: inline-block; }
-        .sparkline-label {
-          font-size: 9px; color: var(--text-muted); white-space: normal;
-          overflow-wrap: break-word; max-width: 52px; line-height: 1.25;
-        }
-        .sparkline-line--positive { fill: none; stroke: var(--positive); stroke-width: 2px; }
-        .sparkline-line--negative { fill: none; stroke: var(--negative); stroke-width: 2px; }
-        .sparkline-line--neutral { fill: none; stroke: var(--brand); stroke-width: 2px; }
-        .sparkline-line--spike { fill: none; stroke: var(--spike-text); stroke-width: 2px; }
-        .sparkline-line--nohistory { fill: none; stroke: var(--text-muted); stroke-width: 2px; stroke-dasharray: 2 3; }
-        .statcol { text-align: right; flex-shrink: 0; width: 100px; }
-        .stat {
-          display: block; font-size: 13.5px; font-weight: 800; white-space: normal;
-          overflow-wrap: break-word; line-height: 1.25;
-        }
-        .delta-chip {
-          display: inline-block; margin-top: 3px;
-          font-size: 9.5px; font-weight: 800; border-radius: 6px; padding: 3px 6px;
-          white-space: nowrap;
-        }
-        .delta-chip--positive { background: var(--positive-tint); color: var(--positive); }
-        .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
-        .delta-chip--neutral { background: var(--nohist-bg); color: var(--text-secondary); }
-        .period-pcts {
-          flex: 1 0 100%; display: flex; gap: 14px;
-          padding-top: 8px; margin-top: 2px; border-top: 1px solid var(--row-border);
-        }
-        .period-pct { display: flex; flex-direction: column; gap: 1px; }
-        .period-pct-label {
-          font-size: 9px; font-weight: 800; text-transform: uppercase;
-          letter-spacing: 0.04em; color: var(--text-muted);
-        }
-        .period-pct-value { font-size: 12px; font-weight: 800; }
-        .period-pct--positive .period-pct-value { color: var(--positive); }
-        .period-pct--negative .period-pct-value { color: var(--negative); }
-        .period-pct--neutral .period-pct-value { color: var(--text-secondary); }
-        .period-pct--nohist .period-pct-value { color: var(--text-muted); }
-        .empty-state { color: var(--text-secondary); font-size: 13.5px; }
-        .full-list-link { text-align: center; margin: 16px 0 4px; }
-        .full-list-link a { color: var(--brand); font-size: 13px; font-weight: 700; text-decoration: none; }
-        .info-link { text-align: center; margin: 4px 0 0; }
-        .info-link a { color: var(--text-secondary); font-size: 12px; font-weight: 700; text-decoration: none; }
-        @media (min-width: 900px) {
-          .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
-          .controls { flex-direction: row; }
-          .trend { width: 130px; }
-          .sparkline, .sparkline--empty { width: 130px; height: 30px; }
-          .sparkline-label { max-width: 130px; }
-        }
-        CSS;
     }
 }

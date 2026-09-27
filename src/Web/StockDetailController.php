@@ -526,7 +526,6 @@ final class StockDetailController
         $rangePicker = self::rangePickerHtml($isin, $source, $range);
         $sourceSwitcher = self::sourceSwitcherHtml($isin, $source, $range);
         $avanzaLink = self::avanzaLinkHtml($instrument->avanzaOrderbookId);
-        $css = self::css();
 
         return <<<HTML
         <!DOCTYPE html>
@@ -535,11 +534,14 @@ final class StockDetailController
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{$eName} — stockpicker</title>
-        <style>{$css}</style>
+        <link rel="stylesheet" href="/assets/app.css">
         </head>
         <body>
         <div class="page">
-          {$tabBar}
+          <div class="nav-strip">
+            <div class="wordmark">Stockpicker</div>
+            {$tabBar}
+          </div>
           <header class="stock-header">
             <button type="button" class="{$starClass}" data-isin="{$eIsin}" aria-pressed="{$ariaPressed}" aria-label="{$starLabel}">{$starGlyph}</button>
             <h1>{$eName}</h1>
@@ -554,6 +556,7 @@ final class StockDetailController
             {$chartHtml}
           </main>
         </div>
+        <div class="wl-toast" id="wl-toast" role="status" aria-live="polite"></div>
         <script src="/assets/watchlist.js" defer></script>
         </body>
         </html>
@@ -676,109 +679,5 @@ final class StockDetailController
     private static function e(string $s): string
     {
         return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-    }
-
-    private static function css(): string
-    {
-        return <<<'CSS'
-        :root {
-          --bg-app: #F5F6FA;
-          --bg-surface: #FFFFFF;
-          --border: #E4E7EC;
-          --row-border: #EEF0F5;
-          --control-bg: #ECEEF3;
-          --text-primary: #101323;
-          --text-secondary: #667085;
-          --text-muted: #98A2B3;
-          --brand: #5B4FE9;
-          --brand-tint: #EEEDFD;
-          --positive: #12B76A;
-          --positive-tint: #E7F9F0;
-          --negative: #F04438;
-          --negative-tint: #FEECEB;
-          --spike-bg: #FEF0C7;
-          --spike-text: #7C5800;
-          --star-filled: #F5A623;
-          --star-empty: #D0D5DD;
-          --nohist-bg: #F2F4F7;
-          --secondary-line: #475467;
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          background: var(--bg-app);
-          color: var(--text-primary);
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        }
-        .page { max-width: 720px; margin: 0 auto; padding: 18px; }
-        .tab-bar {
-          display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
-          margin: 0 0 14px;
-        }
-        .stock-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .stock-header h1 { font-size: 20px; font-weight: 800; margin: 0; flex: 1 1 auto; min-width: 4em; }
-        .star {
-          background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1;
-          padding: 8px; min-width: 44px; min-height: 44px;
-        }
-        .star--filled { color: var(--star-filled); }
-        .star--empty { color: var(--star-empty); }
-        .badges { display: flex; gap: 4px; flex-wrap: wrap; }
-        .badge {
-          font-size: 9px; font-weight: 800; text-transform: uppercase;
-          border-radius: 9999px; padding: 3px 7px; white-space: nowrap;
-        }
-        .badge--streak { background: var(--brand-tint); color: var(--brand); }
-        .badge--spike { background: var(--spike-bg); color: var(--spike-text); }
-        .badge--nohist { background: var(--nohist-bg); color: var(--text-muted); }
-        .avanza-link {
-          font-size: 12px; font-weight: 700; color: var(--text-secondary); text-decoration: none;
-          padding: 8px 0; white-space: nowrap;
-        }
-        .controls { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
-        .source-switcher, .range-picker {
-          display: inline-flex; background: var(--control-bg); border-radius: 9999px; padding: 3px; gap: 2px;
-          flex-wrap: wrap;
-        }
-        .tab {
-          padding: 8px 14px; border-radius: 9999px; text-decoration: none;
-          font-size: 13px; font-weight: 700; color: var(--text-secondary);
-        }
-        .source-switcher .tab--active, .tab-bar .tab--active { background: var(--text-primary); color: var(--bg-surface); }
-        .range-picker .tab--active {
-          background: var(--bg-surface); color: var(--brand);
-          box-shadow: 0 1px 3px rgba(16,19,31,0.12);
-        }
-        .chart-area {
-          background: var(--bg-surface); border: 1px solid var(--row-border);
-          border-radius: 16px; padding: 16px;
-        }
-        .trend-plot { display: flex; align-items: stretch; gap: 6px; }
-        .y-axis { position: relative; flex: 0 0 30px; width: 30px; height: 220px; }
-        .y-axis-tick {
-          position: absolute; right: 0; transform: translateY(-50%);
-          font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
-          white-space: nowrap;
-        }
-        .trend-overlay { width: 100%; height: 220px; flex: 1 1 auto; min-width: 0; }
-        .trend-line { fill: none; stroke-width: 2.5px; }
-        .trend-line--positive { stroke: var(--positive); }
-        .trend-line--negative { stroke: var(--negative); }
-        .trend-line--neutral { stroke: var(--brand); }
-        .trend-line--spike { stroke: var(--spike-text); }
-        .trend-line--nohistory { stroke: var(--text-muted); stroke-dasharray: 2 3; }
-        .trend-line--secondary { stroke: var(--secondary-line); stroke-width: 2px; stroke-dasharray: 4 4; }
-        .legend { display: flex; gap: 16px; margin: 10px 0 0; font-size: 12px; color: var(--text-secondary); }
-        .legend-item { display: inline-flex; align-items: center; gap: 6px; }
-        .legend-swatch { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
-        .legend-swatch--primary { background: var(--brand); }
-        .legend-swatch--secondary { background: var(--secondary-line); }
-        .legend-item--nodata { color: var(--text-muted); font-style: italic; }
-        .empty-state { color: var(--text-secondary); font-size: 13.5px; margin: 0; }
-        @media (min-width: 900px) {
-          .page { max-width: 960px; box-shadow: 0 12px 40px rgba(16,19,31,0.08); border-radius: 20px; background: var(--bg-app); }
-          .controls { flex-direction: row; }
-        }
-        CSS;
     }
 }
