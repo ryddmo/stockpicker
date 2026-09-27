@@ -480,18 +480,34 @@ final class LeaderboardController
      * table layout — spec's "Kolumnrubriker visas" (design handbook §7).
      * Suppressed entirely on an empty result set (render()'s $hasRows) so no
      * header floats above the empty-state paragraph.
+     *
+     * `aria-hidden`, not `role="row"`/`role="columnheader"`: a `.row`'s
+     * `.row-body` is a single `<a>` spanning Bolag+Trend+Ägare+Förändring
+     * (the design handbook's own "hela raden är klickbar" §7 requirement),
+     * so `.row` can never validly carry `role="row"` with per-column
+     * `role="cell"` children — a link's implicit `role="link"` sitting
+     * between them breaks the required row→cell ARIA table structure, and
+     * browsers/AT then may not expose *any* table semantics, header
+     * included. Real ARIA table roles here would need dropping the
+     * whole-row-link pattern, a bigger change than this header decoration
+     * justifies. Each row already reads correctly in plain sequential order
+     * without a table announcement (star has its own aria-label, the
+     * sparkline is aria-hidden, every value is plain adjacent text) — so the
+     * header is purely a sighted-desktop affordance, hidden from
+     * assistive tech rather than exposed with structurally-invalid roles
+     * (found during the design handbook's P2 accessibility QA pass).
      */
     private static function rowHeadHtml(): string
     {
         return <<<HTML
-        <div class="row-head" role="row">
-          <span class="col" role="columnheader">#</span>
-          <span class="col" role="columnheader"><span class="visually-hidden">Bevakning</span></span>
-          <span class="col" role="columnheader">Bolag</span>
-          <span class="col" role="columnheader">Trend</span>
-          <span class="col" role="columnheader">Ägare</span>
-          <span class="col" role="columnheader">Förändring</span>
-          <span class="col" role="columnheader">Period</span>
+        <div class="row-head" aria-hidden="true">
+          <span class="col">#</span>
+          <span class="col"></span>
+          <span class="col">Bolag</span>
+          <span class="col">Trend</span>
+          <span class="col">Ägare</span>
+          <span class="col">Förändring</span>
+          <span class="col">Period</span>
         </div>
         HTML;
     }

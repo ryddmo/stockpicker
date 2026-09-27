@@ -242,16 +242,21 @@ final class WatchlistController
      * Desktop-only (≥900px, see app.css) column headers over the CSS-grid
      * table layout (design handbook §7) — same 5-column shape as
      * FullListController (no Rank/Period columns).
+     *
+     * `aria-hidden`, not `role="row"`/`role="columnheader"` — see
+     * LeaderboardController::rowHeadHtml()'s docblock: `.row-body`'s single
+     * whole-row `<a>` makes real ARIA row/cell roles structurally invalid
+     * here, so this stays a sighted-only visual affordance (P2 a11y QA).
      */
     private static function rowHeadHtml(): string
     {
         return <<<HTML
-        <div class="row-head" role="row">
-          <span class="col" role="columnheader"><span class="visually-hidden">Bevakning</span></span>
-          <span class="col" role="columnheader">Bolag</span>
-          <span class="col" role="columnheader">Trend</span>
-          <span class="col" role="columnheader">Ägare</span>
-          <span class="col" role="columnheader">Förändring</span>
+        <div class="row-head" aria-hidden="true">
+          <span class="col"></span>
+          <span class="col">Bolag</span>
+          <span class="col">Trend</span>
+          <span class="col">Ägare</span>
+          <span class="col">Förändring</span>
         </div>
         HTML;
     }
