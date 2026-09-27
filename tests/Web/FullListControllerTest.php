@@ -118,4 +118,67 @@ final class FullListControllerTest extends TestCase
         self::assertStringContainsString('class="namecol"', $html);
         self::assertStringContainsString('class="statcol"', $html);
     }
+
+    // -- resultsSummaryHtml() (design handbook §11) -------------------------
+
+    private static function baseActive(): array
+    {
+        return [
+            'source' => 'avanza',
+            'q' => '',
+            'sort' => DerivedMetricsRepository::SORT_COUNT,
+            'growth' => false,
+            'spike' => false,
+            'watchlist' => false,
+            'market' => null,
+        ];
+    }
+
+    public function testResultsSummaryHtmlShowsOnlyTheCountWhenNoFilterIsActive(): void
+    {
+        $html = FullListController::resultsSummaryHtml(12, self::baseActive());
+
+        self::assertStringContainsString('12 resultat', $html);
+        self::assertStringNotContainsString('Rensa alla', $html);
+    }
+
+    public function testResultsSummaryHtmlListsEachActiveFilterAndAClearAllLink(): void
+    {
+        $active = self::baseActive();
+        $active['growth'] = true;
+        $active['spike'] = true;
+        $active['watchlist'] = true;
+        $active['market'] = 'LC';
+
+        $html = FullListController::resultsSummaryHtml(3, $active);
+
+        self::assertStringContainsString('3 resultat', $html);
+        self::assertStringContainsString('Stadig tillväxt', $html);
+        self::assertStringContainsString('Spik', $html);
+        self::assertStringContainsString('Bevakade', $html);
+        self::assertStringContainsString('Marknad LC', $html);
+        self::assertStringContainsString('href="/list">Rensa alla</a>', $html);
+    }
+
+    public function testResultsSummaryHtmlIncludesTheSearchTermEscaped(): void
+    {
+        $active = self::baseActive();
+        $active['q'] = '<script>alert(1)</script>';
+
+        $html = FullListController::resultsSummaryHtml(0, $active);
+
+        self::assertStringNotContainsString('<script>', $html);
+        self::assertStringContainsString('&lt;script&gt;', $html);
+    }
+
+    public function testResultsSummaryHtmlDoesNotTreatSourceOrSortAsFilters(): void
+    {
+        $active = self::baseActive();
+        $active['source'] = 'nordnet';
+        $active['sort'] = DerivedMetricsRepository::SORT_PCT;
+
+        $html = FullListController::resultsSummaryHtml(5, $active);
+
+        self::assertStringNotContainsString('Rensa alla', $html, 'source/sort alone are not filters worth a clear-all link');
+    }
 }

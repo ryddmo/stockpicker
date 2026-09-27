@@ -78,7 +78,7 @@ final class StockDetailController
         } else {
             $primarySlice = self::sliceForRange($primarySeries, $range);
             $secondarySlice = self::sliceForRange($secondarySeries, $range);
-            $chartHtml = self::trendOverlayHtml($primarySlice, $secondarySlice)
+            $chartHtml = self::trendOverlayHtml($primarySlice, $secondarySlice, $source, $range)
                 . self::legendHtml($source, $secondarySource, count($primarySlice) >= 2, count($secondarySlice) >= 2);
         }
 
@@ -218,7 +218,7 @@ final class StockDetailController
      * @param list<array<string, mixed>> $primarySlice
      * @param list<array<string, mixed>> $secondarySlice
      */
-    private static function trendOverlayHtml(array $primarySlice, array $secondarySlice): string
+    private static function trendOverlayHtml(array $primarySlice, array $secondarySlice, string $source, string $range): string
     {
         $width = 320;
         $height = 120;
@@ -236,16 +236,78 @@ final class StockDetailController
             ? sprintf('<polyline class="%s" points="%s" />', $primaryClass, self::e($primaryPoints))
             : '';
 
+        // Design handbook §8 "Standardisera diagrammens textalternativ": a
+        // real summary (period, start, end, change) instead of a bare
+        // "Trend" label — this is the chart's only accessible content, the
+        // polylines carry no text of their own.
+        $altText = self::e(self::chartAltText($primarySlice, $source, $range));
+
         // Secondary drawn first so the primary line renders on top.
         $svg = sprintf(
-            '<svg class="trend-overlay" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="Trend">%s%s</svg>',
+            '<svg class="trend-overlay" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">%s%s</svg>',
             $width,
             $height,
+            $altText,
             $secondaryPolyline,
             $primaryPolyline,
         );
 
         return '<div class="trend-plot">' . self::yAxisHtml($primarySlice) . $svg . '</div>';
+    }
+
+    /**
+     * Design handbook §8's "textalternativ med period, start, slut och
+     * förändring" — period (rangeLabel), the primary slice's first/last
+     * (as_of_date, number_of_owners), and the change between them, as one
+     * sentence. Pure/static so it is unit-testable without a database.
+     *
+     * @param list<array<string, mixed>> $primarySlice
+     */
+    public static function chartAltText(array $primarySlice, string $source, string $range): string
+    {
+        $sourceLabel = self::sourceLabel($source);
+        $rangeLabel = self::rangeLabel($range);
+
+        if (count($primarySlice) < 2) {
+            return sprintf('Ägarantal, %s, %s: otillräcklig historik för ett diagram.', $sourceLabel, $rangeLabel);
+        }
+
+        $first = reset($primarySlice);
+        $last = end($primarySlice);
+        $firstOwners = (int) $first['number_of_owners'];
+        $lastOwners = (int) $last['number_of_owners'];
+        $change = $lastOwners - $firstOwners;
+        $pct = $firstOwners !== 0 ? ($change / $firstOwners) * 100 : 0.0;
+        $sign = $change > 0 ? '+' : ($change < 0 ? '−' : '');
+
+        return sprintf(
+            'Ägarantal, %s, %s: %s (%s) till %s (%s), förändring %s%s (%s%s %%).',
+            $sourceLabel,
+            $rangeLabel,
+            number_format($firstOwners, 0, ',', ' '),
+            (string) $first['as_of_date'],
+            number_format($lastOwners, 0, ',', ' '),
+            (string) $last['as_of_date'],
+            $sign,
+            number_format(abs($change), 0, ',', ' '),
+            $sign,
+            number_format(abs($pct), 1, ',', ''),
+        );
+    }
+
+    /**
+     * Shared with rangePickerHtml() (dedup, design handbook §12) — the
+     * Dag/Vecka/30d/90d/År display label for a range value.
+     */
+    public static function rangeLabel(string $range): string
+    {
+        return match ($range) {
+            self::RANGE_VECKA => 'Vecka',
+            self::RANGE_30D => '30d',
+            self::RANGE_90D => '90d',
+            self::RANGE_AR => 'År',
+            default => 'Dag',
+        };
     }
 
     /**
@@ -622,19 +684,13 @@ final class StockDetailController
 
     private static function rangePickerHtml(string $isin, string $source, string $range): string
     {
-        $labels = [
-            self::RANGE_DAG => 'Dag',
-            self::RANGE_VECKA => 'Vecka',
-            self::RANGE_30D => '30d',
-            self::RANGE_90D => '90d',
-            self::RANGE_AR => 'År',
-        ];
+        $values = [self::RANGE_DAG, self::RANGE_VECKA, self::RANGE_30D, self::RANGE_90D, self::RANGE_AR];
 
         $links = '';
-        foreach ($labels as $value => $label) {
+        foreach ($values as $value) {
             $class = $value === $range ? 'tab tab--active' : 'tab';
             $href = self::e(self::url($isin, $source, $value));
-            $links .= sprintf('<a class="%s" href="%s">%s</a>', $class, $href, self::e($label));
+            $links .= sprintf('<a class="%s" href="%s">%s</a>', $class, $href, self::e(self::rangeLabel($value)));
         }
 
         return '<div class="range-picker" role="tablist" aria-label="Intervall">' . $links . '</div>';

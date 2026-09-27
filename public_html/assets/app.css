@@ -65,7 +65,10 @@
   --positive-tint: #E7F6F0;
   --negative: #C93832;
   --negative-tint: #FBEDEC;
-  --spike: #A86100;
+  /* Darkened from the handbook's #A86100 (4.36:1 against --spike-tint,
+     under WCAG AA's 4.5:1 for .badge--spike's 11px/600 text -- P2 contrast
+     QA pass, design handbook §13); #8C5100 measures 5.79:1. */
+  --spike: #8C5100;
   --spike-tint: #FFF3D8;
   --neutral: #68777E;
   --neutral-tint: #E8ECEE;
@@ -210,6 +213,14 @@ select:focus-visible,
 .ranking-toggle .tab, .sort-toggle .tab {
   border-radius: 0; min-height: 32px;
 }
+/* The container's own overflow:hidden (above, for the rounded corners)
+   clips a focus ring drawn outside the element's box -- inverting the
+   offset keeps it fully visible inside the container instead of reducing
+   to an all-but-invisible sliver at the shared edge between two tabs
+   (P2 keyboard-order QA pass, design handbook §13). */
+.ranking-toggle .tab:focus-visible, .sort-toggle .tab:focus-visible {
+  outline-offset: -2px;
+}
 .ranking-toggle .tab--active, .sort-toggle .tab--active {
   background: var(--accent-tint); color: var(--accent);
 }
@@ -272,7 +283,11 @@ select:focus-visible,
 .row-head {
   display: none; /* shown ≥900px, see breakpoint block */
   font-family: var(--font-body); font-size: 11px; font-weight: 600;
-  color: var(--text-muted); padding: 0 var(--sp-3);
+  /* text-secondary, not text-muted: this sits directly on --bg-app (no card
+     behind it), where text-muted's contrast ratio falls under WCAG AA's
+     4.5:1 for text this size (measured 4.20:1) -- found during the P2
+     contrast QA pass, design handbook §13. */
+  color: var(--text-secondary); padding: 0 var(--sp-3);
 }
 .row-head .col { display: flex; align-items: center; }
 
@@ -308,7 +323,9 @@ select:focus-visible,
 }
 .badge--streak { background: var(--accent-tint); color: var(--accent); }
 .badge--spike { background: var(--spike-tint); color: var(--spike); }
-.badge--nohist { background: var(--neutral-tint); color: var(--text-muted); }
+/* text-secondary, not text-muted: 3.90:1 against --neutral-tint measured
+   below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). */
+.badge--nohist { background: var(--neutral-tint); color: var(--text-secondary); }
 .trend {
   flex: 0 0 auto; width: 52px; display: flex; flex-direction: column;
   align-items: flex-start; gap: 2px;
@@ -351,6 +368,10 @@ select:focus-visible,
 .period-pct--neutral .period-pct-value { color: var(--text-secondary); }
 .period-pct--nohist .period-pct-value { color: var(--text-muted); }
 
+.results-summary {
+  font-size: 12.5px; color: var(--text-secondary); margin: 0 0 var(--sp-2);
+}
+.results-summary a { color: var(--accent); font-weight: 600; text-decoration: none; }
 .empty-state { color: var(--text-secondary); font-size: 13.5px; }
 .empty-state a { color: var(--accent); font-weight: 600; }
 .full-list-link { text-align: center; margin: var(--sp-4) 0 4px; }
@@ -410,9 +431,18 @@ section {
   background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: var(--sp-4);
 }
-.symbol-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
-.symbol-list li { font-size: 13.5px; line-height: 1.5; color: var(--text-primary); }
-.symbol { display: inline-block; min-width: 1.4em; }
+.symbol-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
+.symbol-list li {
+  display: flex; align-items: center; gap: var(--sp-3);
+  font-size: 13.5px; line-height: 1.5; color: var(--text-primary);
+}
+.symbol-example {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 4px;
+  min-width: 64px;
+}
+.symbol-example--trend { flex-direction: column; align-items: flex-start; gap: 2px; }
+.symbol-example .star { padding: 0; min-width: 0; min-height: 0; cursor: default; }
+.symbol-text { flex: 1 1 auto; min-width: 0; }
 
 /* -- Login -------------------------------------------------------------------- */
 
@@ -476,8 +506,8 @@ section {
   .statcol { text-align: right; }
 
   .trend { width: 130px; }
-  .sparkline, .sparkline--empty { width: 130px; height: 30px; }
-  .sparkline-label { max-width: 130px; }
+  .rows .sparkline, .rows .sparkline--empty { width: 130px; height: 30px; }
+  .rows .sparkline-label { max-width: 130px; }
 }
 
 @media (min-width: 1200px) {

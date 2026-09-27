@@ -75,11 +75,31 @@ final class InfoController
             </section>
             <section>
               <h2>Symboler</h2>
+              <p>Varje symbol nedan visas precis som den faktiskt ser ut i listorna.</p>
               <ul class="symbol-list">
-                <li><span class="symbol" aria-hidden="true">🔥</span> <strong>Streak</strong> — antal dagar i rad som ägarantalet har ökat, utan avbrott. Visas som "🔥 Xd". Finns ingen pågående uppgångssvit visas "flat" istället.</li>
-                <li><span class="symbol" aria-hidden="true">⚡</span> <strong>Spike</strong> — ägarantalet har ökat ovanligt mycket på en enda dag. Flaggas alltid, döljs aldrig, så att en kraftig engångsökning inte förväxlas med en äkta trend.</li>
-                <li><span class="symbol" aria-hidden="true">☆ / ★</span> <strong>Bevakningsstjärna</strong> — ☆ betyder att instrumentet inte är bevakat, ★ att det är stjärnmärkt. Klicka på stjärnan för att lägga till eller ta bort instrumentet från Bevakningslistan.</li>
-                <li><strong>Delta-chip</strong> — förändringen i ägarantal sedan föregående dag, alltid som antal och procent tillsammans (till exempel "+412 · 0,9 %"). Visas inte när det saknas en jämförbar föregående dag.</li>
+                <li>
+                  <span class="symbol-example" aria-hidden="true"><span class="badge badge--streak">🔥 8d</span></span>
+                  <span class="symbol-text"><strong>Streak</strong> — antal dagar i rad som ägarantalet har ökat, utan avbrott. Visas som "🔥 Xd". Finns ingen pågående uppgångssvit visas <span class="badge badge--nohist" aria-hidden="true">flat</span> istället.</span>
+                </li>
+                <li>
+                  <span class="symbol-example" aria-hidden="true"><span class="badge badge--spike">⚡ spike</span></span>
+                  <span class="symbol-text"><strong>Spike</strong> — ägarantalet har ökat ovanligt mycket på en enda dag. Flaggas alltid, döljs aldrig, så att en kraftig engångsökning inte förväxlas med en äkta trend.</span>
+                </li>
+                <li>
+                  <span class="symbol-example" aria-hidden="true"><span class="star star--empty">☆</span><span class="star star--filled">★</span></span>
+                  <span class="symbol-text"><strong>Bevakningsstjärna</strong> — ☆ betyder att instrumentet inte är bevakat, ★ att det är stjärnmärkt. Klicka på stjärnan för att lägga till eller ta bort instrumentet från Bevakningslistan.</span>
+                </li>
+                <li>
+                  <span class="symbol-example" aria-hidden="true"><span class="delta-chip delta-chip--positive">+412 · 0,9 %</span></span>
+                  <span class="symbol-text"><strong>Delta-chip</strong> — förändringen i ägarantal sedan föregående dag, alltid som antal och procent tillsammans. Visas inte när det saknas en jämförbar föregående dag.</span>
+                </li>
+                <li>
+                  <span class="symbol-example symbol-example--trend" aria-hidden="true">
+                    <svg class="sparkline" viewBox="0 0 52 22" preserveAspectRatio="none"><polyline class="sparkline-line--positive" points="0,18 17,12 35,8 52,2" /></svg>
+                    <svg class="sparkline" viewBox="0 0 52 22" preserveAspectRatio="none"><polyline class="sparkline-line--nohistory" points="0,11 17,13 35,9 52,11" /></svg>
+                  </span>
+                  <span class="symbol-text"><strong>Trend</strong> — linjegraf över ägarantalet de senaste 30 dagarna, färgkodad grön (upp), röd (ned), gul (spik) eller streckad grå (otillräcklig historik, färre än 7 lagrade dagar).</span>
+                </li>
               </ul>
             </section>
             <section>

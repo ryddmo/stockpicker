@@ -380,6 +380,65 @@ final class StockDetailControllerTest extends TestCase
         self::assertStringContainsString('rel="noopener noreferrer"', $html);
     }
 
+    // -- rangeLabel() ---------------------------------------------------------
+
+    public function testRangeLabelCoversEveryRangeValue(): void
+    {
+        self::assertSame('Dag', StockDetailController::rangeLabel(StockDetailController::RANGE_DAG));
+        self::assertSame('Vecka', StockDetailController::rangeLabel(StockDetailController::RANGE_VECKA));
+        self::assertSame('30d', StockDetailController::rangeLabel(StockDetailController::RANGE_30D));
+        self::assertSame('90d', StockDetailController::rangeLabel(StockDetailController::RANGE_90D));
+        self::assertSame('År', StockDetailController::rangeLabel(StockDetailController::RANGE_AR));
+    }
+
+    public function testRangeLabelDefaultsToDagForGarbage(): void
+    {
+        self::assertSame('Dag', StockDetailController::rangeLabel('bogus'));
+    }
+
+    // -- chartAltText() (design handbook §8) -----------------------------------
+
+    public function testChartAltTextReportsInsufficientHistoryBelowTwoPoints(): void
+    {
+        $text = StockDetailController::chartAltText([], 'avanza', StockDetailController::RANGE_DAG);
+
+        self::assertStringContainsString('otillräcklig historik', $text);
+        self::assertStringContainsString('Avanza', $text);
+        self::assertStringContainsString('Dag', $text);
+    }
+
+    public function testChartAltTextSummarizesPeriodStartEndAndAPositiveChange(): void
+    {
+        $slice = [
+            ['as_of_date' => '2026-09-01', 'number_of_owners' => 1000],
+            ['as_of_date' => '2026-09-27', 'number_of_owners' => 1207],
+        ];
+
+        $text = StockDetailController::chartAltText($slice, 'nordnet', StockDetailController::RANGE_30D);
+
+        self::assertStringContainsString('Nordnet', $text);
+        self::assertStringContainsString('30d', $text);
+        self::assertStringContainsString('1 000', $text);
+        self::assertStringContainsString('2026-09-01', $text);
+        self::assertStringContainsString('1 207', $text);
+        self::assertStringContainsString('2026-09-27', $text);
+        self::assertStringContainsString('+207', $text);
+        self::assertStringContainsString('+20,7 %', $text);
+    }
+
+    public function testChartAltTextSignsANegativeChangeWithAMinus(): void
+    {
+        $slice = [
+            ['as_of_date' => '2026-09-01', 'number_of_owners' => 1000],
+            ['as_of_date' => '2026-09-02', 'number_of_owners' => 900],
+        ];
+
+        $text = StockDetailController::chartAltText($slice, 'avanza', StockDetailController::RANGE_DAG);
+
+        self::assertStringContainsString('−100', $text);
+        self::assertStringContainsString('−10,0 %', $text);
+    }
+
     /**
      * @return list<float>
      */

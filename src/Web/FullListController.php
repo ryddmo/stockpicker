@@ -104,7 +104,7 @@ final class FullListController
             }
         }
 
-        return self::pageHtml($active, $bodyHtml, $rows !== []);
+        return self::pageHtml($active, $bodyHtml, $rows !== [], count($rows));
     }
 
     // -- Query param normalization (pure, unit-testable) -----------------------
@@ -264,7 +264,7 @@ final class FullListController
     /**
      * @param array{source: string, q: string, sort: string, growth: bool, spike: bool, watchlist: bool, market: ?string} $active
      */
-    private static function pageHtml(array $active, string $rowsHtml, bool $hasRows): string
+    private static function pageHtml(array $active, string $rowsHtml, bool $hasRows, int $resultCount): string
     {
         $tabBar = self::tabBarHtml('topplista', $active['source']);
         $sourceSwitcher = self::sourceSwitcherHtml($active);
@@ -273,6 +273,11 @@ final class FullListController
         $filterToggles = self::filterTogglesHtml($active);
         $marketFilter = self::marketFilterHtml($active);
         $rowHead = $hasRows ? self::rowHeadHtml() : '';
+        // Design handbook §11 "Lägg till resultatsammanfattning och aktiv
+        // filteröversikt" — suppressed on the empty result set, where
+        // emptyStateHtml()'s own "Inga resultat för dessa filter. rensa
+        // filter" already says the same thing without duplicating it.
+        $resultsSummary = $hasRows ? self::resultsSummaryHtml($resultCount, $active) : '';
 
         return <<<HTML
         <!DOCTYPE html>
@@ -299,6 +304,7 @@ final class FullListController
               {$marketFilter}
             </div>
           </header>
+          {$resultsSummary}
           <main class="rows">
             {$rowHead}
             {$rowsHtml}
@@ -310,6 +316,47 @@ final class FullListController
         </html>
 
         HTML;
+    }
+
+    /**
+     * Design handbook §11: a result count plus, only when at least one
+     * actual filter is active (search/growth/spike/watchlist/market — Source
+     * and Sort are not "filters" in this sense, they change what's shown or
+     * its order but never narrow a result set the way these do), a plain-text
+     * overview of which ones and a single link back to the bare, unfiltered
+     * list. Pure/static (no DB) so it is unit-testable directly.
+     *
+     * @param array{source: string, q: string, sort: string, growth: bool, spike: bool, watchlist: bool, market: ?string} $active
+     */
+    public static function resultsSummaryHtml(int $resultCount, array $active): string
+    {
+        $countText = self::e(sprintf('%d resultat', $resultCount));
+
+        $chips = [];
+        if ($active['q'] !== '') {
+            $chips[] = sprintf('Sök "%s"', $active['q']);
+        }
+        if ($active['growth']) {
+            $chips[] = 'Stadig tillväxt';
+        }
+        if ($active['spike']) {
+            $chips[] = 'Spik';
+        }
+        if ($active['watchlist']) {
+            $chips[] = 'Bevakade';
+        }
+        if ($active['market'] !== null) {
+            $chips[] = 'Marknad ' . $active['market'];
+        }
+
+        if ($chips === []) {
+            return '<p class="results-summary">' . $countText . '</p>';
+        }
+
+        $filterText = self::e(implode(' · ', $chips));
+
+        return '<p class="results-summary">' . $countText . ' · ' . $filterText
+            . ' · <a href="/list">Rensa alla</a></p>';
     }
 
     /**
