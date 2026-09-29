@@ -6,6 +6,7 @@ namespace Stockpicker\Tests\Store;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
 use Stockpicker\Store\OwnerCountRepository;
@@ -81,9 +82,10 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
         self::assertCount(1, $rows);
 
-        // spec-5-5: pct_7d/pct_90d/pct_365d added to the same NULL-on-
-        // first-row assertion loop as the original seven.
-        foreach (['delta_1d', 'pct_1d', 'pct_7d', 'pct_90d', 'pct_365d', 'sma_7', 'sma_30', 'sma_90', 'up_streak', 'spike_score'] as $field) {
+        // spec-5-5: pct_7d/pct_90d/pct_365d (and spec-calendar-period-
+        // metrics' pct_30d) added to the same NULL-on-first-row assertion
+        // loop as the original seven.
+        foreach (['delta_1d', 'pct_1d', 'pct_7d', 'pct_30d', 'pct_90d', 'pct_365d', 'sma_7', 'sma_30', 'sma_90', 'up_streak', 'spike_score'] as $field) {
             self::assertNull($rows[0][$field], "{$field} should be NULL on the first-ever row");
         }
     }
@@ -216,28 +218,56 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame(0, (int) $rows[2]['up_streak']);
     }
 
-    public function testGapLargerThanOneDayNullsDeltaAndPctButNotRowBasedMetrics(): void
+    // -- spec-calendar-period-metrics: 1-day change vs previous trading day --
+
+    public function testMondayDeltaComparesAgainstFriday(): void
+    {
+        $this->seed('2026-09-25', 1000); // Fri
+        $this->seed('2026-09-28', 1012); // Mon
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $monday = $rows[1];
+
+        self::assertSame(12, (int) $monday['delta_1d']);
+        self::assertEqualsWithDelta(0.012, (float) $monday['pct_1d'], 0.0000001);
+    }
+
+    public function testPostEasterTuesdayDeltaComparesAgainstMaundyThursday(): void
+    {
+        $this->seed('2026-04-02', 1000); // Thu before Good Friday
+        $this->seed('2026-04-07', 990);  // Tue after Easter Monday (5 days)
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $tuesday = $rows[1];
+
+        self::assertSame(-10, (int) $tuesday['delta_1d']);
+        self::assertEqualsWithDelta(-0.01, (float) $tuesday['pct_1d'], 0.0000001);
+    }
+
+    public function testLongGapNullsDeltaAndPctButNotRowBasedMetrics(): void
     {
         $values = [1000, 1010, 1020, 1030, 1040, 1050];
         foreach ($values as $i => $v) {
             $this->seed(sprintf('2026-04-%02d', $i + 1), $v);
         }
-        $this->seed('2026-04-08', 1060); // gap: 2026-04-06 -> 2026-04-08 (2 days)
+        $this->seed('2026-04-14', 1060); // 8 days after 2026-04-06
+        $this->seed('2026-04-20', 1070); // 6 days after 2026-04-14 -- one past the tolerance
 
         $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
-        self::assertCount(7, $rows);
+        self::assertCount(8, $rows);
         $afterGap = $rows[6];
 
-        self::assertSame('2026-04-08', $afterGap['as_of_date']);
-        self::assertNull($afterGap['delta_1d'], 'delta_1d must be NULL across a >1-day gap');
-        self::assertNull($afterGap['pct_1d'], 'pct_1d must be NULL across a >1-day gap');
+        self::assertSame('2026-04-14', $afterGap['as_of_date']);
+        self::assertNull($afterGap['delta_1d'], 'delta_1d must be NULL when the previous row is 8 days back');
+        self::assertNull($afterGap['pct_1d'], 'pct_1d must be NULL when the previous row is 8 days back');
+        self::assertNull($rows[7]['delta_1d'], 'a 6-day gap is past the 5-day tolerance');
 
         // Row-based metrics stay unaffected by the gap.
         self::assertEqualsWithDelta(1030.0, (float) $afterGap['sma_7'], 0.0001, 'sma_7 across the gap');
         self::assertSame(6, (int) $afterGap['up_streak'], 'raw_delta is still positive across the gap');
     }
 
-    // -- spec-5-5: pct_7d/pct_90d/pct_365d (same gap-aware rule as pct_1d) ---
+    // -- spec-calendar-period-metrics: pct_Nd vs latest row <= d - N days ---
 
     public function testPct7dPopulatesWhenExactlySevenCalendarDaysOfHistoryExist(): void
     {
@@ -253,12 +283,13 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame('2026-02-08', $last['as_of_date']);
         self::assertNotNull($last['pct_7d']);
         self::assertEqualsWithDelta((1070 - 1000) / 1000, (float) $last['pct_7d'], 0.0000001, 'pct_7d');
-        // Not enough calendar-days-back history yet for the two longer windows.
+        // Not enough calendar-days-back history yet for the longer windows.
+        self::assertNull($last['pct_30d']);
         self::assertNull($last['pct_90d']);
         self::assertNull($last['pct_365d']);
     }
 
-    public function testPct7dIsNullWhenFewerThanSevenRowsOfHistoryExist(): void
+    public function testPct7dIsNullWhenHistoryIsShorterThanSevenDays(): void
     {
         $values = [1000, 1010, 1020];
         foreach ($values as $i => $v) {
@@ -268,33 +299,164 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
         $last = $rows[count($rows) - 1];
 
-        self::assertNull($last['pct_7d'], 'not enough rows for a 7-calendar-day-back comparison yet');
+        self::assertNull($last['pct_7d'], 'no row on or before d - 7 yet');
     }
 
-    public function testGapCrossingTheSevenDayBoundaryNullsPct7dDespiteEnoughRowsExisting(): void
+    public function testPct7dOnAWednesdayAfterAWednesdayClosureUsesTheTuesdayBefore(): void
     {
-        // 6 consecutive days, then a 1-day gap (2026-03-07 skipped), then 2
-        // more days -> 8 total rows, enough for a row 7 positions back to
-        // exist, but that row is 8 calendar days earlier, not 7 -- must
-        // still NULL, mirroring testGapLargerThanOneDayNullsDeltaAndPctButNotRowBasedMetrics's
-        // pct_1d guard, extended to pct_7d (spec's I/O & Edge-Case Matrix:
-        // "a data gap crosses exactly the 7/90/365-day boundary").
-        $values = [1000, 1010, 1020, 1030, 1040, 1050];
-        foreach ($values as $i => $v) {
-            $this->seed(sprintf('2026-03-%02d', $i + 1), $v);
-        }
-        $this->seed('2026-03-08', 1060); // gap: 03-06 -> 03-08
-        $this->seed('2026-03-09', 1070);
+        // Matrix "Vecka on a Wednesday after Wed holiday": d = Wed
+        // 2026-01-07, d - 7 = Wed 2025-12-31 (New Year's Eve, exchange
+        // closed) not stored, d - 8 = Tue 2025-12-30 stored -> pct_7d
+        // compares against Tue.
+        $this->seed('2025-12-29', 900);  // Mon
+        $this->seed('2025-12-30', 1000); // Tue
+        // Wed 2025-12-31 and Thu 2026-01-01 closed
+        $this->seed('2026-01-02', 1020); // Fri
+        $this->seed('2026-01-05', 1030); // Mon
+        // Tue 2026-01-06 (Epiphany) closed
+        $this->seed('2026-01-07', 1050); // Wed
 
         $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
-        self::assertCount(8, $rows);
-        $last = $rows[7];
+        $last = $rows[count($rows) - 1];
 
-        self::assertSame('2026-03-09', $last['as_of_date']);
-        self::assertNull(
-            $last['pct_7d'],
-            'a data gap crossing the 7-day window must null pct_7d, even though a row 7 positions back exists',
-        );
+        self::assertSame('2026-01-07', $last['as_of_date']);
+        self::assertEqualsWithDelta((1050 - 1000) / 1000, (float) $last['pct_7d'], 0.0000001, 'pct_7d vs d - 8');
+    }
+
+    /**
+     * @return array<string, array{string, int, int, bool}>
+     */
+    public static function periodAnchorCases(): array
+    {
+        $cases = [];
+        foreach (['pct_30d' => 30, 'pct_90d' => 90, 'pct_365d' => 365] as $field => $n) {
+            $cases["{$field} anchor 3 days before d-N"] = [$field, $n, $n + 3, false];
+            $cases["{$field} anchor at N+5 kept"] = [$field, $n, $n + 5, false];
+            $cases["{$field} anchor at N+6 NULL"] = [$field, $n, $n + 6, true];
+        }
+
+        return $cases;
+    }
+
+    /**
+     * The anchor is the latest row on or before d - N (a row just after
+     * d - N is ignored), and it counts only within N + 5 days.
+     */
+    #[DataProvider('periodAnchorCases')]
+    public function testPeriodAnchorIsTheLatestRowOnOrBeforeDMinusNWithinNPlusFiveDays(
+        string $field,
+        int $n,
+        int $anchorDaysBack,
+        bool $expectNull,
+    ): void {
+        $d = new DateTimeImmutable('2026-06-10');
+        $this->seed($d->modify("-{$anchorDaysBack} days")->format('Y-m-d'), 1000);
+        // Decoy one day *after* d - N: must never be used as the anchor.
+        $this->seed($d->modify('-' . ($n - 1) . ' days')->format('Y-m-d'), 5000);
+        $this->seed($d->format('Y-m-d'), 1100);
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[count($rows) - 1];
+
+        self::assertSame('2026-06-10', $last['as_of_date']);
+        if ($expectNull) {
+            self::assertNull($last[$field], "{$field}: anchor {$anchorDaysBack} days back is past N + 5");
+        } else {
+            self::assertNotNull($last[$field], "{$field}: anchor {$anchorDaysBack} days back is within N + 5");
+            self::assertEqualsWithDelta(0.1, (float) $last[$field], 0.0000001, $field);
+        }
+    }
+
+    public function testPeriodToleranceIsNPlusFiveDaysInclusive(): void
+    {
+        $this->seed('2026-03-01', 1000);
+        // d - 7 = 2026-03-06; nearest row on or before it is 03-01, 12 days
+        // back = 7 + 5 -> kept.
+        $this->seed('2026-03-13', 1100);
+        // d - 7 = 2026-03-20; nearest row on or before it is 03-13, 14 days
+        // back > 7 + 5 -> NULL.
+        $this->seed('2026-03-27', 1200);
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+
+        self::assertEqualsWithDelta(0.1, (float) $rows[1]['pct_7d'], 0.0000001, '12 days back is within 7 + 5');
+        self::assertNull($rows[2]['pct_7d'], '14 days back is past 7 + 5');
+    }
+
+    public function testShortHistorySetsPct7dButNullsTheLongerPeriods(): void
+    {
+        // Matrix "Short history": first row 21 days before the last.
+        $this->seed('2026-06-01', 1000); // Mon
+        $this->seed('2026-06-12', 1100); // Fri
+        $this->seed('2026-06-19', 1210); // Fri
+        $this->seed('2026-06-22', 1250); // Mon
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[count($rows) - 1];
+
+        self::assertEqualsWithDelta((1250 - 1100) / 1100, (float) $last['pct_7d'], 0.0000001, 'pct_7d vs Fri 06-12 (10 days back)');
+        self::assertNull($last['pct_30d']);
+        self::assertNull($last['pct_90d']);
+        self::assertNull($last['pct_365d']);
+    }
+
+    public function testStaleAnchorNullsPct30d(): void
+    {
+        // Matrix "Stale anchor": the nearest row on or before d - 30 is 40
+        // days back -> past 30 + 5 -> NULL, not a misleading 40-day change.
+        $this->seed('2026-05-01', 1000);
+        $this->seed('2026-06-10', 1400); // 40 days later; d - 30 = 2026-05-11
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[1];
+
+        self::assertNull($last['pct_30d']);
+        self::assertNull($last['delta_1d'], '40 days is also far past the 1-day tolerance');
+    }
+
+    public function testMonToFriHistorySpanningAYearPopulatesAllFourPeriodsWithTheCorrectValues(): void
+    {
+        // Acceptance: Mon–Fri data spanning >= 1 year -> all four set.
+        $date = new DateTimeImmutable('2025-06-02'); // Mon
+        $ownersByDate = [];
+        for ($i = 0; $i < 300; ++$i) {
+            while ((int) $date->format('N') >= 6) {
+                $date = $date->modify('+1 day');
+            }
+            $ownersByDate[$date->format('Y-m-d')] = 1000 + $i;
+            $this->seed($date->format('Y-m-d'), 1000 + $i);
+            $date = $date->modify('+1 day');
+        }
+
+        $rows = $this->metrics->forIsinAndSource(self::ISIN, NormalizedRow::SOURCE_AVANZA);
+        $last = $rows[count($rows) - 1];
+        $lastDate = new DateTimeImmutable((string) $last['as_of_date']);
+        $lastOwners = (int) $last['number_of_owners'];
+
+        foreach (['pct_7d' => 7, 'pct_30d' => 30, 'pct_90d' => 90, 'pct_365d' => 365] as $field => $n) {
+            // Expected anchor: the latest stored date on or before d - N.
+            $anchor = $lastDate->modify("-{$n} days");
+            while (!isset($ownersByDate[$anchor->format('Y-m-d')]) && $anchor->format('Y-m-d') >= '2025-06-02') {
+                $anchor = $anchor->modify('-1 day');
+            }
+            self::assertArrayHasKey($anchor->format('Y-m-d'), $ownersByDate, "{$field}: fixture must contain an anchor on or before d - {$n}");
+            $anchorOwners = $ownersByDate[$anchor->format('Y-m-d')];
+
+            self::assertNotNull($last[$field], "{$field} must be populated");
+            self::assertEqualsWithDelta(
+                ($lastOwners - $anchorOwners) / $anchorOwners,
+                (float) $last[$field],
+                0.0000001,
+                $field,
+            );
+        }
+
+        // Every Monday in the series has a Fri-based delta_1d.
+        foreach ($rows as $row) {
+            if ($row['as_of_date'] !== '2025-06-02' && (new DateTimeImmutable((string) $row['as_of_date']))->format('N') === '1') {
+                self::assertSame(1, (int) $row['delta_1d'], "Monday {$row['as_of_date']} delta_1d");
+            }
+        }
     }
 
     public function testPct7dZeroChangeShowsAsExactlyZeroNotNull(): void
@@ -316,7 +478,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         // Review round (iteration 1): pct_7d had a value-correctness test but
         // pct_90d/pct_365d did not -- only their NULL path was ever checked,
         // so a copy-paste slip in the hand-duplicated CASE WHEN block (e.g.
-        // reusing prev_owners_7 while leaving the DATEDIFF(...) = 90 guard
+        // reusing anchor_owners_7 while leaving the N + 5 tolerance guard
         // intact) would ship a wrong number with the full suite green.
         $start = new DateTimeImmutable('2026-01-01');
         for ($i = 0; $i <= 90; ++$i) {
@@ -329,6 +491,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         self::assertNotNull($last['pct_90d']);
         self::assertEqualsWithDelta((1180 - 1000) / 1000, (float) $last['pct_90d'], 0.0000001, 'pct_90d');
+        self::assertEqualsWithDelta((1180 - 1120) / 1120, (float) $last['pct_30d'], 0.0000001, 'pct_30d');
         self::assertNull($last['pct_365d'], 'not enough calendar-days-back history yet for the 365-day window');
     }
 
@@ -407,6 +570,28 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame('SE0000108656', $top[0]['isin']);
         self::assertSame('Atlas Copco A', $top[0]['name']);
         self::assertSame(self::ISIN, $top[1]['isin']);
+    }
+
+    public function testEveryTopRankingSelectsAllFourPeriodPercentages(): void
+    {
+        // spec-calendar-period-metrics: pct_30d joined the Topplista (and
+        // digest) column lists alongside pct_7d/pct_90d/pct_365d.
+        $this->seed('2026-01-01', 1000);
+        $this->seed('2026-01-02', 1010);
+
+        $results = [
+            'topByOwnerCount' => $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 10),
+            'topByTrendQuality' => $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10),
+            'topByOwnerCountAsOf' => $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-02', 10),
+            'topByTrendQualityAsOf' => $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-02', 10),
+        ];
+
+        foreach ($results as $method => $rows) {
+            self::assertNotEmpty($rows, $method);
+            foreach (['pct_7d', 'pct_30d', 'pct_90d', 'pct_365d'] as $field) {
+                self::assertArrayHasKey($field, $rows[0], "{$method} must select {$field}");
+            }
+        }
     }
 
     public function testTopByOwnerCountRanksByTheLatestRowNotAHistoricalPeak(): void

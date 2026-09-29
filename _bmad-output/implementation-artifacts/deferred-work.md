@@ -225,3 +225,19 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-5-5-procentuell-utveckling-over-flera-perioder.md`
   summary: A schema-changing migration's `DROP VIEW`/`CREATE VIEW` (or any DDL) is not atomic, and `bin/deploy.sh` rsyncs source code to the server before running `vendor/bin/phinx migrate -e production` — so a request landing in that window after a deploy but before migration could hit a real "Unknown column"/"table doesn't exist" SQL error for any newly-referenced schema object.
   evidence: Confirmed in `bin/deploy.sh`: `rsync` (line 106) runs before the `phinx migrate` step (lines 116-119). This is a pre-existing characteristic since Story 1.10 (deploy tooling) and Story 3.1 (the view's own DROP+CREATE convention, used again identically by Story 5.5's migration) — every prior story pairing a schema change with code that references it (Story 4.2's `watchlist` table, Story 5.5's `pct_7d`/`pct_90d`/`pct_365d`) shares the same theoretical window. Real but narrow (a manual deploy's migrate step typically completes in well under a second after rsync finishes) and requires touching deploy.sh's step ordering (or switching to `CREATE OR REPLACE VIEW` for the view-specific half of it) — a cross-cutting ops concern, not a single story's fix.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
+  summary: Add a (source, isin, as_of_date) index on owner_count_daily so `WHERE source = ?` view reads stop full-scanning, after measuring page timings.
+  evidence: Split from spec-calendar-period-metrics (2026-09-29); an independent performance change, see docs/backlog.md 2026-09-28 item 2.
+
+## Deferred from: review pass 1 of spec-calendar-period-metrics (2026-09-29)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
+  summary: Measure Topplista/`/list` render time and `EXPLAIN` against production after the view gained four RANGE-framed windows.
+  evidence: Unverified (maybe-false); settle with timings on Loopia before/after the migration. Would be medium if pages approach the 180s web-PHP limit.
+- source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
+  summary: AGENTS.md's "row CSS hand-duplicated across three controllers" pitfall is stale; the row CSS now lives in `public_html/assets/app.css`.
+  evidence: The period-chip CSS change landed only in app.css; editing agent-context files is out of a story's scope.
+- source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
+  summary: Between rsync and `phinx migrate` on deploy, Topplista selects `pct_30d` before the view has it.
+  evidence: Another instance of the pre-existing deploy-order window deferred in spec-5-5.

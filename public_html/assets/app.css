@@ -346,7 +346,7 @@ select:focus-visible,
 .delta-chip--negative { background: var(--negative-tint); color: var(--negative); }
 .delta-chip--neutral { background: var(--neutral-tint); color: var(--text-secondary); }
 .period-pcts {
-  flex: 1 0 100%; display: flex; gap: var(--sp-4);
+  flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: var(--sp-4);
   padding-top: var(--sp-2); margin-top: 2px; border-top: 1px solid var(--border);
 }
 .period-pct { display: flex; flex-direction: column; gap: 1px; }
@@ -489,11 +489,13 @@ section {
 
   .row-head { display: grid; align-items: center; column-gap: var(--sp-3); }
   .rows .row-head, .rows .row { grid-template-columns: 44px minmax(0,1fr) 130px 100px 110px; }
-  .rows.rows--ranked .row-head, .rows.rows--ranked .row { grid-template-columns: 32px 44px minmax(0,1fr) 130px 100px 110px 220px; }
+  /* Last column holds four period chips (Vecka/Månad/3 mån/År) —
+     spec-calendar-period-metrics widened it from 220px. */
+  .rows.rows--ranked .row-head, .rows.rows--ranked .row { grid-template-columns: 32px 44px minmax(0,1fr) 130px 100px 110px 260px; }
 
   .row { display: grid; column-gap: var(--sp-3); row-gap: 0; }
   .row-body, .statcol { display: contents; }
-  .period-pcts { border-top: none; padding-top: 0; margin-top: 0; flex-basis: auto; }
+  .period-pcts { border-top: none; padding-top: 0; margin-top: 0; flex-basis: auto; gap: var(--sp-3); }
   .statcol { text-align: right; }
 
   .trend { width: 130px; }

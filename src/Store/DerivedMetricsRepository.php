@@ -98,7 +98,7 @@ final class DerivedMetricsRepository
             )
             SELECT
                 latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
-                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_90d, latest.pct_365d,
+                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_30d, latest.pct_90d, latest.pct_365d,
                 latest.sma_7, latest.sma_30, latest.sma_90,
                 latest.up_streak, latest.spike_score,
                 i.name, i.list
@@ -146,7 +146,7 @@ final class DerivedMetricsRepository
             )
             SELECT
                 latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
-                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_90d, latest.pct_365d,
+                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_30d, latest.pct_90d, latest.pct_365d,
                 latest.sma_7, latest.sma_30, latest.sma_90,
                 latest.up_streak, latest.spike_score,
                 i.name, i.list
@@ -376,7 +376,7 @@ final class DerivedMetricsRepository
             <<<'SQL'
             SELECT
                 m.isin, m.source, m.as_of_date, m.number_of_owners,
-                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_90d, m.pct_365d,
+                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_30d, m.pct_90d, m.pct_365d,
                 m.sma_7, m.sma_30, m.sma_90,
                 m.up_streak, m.spike_score,
                 i.name, i.list
@@ -412,7 +412,7 @@ final class DerivedMetricsRepository
             <<<'SQL'
             SELECT
                 m.isin, m.source, m.as_of_date, m.number_of_owners,
-                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_90d, m.pct_365d,
+                m.delta_1d, m.pct_1d, m.pct_7d, m.pct_30d, m.pct_90d, m.pct_365d,
                 m.sma_7, m.sma_30, m.sma_90,
                 m.up_streak, m.spike_score,
                 i.name, i.list

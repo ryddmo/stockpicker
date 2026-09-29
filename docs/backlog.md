@@ -218,8 +218,8 @@ independent of a review pass.
      list pages at it. That reverses the "view, no materialization" decision,
      so it needs an architecture note (a new writer under AD-3).
 
-  3. **Likely correctness bug: `pct_7d`, `pct_90d` and `pct_365d` are
-     effectively always NULL.** The view takes `LAG(number_of_owners, N)`, which
+  3. **FIXED 2026-09-29 (spec-calendar-period-metrics) — Likely correctness
+     bug: `pct_7d`, `pct_90d` and `pct_365d` are effectively always NULL.** The view takes `LAG(number_of_owners, N)`, which
      is N *rows* back, and then requires `DATEDIFF(as_of_date, prev_date_N) = N`
      *calendar* days. Since dfe705e and 3bae67f, collection runs Mon–Fri only,
      skipping holidays, so 7 rows back is ~9–11 calendar days, 90 rows is ~125
@@ -244,8 +244,17 @@ independent of a review pass.
      `StoreTestCase::createSchema()`; updates to `DerivedMetricsRepository`, the
      Topplista period chips, `StockDetailController` ranges/gates and the
      `InfoController` copy; tests with Mon–Fri fixtures covering Fri→Mon and a
-     holiday. Still open: whether Topplista gets a new Månad chip (today it
-     only has V/90d/År).
+     holiday.
+
+     **Fixed 2026-09-29:** migration `20260929120000_calendar_period_metrics_view`
+     recreates the view (column names kept as `pct_7d`/`pct_90d`/`pct_365d`,
+     plus a new `pct_30d`). Each period compares against the latest row on or
+     before `as_of_date − N days` (numeric `RANGE` frame over
+     `TO_DAYS(as_of_date)`), NULL unless that row is within N+5 days;
+     `delta_1d`/`pct_1d` use the previous row within 5 days. Topplista shows
+     four chips (Vecka / Månad / 3 mån / År). Aktiedetalj's range picker is
+     Dag / Vecka / Månad / 3 mån / År with calendar windows and gates; the old
+     `?range=30d`/`90d` URLs map to `manad`/`3man`.
 
   4. **Mixed cadence in history.** Rows before 2026-09-15 include weekends
      (Avanza collected daily) and later rows don't. So the row-based

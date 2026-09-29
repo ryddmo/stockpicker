@@ -60,6 +60,7 @@ final class InfoController
             <section>
               <h2>Topplista</h2>
               <p>Startsidan. Visar en topplista med instrument rankade efter antal ägare ("Flest ägare") eller efter hur länge ägarantalet har ökat i följd utan avbrott ("Stadig tillväxt"). Du väljer källa (Avanza eller Nordnet) och rankningsläge högst upp på sidan.</p>
+              <p>Under varje rad visas ägarantalets procentuella förändring över fyra perioder: <strong>Vecka</strong>, <strong>Månad</strong>, <strong>3 mån</strong> och <strong>År</strong> (7, 30, 90 respektive 365 kalenderdagar). Varje period jämförs mot den senast lagrade dagen på eller före startdagen, så helger och helgdagar hanteras automatiskt. Ligger den dagen mer än fem dagar före startdagen, eller finns ingen så gammal data ännu, visas "–" i stället för en missvisande siffra.</p>
             </section>
             <section>
               <h2>Fullständig lista</h2>
@@ -71,7 +72,7 @@ final class InfoController
             </section>
             <section>
               <h2>Aktiedetalj</h2>
-              <p>Nås genom att klicka på ett instrument i någon av listorna. Visar instrumentets namn, en graf över ägarantalet över tid för både Avanza och Nordnet (vald källa som heldragen linje, den andra källan alltid streckad), ett intervallval (Dag/Vecka/30d/90d/År), samt en länk till aktiens egen sida på Avanza (öppnas i en ny flik).</p>
+              <p>Nås genom att klicka på ett instrument i någon av listorna. Visar instrumentets namn, en graf över ägarantalet över tid för både Avanza och Nordnet (vald källa som heldragen linje, den andra källan alltid streckad), ett intervallval (Dag/Vecka/Månad/3 mån/År — Dag visar de två senaste handelsdagarna, övriga intervall de senaste 7, 30, 90 respektive 365 kalenderdagarna), samt en länk till aktiens egen sida på Avanza (öppnas i en ny flik).</p>
             </section>
             <section>
               <h2>Symboler</h2>
@@ -91,7 +92,7 @@ final class InfoController
                 </li>
                 <li>
                   <span class="symbol-example" aria-hidden="true"><span class="delta-chip delta-chip--positive">+412 · 0,9 %</span></span>
-                  <span class="symbol-text"><strong>Delta-chip</strong> — förändringen i ägarantal sedan föregående dag, alltid som antal och procent tillsammans. Visas inte när det saknas en jämförbar föregående dag.</span>
+                  <span class="symbol-text"><strong>Delta-chip</strong> — förändringen i ägarantal sedan föregående handelsdag (på måndagar jämfört med fredagen), alltid som antal och procent tillsammans. Visas inte när föregående lagrade dag ligger mer än fem dagar bakåt.</span>
                 </li>
                 <li>
                   <span class="symbol-example symbol-example--trend" aria-hidden="true">

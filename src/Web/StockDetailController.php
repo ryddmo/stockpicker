@@ -14,7 +14,8 @@ use Stockpicker\Store\WatchlistRepository;
  * header (instrument name, Watchlist star, Streak/Spike badges), a dual-line
  * Trend overlay (primary = the Source-switcher selection, secondary = the
  * other source, always fixed/dashed), a five-segment Range picker
- * (Dag/Vecka/30d/90d/Ar), and a Source switcher.
+ * (Dag/Vecka/Månad/3 mån/År — calendar windows since
+ * spec-calendar-period-metrics), and a Source switcher.
  *
  * Both sources' full metrics series are always fetched via
  * DerivedMetricsRepository::forIsin() (AD-14) — the Range picker only slices
@@ -33,9 +34,13 @@ final class StockDetailController
 {
     public const RANGE_DAG = 'dag';
     public const RANGE_VECKA = 'vecka';
-    public const RANGE_30D = '30d';
-    public const RANGE_90D = '90d';
+    public const RANGE_MANAD = 'manad';
+    public const RANGE_3MAN = '3man';
     public const RANGE_AR = 'ar';
+
+    /** Pre-spec-calendar-period-metrics URL values, still accepted. */
+    private const LEGACY_RANGE_30D = '30d';
+    private const LEGACY_RANGE_90D = '90d';
 
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
@@ -90,7 +95,9 @@ final class StockDetailController
     public static function normalizeRange(string $range): string
     {
         return match ($range) {
-            self::RANGE_VECKA, self::RANGE_30D, self::RANGE_90D, self::RANGE_AR => $range,
+            self::RANGE_VECKA, self::RANGE_MANAD, self::RANGE_3MAN, self::RANGE_AR => $range,
+            self::LEGACY_RANGE_30D => self::RANGE_MANAD,
+            self::LEGACY_RANGE_90D => self::RANGE_3MAN,
             default => self::RANGE_DAG,
         };
     }
@@ -103,33 +110,36 @@ final class StockDetailController
     }
 
     /**
-     * Number of trailing rows the range window shows. `null` (Ar) means "all
-     * available rows" — uncapped (Design Notes, spec-4-3).
+     * Calendar length of the range window in days (spec-calendar-period-
+     * metrics): the window holds every row with `as_of_date >= last - N
+     * days`. `null` (Dag) means "the last 2 rows" instead — the previous
+     * trading day may be several calendar days back (weekend/holiday).
      */
-    public static function windowSize(string $range): ?int
+    public static function windowDays(string $range): ?int
     {
         return match ($range) {
             self::RANGE_VECKA => 7,
-            self::RANGE_30D => 30,
-            self::RANGE_90D => 90,
-            self::RANGE_AR => null,
-            default => 2, // Dag
+            self::RANGE_MANAD => 30,
+            self::RANGE_3MAN => 90,
+            self::RANGE_AR => 365,
+            default => null, // Dag
         };
     }
 
     /**
-     * Minimum primary-source row count required before the range renders a
-     * chart at all. Ar shares 90d's floor (Design Notes, spec-4-3) — a
-     * sub-90-row "year" view would look exactly as thin as a sub-90-row "90d"
-     * view.
+     * Calendar span (days) the primary history must cover before the range
+     * renders a chart at all. År shares 3 mån's gate (Design Notes,
+     * spec-4-3) — a sub-90-day "year" view would look exactly as thin as a
+     * sub-90-day "3 mån" view. `null` (Dag) means the row-count gate: at
+     * least 2 rows.
      */
-    public static function gateThreshold(string $range): int
+    public static function gateDays(string $range): ?int
     {
         return match ($range) {
             self::RANGE_VECKA => 7,
-            self::RANGE_30D => 30,
-            self::RANGE_90D, self::RANGE_AR => 90,
-            default => 2, // Dag
+            self::RANGE_MANAD => 30,
+            self::RANGE_3MAN, self::RANGE_AR => 90,
+            default => null, // Dag
         };
     }
 
@@ -140,29 +150,59 @@ final class StockDetailController
      */
     public static function sliceForRange(array $series, string $range): array
     {
-        $n = self::windowSize($range);
+        $days = self::windowDays($range);
+        if ($days === null) {
+            return array_slice($series, -2);
+        }
+        if ($series === []) {
+            return [];
+        }
 
-        return $n === null ? $series : array_slice($series, -$n);
+        $last = end($series);
+        $cutoff = self::shiftDate((string) $last['as_of_date'], -$days);
+
+        // ISO Y-m-d strings compare correctly as strings.
+        return array_values(array_filter(
+            $series,
+            static fn (array $row): bool => (string) $row['as_of_date'] >= $cutoff,
+        ));
     }
 
     /**
      * The insufficiency gate is evaluated only against the *primary*
-     * source's row count (NFR6, Design Notes) — the secondary line renders
-     * with whatever it has, un-gated.
+     * source's history (NFR6, Design Notes) — the secondary line renders
+     * with whatever it has, un-gated. Insufficient when the history's first
+     * date is later than `last - N days` (it does not yet span the window).
      *
      * @param list<array<string, mixed>> $primarySeries
      */
     public static function isInsufficientHistory(array $primarySeries, string $range): bool
     {
-        return count($primarySeries) < self::gateThreshold($range);
+        return self::daysUntilSufficient($primarySeries, $range) > 0;
     }
 
     /**
+     * Calendar days until the primary history spans the range's gate
+     * (Dag: trading rows until there are 2). An empty series needs the full
+     * gate span.
+     *
      * @param list<array<string, mixed>> $primarySeries
      */
     public static function daysUntilSufficient(array $primarySeries, string $range): int
     {
-        return max(0, self::gateThreshold($range) - count($primarySeries));
+        $gate = self::gateDays($range);
+        if ($gate === null) {
+            return max(0, 2 - count($primarySeries));
+        }
+        if ($primarySeries === []) {
+            return $gate;
+        }
+
+        $first = new \DateTimeImmutable((string) $primarySeries[0]['as_of_date']);
+        $last = new \DateTimeImmutable((string) end($primarySeries)['as_of_date']);
+        $spanned = (int) $first->diff($last)->days;
+
+        return max(0, $gate - $spanned);
     }
 
     /**
@@ -170,10 +210,18 @@ final class StockDetailController
      */
     public static function insufficientHistoryMessage(array $primarySeries, string $range): string
     {
+        $days = self::daysUntilSufficient($primarySeries, $range);
+
         return sprintf(
-            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om %d dagar',
-            self::daysUntilSufficient($primarySeries, $range),
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om %d %s',
+            $days,
+            $days === 1 ? 'dag' : 'dagar',
         );
+    }
+
+    private static function shiftDate(string $date, int $days): string
+    {
+        return (new \DateTimeImmutable($date))->modify(sprintf('%+d days', $days))->format('Y-m-d');
     }
 
     // -- Trend overlay ---------------------------------------------------------
@@ -297,14 +345,14 @@ final class StockDetailController
 
     /**
      * Shared with rangePickerHtml() (dedup, design handbook §12) — the
-     * Dag/Vecka/30d/90d/År display label for a range value.
+     * Dag/Vecka/Månad/3 mån/År display label for a range value.
      */
     public static function rangeLabel(string $range): string
     {
         return match ($range) {
             self::RANGE_VECKA => 'Vecka',
-            self::RANGE_30D => '30d',
-            self::RANGE_90D => '90d',
+            self::RANGE_MANAD => 'Månad',
+            self::RANGE_3MAN => '3 mån',
             self::RANGE_AR => 'År',
             default => 'Dag',
         };
@@ -684,7 +732,7 @@ final class StockDetailController
 
     private static function rangePickerHtml(string $isin, string $source, string $range): string
     {
-        $values = [self::RANGE_DAG, self::RANGE_VECKA, self::RANGE_30D, self::RANGE_90D, self::RANGE_AR];
+        $values = [self::RANGE_DAG, self::RANGE_VECKA, self::RANGE_MANAD, self::RANGE_3MAN, self::RANGE_AR];
 
         $links = '';
         foreach ($values as $value) {
