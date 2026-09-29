@@ -776,18 +776,17 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
     }
 
-    // -- spec-5-5: / period percentages (Vecka/90d/År line) -------------------
+    // -- / period percentages (Vecka/Månad/3 mån/År line) --------------------
 
-    public function testRootShowsAllThreePeriodPercentagesPopulatedWhenGapFreeHistoryCoversAllThreeWindows(): void
+    public function testRootShowsAllFourPeriodPercentagesPopulatedWithMonToFriHistorySpanningAYear(): void
     {
         $this->seedMatchedUniverse();
 
-        // 366 consecutive gap-free days -> the last row has an exact-match
-        // comparison row for all three windows (7/90/365 calendar days back).
-        $start = new DateTimeImmutable('2025-09-01');
-        for ($i = 0; $i < 366; ++$i) {
-            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
-        }
+        // Mon–Fri only (collection skips weekends) for well over a year:
+        // every calendar period (7/30/90/365 days back) lands on a stored
+        // row at most a few days before its offset.
+        $count = $this->seedWeekdays('SE0000001001', '2025-06-02', 300, 1000, 5);
+        self::assertSame(300, $count);
 
         [$status, $body] = $this->endpoint->get('/', $this->validCookie());
 
@@ -795,19 +794,18 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
 
         self::assertStringContainsString('class="period-pcts"', $rowHtml);
-        self::assertStringContainsString('>V<', $rowHtml);
-        self::assertStringContainsString('>90d<', $rowHtml);
+        self::assertStringContainsString('>Vecka<', $rowHtml);
+        self::assertStringContainsString('>Månad<', $rowHtml);
+        self::assertStringContainsString('>3 mån<', $rowHtml);
         self::assertStringContainsString('>År<', $rowHtml);
-        // 366 gap-free daily rows growing by 5/day -> all three windows have
-        // a real comparison row; none of them should fall back to "–".
-        self::assertSame(0, substr_count($rowHtml, 'period-pct--nohist'), 'all three periods must be populated with this much gap-free history');
-        self::assertStringContainsString('period-pct--positive', $rowHtml);
+        self::assertSame(0, substr_count($rowHtml, 'period-pct--nohist'), 'all four periods must be populated with a year of Mon–Fri history');
+        self::assertSame(4, substr_count($rowHtml, 'period-pct--positive'));
     }
 
     public function testRootShowsInsufficientHistoryMarkForPeriodsWithoutEnoughData(): void
     {
         $this->seedMatchedUniverse();
-        // A single stored day -> none of the three periods has a
+        // A single stored day -> none of the four periods has a
         // calendar-days-back comparison row yet.
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
 
@@ -816,9 +814,22 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
 
-        self::assertSame(3, substr_count($rowHtml, 'period-pct--nohist'), 'all three periods must show the insufficient-history mark');
-        self::assertStringContainsString('title="Otillräcklig historik"', $rowHtml);
+        self::assertSame(4, substr_count($rowHtml, 'period-pct--nohist'), 'all four periods must show the insufficient-history mark');
+        self::assertStringContainsString('title="Ingen jämförbar dag"', $rowHtml);
         self::assertStringContainsString('–', $rowHtml);
+    }
+
+    public function testRootShowsTheMondayDeltaChipAgainstFriday(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-09-25', 1000); // Fri
+        $this->seedOwnerCount('SE0000001001', '2026-09-28', 1010); // Mon
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
+        self::assertStringContainsString('+10 · 1,0 %', $rowHtml);
     }
 
     public function testRootWithSourceAllaShowsAvanzaDerivedPeriodPercentagesNeverNordnets(): void
@@ -1224,13 +1235,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Logga in', $body);
     }
 
-    public function testStockDetailRangeVeckaRendersTheChartWhenPrimaryHasSevenRows(): void
+    public function testStockDetailRangeVeckaRendersTheChartOnceMonToFriHistorySpansSevenDays(): void
     {
         $this->seedMatchedUniverse();
-        $start = new DateTimeImmutable('2026-02-01');
-        for ($i = 0; $i < 7; ++$i) {
-            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
-        }
+        // Mon 2026-02-02 .. Mon 2026-02-09: 6 trading rows spanning 7 days.
+        $this->seedWeekdays('SE0000001001', '2026-02-02', 6, 1000, 6);
 
         [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=vecka', $this->validCookie());
 
@@ -1243,6 +1252,21 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('>1,03k<', $body);
         self::assertStringContainsString('>1,02k<', $body);
         self::assertStringContainsString('>1k<', $body);
+    }
+
+    public function testStockDetailRangeVeckaIsGatedWhenFiveTradingDaysSpanOnlyFourCalendarDays(): void
+    {
+        $this->seedMatchedUniverse();
+        // Mon..Fri = 4 days spanned -> 3 more calendar days to go.
+        $this->seedWeekdays('SE0000001001', '2026-02-02', 5, 1000, 6);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=vecka', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString(
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 3 dagar',
+            $body,
+        );
     }
 
     public function testStockDetailYAxisDropsTheMidTickWhenItsRoundedLabelCollidesWithAnExtreme(): void
@@ -1262,30 +1286,51 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('>100k<', $body);
     }
 
-    public function testStockDetailRange30dShowsInsufficientHistoryMessageWhenPrimaryHasFewerThan30Rows(): void
+    public function testStockDetailRangeManadShowsInsufficientHistoryInCalendarDays(): void
     {
         $this->seedMatchedUniverse();
-        $start = new DateTimeImmutable('2026-02-01');
-        for ($i = 0; $i < 10; ++$i) {
-            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 5);
-        }
+        // Mon 2026-02-02 .. Fri 2026-02-13: 10 trading rows spanning 11 days.
+        $this->seedWeekdays('SE0000001001', '2026-02-02', 10, 1000, 5);
 
-        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=30d', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=manad', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString(
-            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 20 dagar',
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 19 dagar',
             $body,
         );
     }
 
-    public function testStockDetailRangeArRendersTheFullSeriesWhenPrimaryHasAtLeast90Rows(): void
+    public function testStockDetailLegacyRange30dIsTreatedAsManad(): void
     {
         $this->seedMatchedUniverse();
-        $start = new DateTimeImmutable('2026-01-01');
-        for ($i = 0; $i < 90; ++$i) {
-            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 3);
-        }
+        $this->seedWeekdays('SE0000001001', '2026-02-02', 10, 1000, 5);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=30d', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('kolla in igen om 19 dagar', $body);
+        self::assertMatchesRegularExpression('#<a class="tab tab--active" href="[^"]*range=manad">Månad</a>#', $body);
+    }
+
+    public function testStockDetailRangeManadRendersTheChartWithMonToFriHistorySpanningThirtyDays(): void
+    {
+        $this->seedMatchedUniverse();
+        // Mon 2026-02-02 .. Wed 2026-03-04: 23 trading rows spanning 30 days.
+        $this->seedWeekdays('SE0000001001', '2026-02-02', 23, 1000, 5);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=manad', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('trend-overlay', $body);
+        self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+    }
+
+    public function testStockDetailRangeArRendersOnceMonToFriHistorySpans3ManGate(): void
+    {
+        $this->seedMatchedUniverse();
+        // Mon 2026-01-05 .. Mon 2026-04-06: 66 trading rows spanning 91 days.
+        $this->seedWeekdays('SE0000001001', '2026-01-05', 66, 1000, 3);
 
         [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=ar', $this->validCookie());
 
@@ -1294,19 +1339,30 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
     }
 
-    public function testStockDetailRange90dRendersTheChartWhenPrimaryHasNinetyRows(): void
+    public function testStockDetailRange3ManRendersTheChartWithMonToFriHistorySpanningNinetyDays(): void
     {
         $this->seedMatchedUniverse();
-        $start = new DateTimeImmutable('2026-01-01');
-        for ($i = 0; $i < 90; ++$i) {
-            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 3);
-        }
+        $this->seedWeekdays('SE0000001001', '2026-01-05', 66, 1000, 3);
 
-        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=90d', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=3man', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString('trend-overlay', $body);
         self::assertStringNotContainsString('Inte tillräckligt med historik', $body);
+        self::assertMatchesRegularExpression('#<a class="tab tab--active" href="[^"]*range=3man">3 mån</a>#', $body);
+    }
+
+    public function testStockDetailLegacyRange90dIsTreatedAs3Man(): void
+    {
+        $this->seedMatchedUniverse();
+        // Mon 2026-01-05 .. Thu 2026-04-02: 64 rows spanning 87 days -> 3 to go.
+        $this->seedWeekdays('SE0000001001', '2026-01-05', 64, 1000, 3);
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001001?range=90d', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('kolla in igen om 3 dagar', $body);
+        self::assertMatchesRegularExpression('#<a class="tab tab--active" href="[^"]*range=3man">3 mån</a>#', $body);
     }
 
     public function testStockDetailDefaultDagViewShowsInsufficientHistoryForABrandNewInstrument(): void
@@ -1319,7 +1375,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertStringContainsString(
-            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 1 dagar',
+            'Inte tillräckligt med historik för det här intervallet ännu — kolla in igen om 1 dag',
             $body,
         );
     }
@@ -1534,6 +1590,24 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
             new DateTimeImmutable($asOfDate . 'T12:00:00', new DateTimeZone('UTC')),
         );
         (new OwnerCountRepository($this->pdo))->upsert($row, $asOfDate);
+    }
+
+    /**
+     * Seeds `$count` Mon–Fri rows (collection skips weekends) from `$start`,
+     * owners `$base + i * $step`. Returns the number of rows seeded.
+     */
+    private function seedWeekdays(string $isin, string $start, int $count, int $base, int $step): int
+    {
+        $date = new DateTimeImmutable($start);
+        for ($i = 0; $i < $count; ++$i) {
+            while ((int) $date->format('N') >= 6) {
+                $date = $date->modify('+1 day');
+            }
+            $this->seedOwnerCount($isin, $date->format('Y-m-d'), $base + $i * $step);
+            $date = $date->modify('+1 day');
+        }
+
+        return $count;
     }
 
     private function validCookie(): string

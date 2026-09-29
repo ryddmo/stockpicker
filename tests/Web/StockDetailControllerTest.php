@@ -28,9 +28,16 @@ final class StockDetailControllerTest extends TestCase
     public function testNormalizeRangeAcceptsEachKnownValue(): void
     {
         self::assertSame(StockDetailController::RANGE_VECKA, StockDetailController::normalizeRange('vecka'));
-        self::assertSame(StockDetailController::RANGE_30D, StockDetailController::normalizeRange('30d'));
-        self::assertSame(StockDetailController::RANGE_90D, StockDetailController::normalizeRange('90d'));
+        self::assertSame(StockDetailController::RANGE_MANAD, StockDetailController::normalizeRange('manad'));
+        self::assertSame(StockDetailController::RANGE_3MAN, StockDetailController::normalizeRange('3man'));
         self::assertSame(StockDetailController::RANGE_AR, StockDetailController::normalizeRange('ar'));
+    }
+
+    public function testNormalizeRangeMapsLegacyUrlValues(): void
+    {
+        // Matrix "Old URL": ?range=30d / ?range=90d -> manad / 3man.
+        self::assertSame(StockDetailController::RANGE_MANAD, StockDetailController::normalizeRange('30d'));
+        self::assertSame(StockDetailController::RANGE_3MAN, StockDetailController::normalizeRange('90d'));
     }
 
     public function testNormalizeSourceDefaultsToAvanzaForUnknownValues(): void
@@ -44,109 +51,149 @@ final class StockDetailControllerTest extends TestCase
         self::assertSame('nordnet', StockDetailController::normalizeSource('nordnet'));
     }
 
-    // -- Window size / gate threshold per range (Design Notes table) --------
+    // -- Calendar window / gate per range ------------------------------------
 
-    public function testWindowSizePerRange(): void
+    public function testWindowDaysPerRange(): void
     {
-        self::assertSame(2, StockDetailController::windowSize(StockDetailController::RANGE_DAG));
-        self::assertSame(7, StockDetailController::windowSize(StockDetailController::RANGE_VECKA));
-        self::assertSame(30, StockDetailController::windowSize(StockDetailController::RANGE_30D));
-        self::assertSame(90, StockDetailController::windowSize(StockDetailController::RANGE_90D));
-        self::assertNull(StockDetailController::windowSize(StockDetailController::RANGE_AR), 'Ar is uncapped');
+        self::assertNull(StockDetailController::windowDays(StockDetailController::RANGE_DAG), 'Dag is the last 2 rows');
+        self::assertSame(7, StockDetailController::windowDays(StockDetailController::RANGE_VECKA));
+        self::assertSame(30, StockDetailController::windowDays(StockDetailController::RANGE_MANAD));
+        self::assertSame(90, StockDetailController::windowDays(StockDetailController::RANGE_3MAN));
+        self::assertSame(365, StockDetailController::windowDays(StockDetailController::RANGE_AR));
     }
 
-    public function testGateThresholdPerRange(): void
+    public function testGateDaysPerRange(): void
     {
-        self::assertSame(2, StockDetailController::gateThreshold(StockDetailController::RANGE_DAG));
-        self::assertSame(7, StockDetailController::gateThreshold(StockDetailController::RANGE_VECKA));
-        self::assertSame(30, StockDetailController::gateThreshold(StockDetailController::RANGE_30D));
-        self::assertSame(90, StockDetailController::gateThreshold(StockDetailController::RANGE_90D));
+        self::assertNull(StockDetailController::gateDays(StockDetailController::RANGE_DAG));
+        self::assertSame(7, StockDetailController::gateDays(StockDetailController::RANGE_VECKA));
+        self::assertSame(30, StockDetailController::gateDays(StockDetailController::RANGE_MANAD));
+        self::assertSame(90, StockDetailController::gateDays(StockDetailController::RANGE_3MAN));
         self::assertSame(
             90,
-            StockDetailController::gateThreshold(StockDetailController::RANGE_AR),
-            'Ar shares the 90d floor (Design Notes)',
+            StockDetailController::gateDays(StockDetailController::RANGE_AR),
+            'År shares 3 mån\'s gate (Design Notes)',
         );
     }
 
-    // -- sliceForRange(): array_slice(-n), never a second query --------------
+    // -- sliceForRange(): calendar window over the fetched rows, no query ----
 
-    public function testSliceForRangeTakesTheLastNRows(): void
+    public function testSliceForRangeVeckaCoversSevenCalendarDaysNotSevenRows(): void
     {
+        // Mon 2026-01-05 .. Fri 2026-01-16 (10 trading rows); last = Fri 16th,
+        // cutoff = Fri 9th -> Fri 9th + Mon 12th..Fri 16th = 6 rows.
         $series = self::rows(10);
 
         $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_VECKA);
 
-        self::assertCount(7, $slice);
-        self::assertSame(3, $slice[array_key_first($slice)]['number_of_owners']);
-        self::assertSame(9, $slice[array_key_last($slice)]['number_of_owners']);
+        self::assertCount(6, $slice);
+        self::assertSame('2026-01-09', $slice[0]['as_of_date']);
+        self::assertSame('2026-01-16', $slice[array_key_last($slice)]['as_of_date']);
     }
 
-    public function testSliceForRangeReturnsTheWholeArrayWhenFewerRowsThanTheWindow(): void
+    public function testSliceForRangeManadCoversThirtyCalendarDays(): void
+    {
+        // 40 trading rows from Mon 2026-01-05 end on Fri 2026-02-27; cutoff
+        // 2026-01-28 (Wed) -> 2026-01-28 .. 2026-02-27 = 23 trading rows.
+        $series = self::rows(40);
+
+        $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_MANAD);
+
+        self::assertSame('2026-01-28', $slice[0]['as_of_date']);
+        self::assertCount(23, $slice);
+    }
+
+    public function testSliceForRangeReturnsTheWholeArrayWhenHistoryIsShorterThanTheWindow(): void
     {
         $series = self::rows(3);
 
-        $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_90D);
+        $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_3MAN);
 
         self::assertCount(3, $slice);
     }
 
-    public function testSliceForRangeArReturnsEveryRowUncapped(): void
+    public function testSliceForRangeArIsCappedAtThreeHundredSixtyFiveDays(): void
     {
-        $series = self::rows(150);
+        // 300 trading rows span well over a year.
+        $series = self::rows(300);
+        $last = $series[array_key_last($series)]['as_of_date'];
+        $cutoff = (new \DateTimeImmutable($last))->modify('-365 days')->format('Y-m-d');
 
         $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_AR);
 
-        self::assertCount(150, $slice);
+        self::assertLessThan(300, count($slice));
+        self::assertGreaterThanOrEqual($cutoff, $slice[0]['as_of_date']);
+        self::assertLessThan($cutoff, $series[300 - count($slice) - 1]['as_of_date']);
     }
 
     public function testSliceForRangeDagTakesTheLastTwoRows(): void
     {
-        $series = self::rows(30);
+        // Mon 2026-01-05 .. Fri 2026-02-13 (30 rows) + Mon: Dag is Fri + Mon.
+        $series = self::rows(31);
 
         $slice = StockDetailController::sliceForRange($series, StockDetailController::RANGE_DAG);
 
         self::assertCount(2, $slice);
-        self::assertSame(28, $slice[array_key_first($slice)]['number_of_owners']);
-        self::assertSame(29, $slice[array_key_last($slice)]['number_of_owners']);
+        self::assertSame('2026-02-13', $slice[0]['as_of_date']);
+        self::assertSame('2026-02-16', $slice[1]['as_of_date']);
     }
 
-    // -- isInsufficientHistory(): gated on the primary source only -----------
-
-    public function testIsInsufficientHistoryIsTrueBelowTheGate(): void
+    public function testSliceForRangeOfAnEmptySeriesIsEmpty(): void
     {
-        self::assertTrue(StockDetailController::isInsufficientHistory(self::rows(29), StockDetailController::RANGE_30D));
+        self::assertSame([], StockDetailController::sliceForRange([], StockDetailController::RANGE_MANAD));
+    }
+
+    // -- isInsufficientHistory(): gated on the primary's calendar span -------
+
+    public function testIsInsufficientHistoryIsTrueWhenHistoryDoesNotSpanTheWindow(): void
+    {
+        // 21 trading rows: Mon 2026-01-05 .. Mon 2026-02-02 = 28 days < 30.
+        self::assertTrue(StockDetailController::isInsufficientHistory(self::rows(21), StockDetailController::RANGE_MANAD));
         self::assertTrue(StockDetailController::isInsufficientHistory(self::rows(1), StockDetailController::RANGE_DAG));
         self::assertTrue(StockDetailController::isInsufficientHistory([], StockDetailController::RANGE_DAG));
+        self::assertTrue(StockDetailController::isInsufficientHistory([], StockDetailController::RANGE_VECKA));
     }
 
-    public function testIsInsufficientHistoryIsFalseAtOrAboveTheGate(): void
+    public function testIsInsufficientHistoryIsFalseOnceHistorySpansTheWindow(): void
     {
-        self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(30), StockDetailController::RANGE_30D));
+        // 23 trading rows: Mon 2026-01-05 .. Wed 2026-02-04 = 30 days.
+        self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(23), StockDetailController::RANGE_MANAD));
+        // 6 trading rows: Mon .. next Mon = 7 days.
+        self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(6), StockDetailController::RANGE_VECKA));
         self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(2), StockDetailController::RANGE_DAG));
-        self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(90), StockDetailController::RANGE_AR));
     }
 
-    public function testIsInsufficientHistoryForArUsesThe90RowFloorNotAllAvailableRows(): void
+    public function testIsInsufficientHistoryForArUsesThe3ManGateNotAFullYear(): void
     {
-        // 89 rows is "a lot" of history but still short of Ar's shared 90d
-        // floor (Design Notes) -> must still gate.
-        self::assertTrue(StockDetailController::isInsufficientHistory(self::rows(89), StockDetailController::RANGE_AR));
+        // 64 trading rows: Mon 2026-01-05 .. Thu 2026-04-02 = 87 days -> gated;
+        // 66 rows: .. Mon 2026-04-06 = 91 days -> renders.
+        self::assertTrue(StockDetailController::isInsufficientHistory(self::rows(64), StockDetailController::RANGE_AR));
+        self::assertFalse(StockDetailController::isInsufficientHistory(self::rows(66), StockDetailController::RANGE_AR));
     }
 
     // -- Insufficient-history message -----------------------------------------
 
-    public function testDaysUntilSufficientIsTheGapToTheGate(): void
+    public function testDaysUntilSufficientIsCalendarDaysUntilTheHistorySpansTheGate(): void
     {
-        self::assertSame(20, StockDetailController::daysUntilSufficient(self::rows(10), StockDetailController::RANGE_30D));
-        self::assertSame(0, StockDetailController::daysUntilSufficient(self::rows(30), StockDetailController::RANGE_30D));
+        // 10 trading rows: Mon 2026-01-05 .. Fri 2026-01-16 = 11 days spanned.
+        self::assertSame(19, StockDetailController::daysUntilSufficient(self::rows(10), StockDetailController::RANGE_MANAD));
+        self::assertSame(0, StockDetailController::daysUntilSufficient(self::rows(23), StockDetailController::RANGE_MANAD));
+        self::assertSame(30, StockDetailController::daysUntilSufficient([], StockDetailController::RANGE_MANAD));
+        self::assertSame(1, StockDetailController::daysUntilSufficient(self::rows(1), StockDetailController::RANGE_DAG));
     }
 
     public function testInsufficientHistoryMessageIncludesTheDayCount(): void
     {
-        $message = StockDetailController::insufficientHistoryMessage(self::rows(10), StockDetailController::RANGE_30D);
+        $message = StockDetailController::insufficientHistoryMessage(self::rows(10), StockDetailController::RANGE_MANAD);
 
-        self::assertStringContainsString('20 dagar', $message);
+        self::assertStringContainsString('19 dagar', $message);
         self::assertStringContainsString('Inte tillräckligt med historik', $message);
+    }
+
+    public function testInsufficientHistoryMessageUsesSingularDagForOneDay(): void
+    {
+        $message = StockDetailController::insufficientHistoryMessage(self::rows(1), StockDetailController::RANGE_DAG);
+
+        self::assertStringEndsWith('kolla in igen om 1 dag', $message);
     }
 
     // -- scaledPoints(): x by shared calendar-date domain, y by own min/max --
@@ -320,9 +367,17 @@ final class StockDetailControllerTest extends TestCase
      */
     private static function rows(int $count): array
     {
+        // Mon–Fri trading days from Mon 2026-01-05 (collection skips
+        // weekends), so calendar-window logic is exercised realistically.
         $out = [];
+        $date = new \DateTimeImmutable('2026-01-05');
         for ($i = 0; $i < $count; ++$i) {
-            $out[] = self::row($i, sma7: $i >= 6 ? 100.0 : null, delta: 1, spikeScore: null);
+            while ((int) $date->format('N') >= 6) {
+                $date = $date->modify('+1 day');
+            }
+            $out[] = ['as_of_date' => $date->format('Y-m-d')]
+                + self::row($i, sma7: $i >= 6 ? 100.0 : null, delta: 1, spikeScore: null);
+            $date = $date->modify('+1 day');
         }
 
         return $out;
@@ -386,8 +441,8 @@ final class StockDetailControllerTest extends TestCase
     {
         self::assertSame('Dag', StockDetailController::rangeLabel(StockDetailController::RANGE_DAG));
         self::assertSame('Vecka', StockDetailController::rangeLabel(StockDetailController::RANGE_VECKA));
-        self::assertSame('30d', StockDetailController::rangeLabel(StockDetailController::RANGE_30D));
-        self::assertSame('90d', StockDetailController::rangeLabel(StockDetailController::RANGE_90D));
+        self::assertSame('Månad', StockDetailController::rangeLabel(StockDetailController::RANGE_MANAD));
+        self::assertSame('3 mån', StockDetailController::rangeLabel(StockDetailController::RANGE_3MAN));
         self::assertSame('År', StockDetailController::rangeLabel(StockDetailController::RANGE_AR));
     }
 
@@ -414,10 +469,10 @@ final class StockDetailControllerTest extends TestCase
             ['as_of_date' => '2026-09-27', 'number_of_owners' => 1207],
         ];
 
-        $text = StockDetailController::chartAltText($slice, 'nordnet', StockDetailController::RANGE_30D);
+        $text = StockDetailController::chartAltText($slice, 'nordnet', StockDetailController::RANGE_MANAD);
 
         self::assertStringContainsString('Nordnet', $text);
-        self::assertStringContainsString('30d', $text);
+        self::assertStringContainsString('Månad', $text);
         self::assertStringContainsString('1 000', $text);
         self::assertStringContainsString('2026-09-01', $text);
         self::assertStringContainsString('1 207', $text);

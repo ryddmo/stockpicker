@@ -197,7 +197,7 @@ final class LeaderboardController
     /**
      * "+412 · 0,9 %" — count and percent always together (DESIGN.md), sign
      * shown on the count, magnitude-only on the percent. Empty when either
-     * value is unavailable (no >1-day-gap-free predecessor to compare to).
+     * value is unavailable (no stored predecessor within 5 days to compare to).
      */
     public static function deltaChipHtml(?int $delta, ?float $pct): string
     {
@@ -219,12 +219,14 @@ final class LeaderboardController
     }
 
     /**
-     * spec-5-5 — one labeled period percentage ("V"/"90d"/"År" + `pct_7d`/
-     * `pct_90d`/`pct_365d`): `+2,1 %`/`-2,1 %`/`0,0 %`, signed and colored by
+     * spec-5-5 / spec-calendar-period-metrics — one labeled period percentage
+     * ("Vecka"/"Månad"/"3 mån"/"År" + `pct_7d`/`pct_30d`/`pct_90d`/
+     * `pct_365d`): `+2,1 %`/`-2,1 %`/`0,0 %`, signed and colored by
      * sign (same positive/negative/neutral convention as deltaChipHtml()),
      * or a `period-pct--nohist` "–" mark with a title when `$pct` is `null`
-     * (the view's gap-aware NULL — insufficient/gapped history for that
-     * window, never rendered as a misleading number).
+     * (the view's NULL — history too short, or the nearest row on or before
+     * as_of_date − N lies more than N+5 days back; never rendered as a
+     * misleading number).
      */
     public static function periodPctItemHtml(string $label, ?float $pct): string
     {
@@ -232,7 +234,7 @@ final class LeaderboardController
 
         if ($pct === null) {
             return sprintf(
-                '<span class="period-pct period-pct--nohist" title="Otillräcklig historik">'
+                '<span class="period-pct period-pct--nohist" title="Ingen jämförbar dag">'
                     . '<span class="period-pct-label">%s</span><span class="period-pct-value">–</span></span>',
                 $eLabel,
             );
@@ -256,15 +258,17 @@ final class LeaderboardController
     }
 
     /**
-     * spec-5-5 — the Vecka/90d/År line below a Topplista row. Today's
+     * spec-5-5 / spec-calendar-period-metrics — the Vecka/Månad/3 mån/År line
+     * below a Topplista row (calendar periods: 7/30/90/365 days). Today's
      * percentage is intentionally NOT repeated here — it's already shown via
      * deltaChipHtml()'s output in `.statcol`.
      */
-    public static function periodPctsHtml(?float $pct7d, ?float $pct90d, ?float $pct365d): string
+    public static function periodPctsHtml(?float $pct7d, ?float $pct30d, ?float $pct90d, ?float $pct365d): string
     {
         return '<span class="period-pcts">'
-            . self::periodPctItemHtml('V', $pct7d)
-            . self::periodPctItemHtml('90d', $pct90d)
+            . self::periodPctItemHtml('Vecka', $pct7d)
+            . self::periodPctItemHtml('Månad', $pct30d)
+            . self::periodPctItemHtml('3 mån', $pct90d)
             . self::periodPctItemHtml('År', $pct365d)
             . '</span>';
     }
@@ -284,6 +288,7 @@ final class LeaderboardController
         $delta = $row['delta_1d'] !== null ? (int) $row['delta_1d'] : null;
         $pct = $row['pct_1d'] !== null ? (float) $row['pct_1d'] : null;
         $pct7d = $row['pct_7d'] !== null ? (float) $row['pct_7d'] : null;
+        $pct30d = $row['pct_30d'] !== null ? (float) $row['pct_30d'] : null;
         $pct90d = $row['pct_90d'] !== null ? (float) $row['pct_90d'] : null;
         $pct365d = $row['pct_365d'] !== null ? (float) $row['pct_365d'] : null;
         $upStreak = $row['up_streak'] !== null ? (int) $row['up_streak'] : null;
@@ -301,7 +306,7 @@ final class LeaderboardController
         $badgesHtml = self::streakBadgeHtml($upStreak) . self::spikeBadgeHtml($spikeScore);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
         $deltaChipHtml = self::deltaChipHtml($delta, $pct);
-        $periodPctsHtml = self::periodPctsHtml($pct7d, $pct90d, $pct365d);
+        $periodPctsHtml = self::periodPctsHtml($pct7d, $pct30d, $pct90d, $pct365d);
 
         $eIsin = self::e($isin);
         $eName = self::e($name);
