@@ -31,6 +31,10 @@ final class EndpointFixture
 
     private ?string $digestSpyFile = null;
 
+    private bool $digestEnabled = true;
+
+    private bool $brokenDigest = false;
+
     /**
      * Start an opt-in canned Avanza universe source (a second `php -S`) BEFORE
      * `start()`, so the front controller's `AvanzaUniverseAdapter` points at it
@@ -57,12 +61,23 @@ final class EndpointFixture
      * so a test can observe the digest crossing the real subprocess
      * boundary. Returns the file's path (`digestSpyContents()` reads it back).
      */
-    public function enableDigestSpy(): string
+    public function enableDigestSpy(bool $enabled = true): string
     {
+        $this->digestEnabled = $enabled;
         $this->digestSpyFile = sys_get_temp_dir() . '/stockpicker-digest-spy-' . bin2hex(random_bytes(6)) . '.ndjson';
         file_put_contents($this->digestSpyFile, '');
 
         return $this->digestSpyFile;
+    }
+
+    /**
+     * Opt-in, call BEFORE `start()`: switches the digest on (`enabled` =>
+     * true) but leaves username/recipient out, so Config::digest() throws
+     * inside TopTenDigest — exercises index.php's catch-and-log path.
+     */
+    public function enableBrokenDigest(): void
+    {
+        $this->brokenDigest = true;
     }
 
     /** The digest spy file's contents (one JSON line per attempted send), or '' if never enabled/never sent. */
@@ -100,13 +115,16 @@ final class EndpointFixture
             // local mail() is never touched), but TopTenDigest::run() still
             // reads Config::digest()['recipient']/['username'] before
             // invoking it -- so a test that enabled the spy needs a "digest"
-            // section present. Deliberately absent otherwise, so the default
-            // fixture still exercises the "digest config missing" failure
-            // path as-is.
+            // section present. Absent otherwise, which also leaves the
+            // digest switched off (Config::digestEnabled() is opt-in).
             $configData['digest'] = [
+                'enabled' => $this->digestEnabled,
                 'username' => 'digest-fixture@example.com',
                 'recipient' => 'stockpicker@ryddmo.se',
             ];
+        }
+        if ($this->brokenDigest) {
+            $configData['digest'] = ['enabled' => true];
         }
         file_put_contents($this->root . '/config.php', "<?php\nreturn " . var_export($configData, true) . ";\n");
 

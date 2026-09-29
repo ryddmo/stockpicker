@@ -120,6 +120,15 @@ final class SmokeTest extends TestCase
         $config->loginPasswordHash();
     }
 
+    public function testConfigDigestEnabledIsOptIn(): void
+    {
+        self::assertFalse(Config::fromArray([], $this->fixtureRoot)->digestEnabled());
+        self::assertFalse(Config::fromArray(['digest' => ['username' => 'u', 'recipient' => 'r']], $this->fixtureRoot)->digestEnabled());
+        self::assertFalse(Config::fromArray(['digest' => ['enabled' => 'true']], $this->fixtureRoot)->digestEnabled());
+        self::assertFalse(Config::fromArray(['digest' => ['enabled' => false]], $this->fixtureRoot)->digestEnabled());
+        self::assertTrue(Config::fromArray(['digest' => ['enabled' => true]], $this->fixtureRoot)->digestEnabled());
+    }
+
     public function testConfigDigestThrowsWhenSectionAbsent(): void
     {
         $config = Config::fromArray(['cron_token' => 't'], $this->fixtureRoot);

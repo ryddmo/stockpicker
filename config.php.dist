@@ -44,7 +44,10 @@ return [
     // TopTenDigest), sent via PHP's local mail()/sendmail after
     // /cron/derive — not authenticated SMTP (Loopia's shared-hosting
     // firewall blocks outbound SMTP entirely). No password needed.
+    // 'enabled' must be exactly true for anything to be sent — off for now
+    // (2026-09-29): mail delivery from Loopia isn't working yet.
     'digest' => [
+        'enabled' => false,
         'username' => 'change-me',
         'recipient' => 'stockpicker@ryddmo.se',
     ],

@@ -189,7 +189,8 @@ never touched.
    ...]` — the From address and the recipient address for the daily top-10 digest email,
    sent via PHP's local `mail()`/`sendmail`, not authenticated SMTP. Loopia's shared-hosting
    firewall blocks outbound SMTP to `mailcluster.loopia.se` on every port (confirmed live,
-   2026-09-15) — no password is needed or read.
+   2026-09-15) — no password is needed or read. Nothing is sent unless the section also
+   has `'enabled' => true`; it is left off for now (see `docs/backlog.md`).
 
    **The file must be `<?php return [ ... ];`** — a config with no `return` makes
    `require` yield `int(1)` and phinx fails with _"config.php … must return an array, got

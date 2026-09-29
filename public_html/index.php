@@ -360,7 +360,7 @@ try {
 
             $runRepository->record('derive', $runDate, $now, $now, $count, $count, 0);
 
-            if (!$alreadyDerivedToday) {
+            if (!$alreadyDerivedToday && $services['config']->digestEnabled()) {
                 // spec-5-6 — isolated digest step, strictly after derive's
                 // own recorded work. Any failure (bad/missing config,
                 // mail() down, whatever) is caught and logged here and must

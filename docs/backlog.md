@@ -162,6 +162,16 @@ independent of a review pass.
   either filing the Loopia ticket or picking an email API and redoing just
   `TopTenDigest::defaultMailSender()`.
 
+  **Disabled 2026-09-29** behind `Config::digestEnabled()` — the digest only
+  runs when `config.php` has `'digest' => ['enabled' => true, ...]`, and is
+  off when the key is absent. Before switching it back on, also fix the
+  timing: the first `/cron/derive` of the evening (20:00) passes the gate
+  while `/cron/work` is still draining the queue (done ~21:30), and the
+  digest's `*AsOf()` queries match `as_of_date` exactly — so it diffs a
+  partial today (~275 of 744 instruments on 2026-09-28) against a full prior
+  day, and the later, complete derive skips the send as "already derived
+  today". Gate the send on the fetch queue being empty instead.
+
 - **FIXED 2026-09-18 — `/cron/derive` had never actually run in production
   (registered nowhere).** Turned out `docs/deploy.md`'s own runbook
   documented registering it as a third Kundzon URL-cron job (alongside

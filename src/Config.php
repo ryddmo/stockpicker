@@ -149,6 +149,21 @@ final class Config
     }
 
     /**
+     * Kill switch for the daily top-10 digest. Off unless config.php sets
+     * `'digest' => ['enabled' => true, ...]` exactly — disabled 2026-09-29
+     * while local mail() delivery from Loopia doesn't work, and because the
+     * first /cron/derive of the evening fires before /cron/work has drained
+     * the queue (the digest would diff a partial today against a full prior
+     * day). See docs/backlog.md.
+     */
+    public function digestEnabled(): bool
+    {
+        $digest = $this->data['digest'] ?? null;
+
+        return \is_array($digest) && ($digest['enabled'] ?? false) === true;
+    }
+
+    /**
      * From-address + recipient for the daily top-10 digest (spec-5-6,
      * TopTenDigest). Sent via PHP's local mail()/sendmail, not authenticated
      * SMTP (Loopia's shared-hosting firewall blocks outbound SMTP to

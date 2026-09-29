@@ -366,14 +366,49 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertCount(1, $spiedLines, 'exactly one digest send across both hits, not two');
     }
 
+    public function testDeriveSendsNoDigestWhenDigestIsNotEnabled(): void
+    {
+        // Kill switch (2026-09-29): a fully configured digest section
+        // without 'enabled' => true must never reach the mail sender.
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->enableDigestSpy(enabled: false);
+        $this->startEndpoint();
+
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $previousTradingDay = $this->previousWeekday(new DateTimeImmutable($runDate));
+
+        $this->seedOwnerCount('SE0000001001', $previousTradingDay, 3000);
+        $this->seedOwnerCount('SE0000001002', $previousTradingDay, 2000);
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+        $this->seedOwnerCount('SE0000001002', $runDate, 3500);
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(200, $status, $body);
+        self::assertSame('ok', $json['status']);
+        self::assertSame('', trim($this->endpoint->digestSpyContents()), 'a disabled digest must not send');
+        self::assertStringNotContainsString('top-10 digest failed', $this->endpoint->logContents());
+    }
+
     public function testDeriveDigestFailureNeverAffectsDerivesOwnResponseOrIngestRunRow(): void
     {
-        // The default EndpointFixture config.php carries no "digest" section
-        // at all, so Config::digest() throws the moment TopTenDigest tries
-        // to actually send -- the exact same try/catch in index.php that
-        // would catch a real mail()-send failure catches this too, so this
-        // exercises that failure path end to end without ever needing a
-        // live mail transport in a test.
+        // enableBrokenDigest() switches the digest on but leaves out
+        // username/recipient, so Config::digest() throws the moment
+        // TopTenDigest tries to actually send -- the exact same try/catch in
+        // index.php that would catch a real mail()-send failure catches this
+        // too, so this exercises that failure path end to end without ever
+        // needing a live mail transport in a test.
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->enableBrokenDigest();
+        $this->startEndpoint();
+
         $this->seedMatchedUniverse();
         $this->setRunAfter('00:00');
         $this->allowAllWeekdays();
