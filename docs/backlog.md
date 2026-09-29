@@ -183,3 +183,82 @@ independent of a review pass.
   every one of those hits (its diff doesn't change within the same evening).
   Fixed same day — see Story 5.6's spec Implementation Notes for the
   `ingest_run`-based idempotency guard added to `public_html/index.php`.
+
+## 2026-09-28
+
+- **Database analysis — how the schema holds up as history accumulates.** Desk
+  review of `db/migrations/` and `src/Store/` (no production numbers measured
+  yet; verify with `EXPLAIN` and page timings over SSH before acting).
+
+  1. **Volume is not the problem.** `owner_count_daily` gets ~2 sources × ~750
+     active instruments ≈ 1,500 rows per trading day, so ~375k rows/year and
+     roughly 50–100 MB/year including the PK and the `ingest_run_id` FK index.
+     MariaDB on Loopia handles that for many years. `work_queue`/`ingest_run`
+     are bounded by `bin/prune.php`; `owner_count_daily` is never pruned, by
+     design (NFR7).
+
+  2. **Read cost grows linearly with history, on every page load.**
+     `owner_count_metrics` is a plain view (a 2026-09-11 decision): every read
+     recomputes about 9 window functions over the *entire* history of every
+     instrument. Topplista, Fullständig lista and Bevakningslista all use the
+     "latest row per isin" CTE (`ROW_NUMBER() ... rn = 1`), so they compute
+     the full series just to keep one row per isin. The digest's `*AsOf()`
+     queries filter on `as_of_date`, which isn't a `PARTITION BY` column, so
+     that filter can't be pushed into the view. The PK is `(isin, source,
+     as_of_date)`, so a `WHERE source = ?` on its own can't use it and scans
+     the whole table. This is fine at a few weeks of data, but it gets worse
+     every night; on shared hosting the window sorts spill to temp tables.
+     Options, cheapest first:
+     (a) measure: `EXPLAIN` plus timing for `/`, `/list` and `/watchlist` now,
+     and again at ~6 months;
+     (b) add an index `(source, isin, as_of_date)`, and mirror it in
+     `StoreTestCase::createSchema()`;
+     (c) if timings climb, add a small `owner_count_metrics_latest` snapshot
+     table rebuilt by `/cron/derive` (one row per isin+source) and point the
+     list pages at it. That reverses the "view, no materialization" decision,
+     so it needs an architecture note (a new writer under AD-3).
+
+  3. **Likely correctness bug: `pct_7d`, `pct_90d` and `pct_365d` are
+     effectively always NULL.** The view takes `LAG(number_of_owners, N)`, which
+     is N *rows* back, and then requires `DATEDIFF(as_of_date, prev_date_N) = N`
+     *calendar* days. Since dfe705e and 3bae67f, collection runs Mon–Fri only,
+     skipping holidays, so 7 rows back is ~9–11 calendar days, 90 rows is ~125
+     and 365 rows is ~510. The equality therefore never holds, and the
+     "V"/"90d"/"År" chips will always show "–". Similarly, `delta_1d`/`pct_1d`
+     are NULL every Monday and every day after a holiday (Fri→Mon = 3 days),
+     which also blanks the `/list` "sort by %" order on Mondays. Check with
+     `php bin/show-metrics.php --isin=...` on a Monday. A possible fix is a
+     calendar lookup ("latest row on or before `as_of_date - N days`", with a
+     small tolerance) instead of a fixed row lag. That's a spec-5-5 /
+     Story 3.1 frozen-rule change, so it needs Stefan's call on the semantics
+     first: trading-day or calendar-day periods?
+
+     **Decided 2026-09-28 (Stefan):** use calendar periods and rename them:
+     7 days → Vecka, 30 days → Månad, 90 days → 3 mån, and År stays. Each
+     compares against the latest stored row on or before one week, one month,
+     three months or one year earlier (NULL when history is too short).
+     `delta_1d`/`pct_1d` compare against the previous stored row (the
+     previous trading day). Aktiedetalj's range picker (Dag/Vecka/Månad/3 mån/År)
+     moves from row counts to calendar windows. Proposed plan: a new migration
+     recreating the view with `pct_1w`/`pct_1m`/`pct_3m`/`pct_1y`, mirrored in
+     `StoreTestCase::createSchema()`; updates to `DerivedMetricsRepository`, the
+     Topplista period chips, `StockDetailController` ranges/gates and the
+     `InfoController` copy; tests with Mon–Fri fixtures covering Fri→Mon and a
+     holiday. Still open: whether Topplista gets a new Månad chip (today it
+     only has V/90d/År).
+
+  4. **Mixed cadence in history.** Rows before 2026-09-15 include weekends
+     (Avanza collected daily) and later rows don't. So the row-based
+     `sma_7`/`sma_30`/`sma_90`/`spike_score` windows span different calendar
+     lengths depending on where they sit in the series. This self-heals as the
+     windows roll past 2026-09-15 (~90 trading days for `sma_90`, i.e. around
+     late January 2027). Just be aware of it when interpreting numbers before
+     then.
+
+  5. **`bin/prune.php --apply` rewrites fact rows.**
+     `owner_count_daily.ingest_run_id` is `ON DELETE SET NULL`, so pruning
+     `ingest_run` older than 180 days silently UPDATEs every fact row from
+     those runs, and their provenance is lost. That doesn't fit the "a
+     recorded row is never modified" rule (AD-4). Options: exclude runs that
+     are still referenced from pruning, or accept it and document it in
+     `docs/deploy.md`.
