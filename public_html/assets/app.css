@@ -337,6 +337,8 @@ select:focus-visible,
   display: block; font-size: 14px; white-space: normal;
   overflow-wrap: break-word; line-height: 1.25; color: var(--text-primary);
 }
+.stat-line { display: block; white-space: nowrap; }
+.stat-src { font-size: 11px; color: var(--text-secondary); }
 .delta-chip {
   display: inline-block; margin-top: 3px;
   font-size: 11px; border-radius: var(--radius-sm); padding: 2px 6px;
