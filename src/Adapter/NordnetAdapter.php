@@ -24,6 +24,9 @@ use Stockpicker\Store\Instrument;
  *  - results[].statistical_info.number_of_owners (int)
  *  - results[].statistical_info.statistics_timestamp (epoch ms)
  *  - results[].price_info.last.price (float), results[].company_info.market_cap (int)
+ * Verified 2026-10-01: free_text_search also accepts an ISIN (findResult()),
+ * and results[].exchange_info.exchange_country ("SE" / "CA" / …) tells the
+ * listings of a dual-listed ISIN apart (matchByIsin()).
  */
 final class NordnetAdapter implements SourceAdapter
 {
@@ -70,10 +73,7 @@ final class NordnetAdapter implements SourceAdapter
 
     private function lookupInstrumentId(Instrument $instrument): string
     {
-        $result = $this->matchByIsin($this->searchResults($instrument->name), $instrument->isin);
-        if ($result === null) {
-            throw new NotFound(sprintf('nordnet: no result with isin %s (%s)', $instrument->isin, $instrument->name));
-        }
+        $result = $this->findResult($instrument);
 
         $id = $result['nnx_info']['nnx_instrument_id'] ?? null;
         if (!is_string($id) && !is_int($id)) {
@@ -85,10 +85,7 @@ final class NordnetAdapter implements SourceAdapter
 
     private function fetchDatapoint(Instrument $instrument): NormalizedRow
     {
-        $result = $this->matchByIsin($this->searchResults($instrument->name), $instrument->isin);
-        if ($result === null) {
-            throw new NotFound(sprintf('nordnet: no result with isin %s (%s)', $instrument->isin, $instrument->name));
-        }
+        $result = $this->findResult($instrument);
 
         $owners = $result['statistical_info']['number_of_owners'] ?? null;
         if (!is_int($owners) || $owners < 0) {
@@ -115,12 +112,33 @@ final class NordnetAdapter implements SourceAdapter
     }
 
     /**
+     * Search by ISIN first, falling back to the name only when the ISIN
+     * search has no matching result. Our names come from Avanza's listing and
+     * don't always match Nordnet's ("SBB Norden B" gets 0 hits for
+     * "Samhällsbyggnadsbo. i Norden AB ser. B"); the ISIN is the natural key
+     * and Nordnet's free-text search accepts it. The fallback costs a second
+     * call only when the first finds nothing.
+     *
+     * @return array<mixed>
+     */
+    private function findResult(Instrument $instrument): array
+    {
+        $result = $this->matchByIsin($this->searchResults($instrument->isin), $instrument->isin)
+            ?? $this->matchByIsin($this->searchResults($instrument->name), $instrument->isin);
+        if ($result === null) {
+            throw new NotFound(sprintf('nordnet: no result with isin %s (%s)', $instrument->isin, $instrument->name));
+        }
+
+        return $result;
+    }
+
+    /**
      * @return list<array<mixed>> the `results` array
      */
-    private function searchResults(string $name): array
+    private function searchResults(string $freeText): array
     {
         $body = $this->requestJson($this->http, 'GET', self::BASE_URI . self::SEARCH_PATH, [
-            'query' => ['free_text_search' => $name, 'limit' => 10],
+            'query' => ['free_text_search' => $freeText, 'limit' => 10],
             'headers' => [
                 'client-id' => 'NEXT',
                 'User-Agent' => self::USER_AGENT,
@@ -143,13 +161,21 @@ final class NordnetAdapter implements SourceAdapter
      */
     private function matchByIsin(array $results, string $isin): ?array
     {
-        foreach ($results as $result) {
-            if (($result['instrument_info']['isin'] ?? null) === $isin) {
-                return $result;
+        $matches = array_values(array_filter(
+            $results,
+            static fn (array $result): bool => ($result['instrument_info']['isin'] ?? null) === $isin,
+        ));
+
+        // A dual-listed instrument (e.g. International Petroleum, Stockholm +
+        // Toronto) returns one result per listing under the same ISIN, each
+        // with its own owner count — prefer the Swedish listing.
+        foreach ($matches as $match) {
+            if (($match['exchange_info']['exchange_country'] ?? null) === 'SE') {
+                return $match;
             }
         }
 
-        return null;
+        return $matches[0] ?? null;
     }
 
     private function numeric(mixed $value): ?float

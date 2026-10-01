@@ -43,7 +43,11 @@ final class NordnetAdapterTest extends AdapterTestCase
 
     public function testThrowsNotFoundWhenNoResultCarriesTheIsin(): void
     {
-        $this->queue([$this->json(['results' => [$this->nnxResult('SE0000000000', 1)]])]);
+        // ISIN search, then the name fallback — neither carries the isin.
+        $this->queue([
+            $this->json(['results' => [$this->nnxResult('SE0000000000', 1)]]),
+            $this->json(['results' => [$this->nnxResult('SE0000000000', 1)]]),
+        ]);
 
         $this->expectException(NotFound::class);
         $this->adapter()->resolveId($this->instrument());
@@ -51,10 +55,61 @@ final class NordnetAdapterTest extends AdapterTestCase
 
     public function testThrowsNotFoundWhenResultsAreEmpty(): void
     {
-        $this->queue([$this->json(['results' => []])]);
+        $this->queue([$this->json(['results' => []]), $this->json(['results' => []])]);
 
         $this->expectException(NotFound::class);
         $this->adapter()->resolveId($this->instrument());
+    }
+
+    public function testSearchesByIsinFirst(): void
+    {
+        $this->queue([$this->json(['results' => [$this->nnxResult('SE0015811963', 16102308)]])]);
+
+        $this->adapter()->resolveId($this->instrument());
+
+        self::assertSame('SE0015811963', $this->lastFreeTextSearch());
+        $this->assertQueueDrained();
+    }
+
+    public function testFallsBackToANameSearchWhenTheIsinSearchHasNoMatch(): void
+    {
+        $this->queue([
+            $this->json(['results' => []]),
+            $this->json(['results' => [$this->nnxResult('SE0015811963', 16102308)]]),
+        ]);
+
+        self::assertSame('16102308', $this->adapter()->resolveId($this->instrument()));
+        self::assertSame('Investor B', $this->lastFreeTextSearch());
+        $this->assertQueueDrained();
+    }
+
+    public function testPrefersTheSwedishListingWhenSeveralResultsShareTheIsin(): void
+    {
+        // International Petroleum: Toronto (CAD) and Stockholm listings under
+        // one ISIN, Toronto first in Nordnet's response.
+        $this->queue([$this->json(['results' => [
+            $this->nnxResult('SE0015811963', 111) + ['exchange_info' => ['exchange_country' => 'CA']],
+            $this->nnxResult('SE0015811963', 222) + ['exchange_info' => ['exchange_country' => 'SE']],
+        ]])]);
+
+        self::assertSame('222', $this->adapter()->resolveId($this->instrument()));
+    }
+
+    public function testTakesTheFirstIsinMatchWhenNoneIsSwedish(): void
+    {
+        $this->queue([$this->json(['results' => [
+            $this->nnxResult('SE0015811963', 111),
+            $this->nnxResult('SE0015811963', 222) + ['exchange_info' => ['exchange_country' => 'CA']],
+        ]])]);
+
+        self::assertSame('111', $this->adapter()->resolveId($this->instrument()));
+    }
+
+    private function lastFreeTextSearch(): ?string
+    {
+        parse_str($this->mock->getLastRequest()?->getUri()->getQuery() ?? '', $query);
+
+        return $query['free_text_search'] ?? null;
     }
 
     public function testRetriesOnceAfterATransientFailureThenSucceeds(): void
@@ -151,6 +206,7 @@ final class NordnetAdapterTest extends AdapterTestCase
 
         $row = $this->adapter()->fetch($this->resolved());
 
+        self::assertSame('SE0015811963', $this->lastFreeTextSearch(), 'fetch() searches by isin');
         self::assertSame('SE0015811963', $row->isin);
         self::assertSame('nordnet', $row->source);
         self::assertSame(69611, $row->numberOfOwners);
@@ -224,11 +280,22 @@ final class NordnetAdapterTest extends AdapterTestCase
         $this->adapter()->fetch($this->resolved());
     }
 
+    public function testFetchFallsBackToANameSearchWhenTheIsinSearchHasNoMatch(): void
+    {
+        $this->queue([
+            $this->json(['results' => []]),
+            $this->json(['results' => [$this->fetchResult()]]),
+        ]);
+
+        self::assertSame(69611, $this->adapter()->fetch($this->resolved())->numberOfOwners);
+        self::assertSame('Investor B', $this->lastFreeTextSearch());
+        $this->assertQueueDrained();
+    }
+
     public function testFetchThrowsNotFoundWhenNoResultMatchesTheIsin(): void
     {
-        $this->queue([$this->json(['results' => [
-            $this->fetchResult(['instrument_info' => ['isin' => 'SE0000000000']]),
-        ]])]);
+        $other = ['results' => [$this->fetchResult(['instrument_info' => ['isin' => 'SE0000000000']])]];
+        $this->queue([$this->json($other), $this->json($other)]);
 
         $this->expectException(NotFound::class);
         $this->adapter()->fetch($this->resolved());
