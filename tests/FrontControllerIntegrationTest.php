@@ -687,7 +687,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // tab order but is not the default landing source.
         self::assertStringContainsString('class="tab tab--active" href="/">Avanza</a>', $body);
         self::assertStringNotContainsString('class="tab tab--active" href="/?source=alla">Alla</a>', $body);
-        self::assertStringNotContainsString('Nordnet ingen data', $body);
+        self::assertStringNotContainsString('stat-src', $body);
     }
 
     public function testRootSourceSwitcherShowsAllaAvanzaNordnetInThatOrderWithAllaFirst(): void
@@ -721,7 +721,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
-        self::assertStringContainsString('Avanza 1 234 · Nordnet 567', $rowHtml);
+        self::assertStringContainsString('<span class="stat-line"><span class="stat-src">Avanza</span> 1 234</span><span class="stat-line"><span class="stat-src">Nordnet</span> 567</span>', $rowHtml);
         self::assertStringNotContainsString('1 801', $rowHtml, 'the two counts must never be summed');
     }
 
@@ -735,7 +735,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
-        self::assertStringContainsString('Avanza 1 234 · Nordnet ingen data', $rowHtml);
+        self::assertStringContainsString('<span class="stat-line"><span class="stat-src">Avanza</span> 1 234</span><span class="stat-line"><span class="stat-src">Nordnet</span> ingen data</span>', $rowHtml);
     }
 
     public function testRootWithSourceAllaRanksByAvanzaOwnerCountWithNordnetShownAlongsideNeverAsTheRankingBasis(): void
@@ -785,7 +785,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Beta AB', $allaBody);
         self::assertStringNotContainsString('Alpha AB', $allaBody, 'the spiking instrument must never appear in Stadig tillväxt, in Alla mode either');
         $betaRowHtml = $this->rowHtmlFor($allaBody, 'SE0000001002');
-        self::assertStringContainsString('Avanza 2 030 · Nordnet 42', $betaRowHtml);
+        self::assertStringContainsString('<span class="stat-line"><span class="stat-src">Avanza</span> 2 030</span><span class="stat-line"><span class="stat-src">Nordnet</span> 42</span>', $betaRowHtml);
         // The sparkline must be plotted from Avanza's real (4-day, muted --
         // fewer than the 7-day gate) trend, not accidentally empty:
         // recentSeries() is keyed by an exact `source` match, so if Alla

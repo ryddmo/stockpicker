@@ -109,23 +109,30 @@ final class LeaderboardController
     }
 
     /**
-     * "Avanza {n} · Nordnet {m}" (Alla mode's row text, Intent/AC) — the two
-     * sources are always shown side by side, never summed (NFR6: different
-     * populations, neither is the legal shareholder count). An isin with no
-     * stored Nordnet data ($nordnetOwners === null, latestOwnerCountForIsins()'s
-     * "absent from the map" signal) shows "Nordnet ingen data" instead of a
-     * misleading zero. Same "·" separator convention as deltaChipHtml().
-     * Returns unescaped text — the caller runs it through self::e() before
-     * handing it to rowBodyHtml(), same discipline as the rest of this class.
+     * Alla mode's owner cell (Intent/AC): Avanza and Nordnet stacked as two
+     * `.stat-line`s — the two sources are always shown side by side, never
+     * summed (NFR6: different populations, neither is the legal shareholder
+     * count). One line per source, each `white-space: nowrap`, so the 100px
+     * column never breaks a number at its thousands-separator space. An isin
+     * with no stored Nordnet data ($nordnetOwners === null,
+     * latestOwnerCountForIsins()'s "absent from the map" signal) shows
+     * "Nordnet ingen data" instead of a misleading zero. Returns escaped HTML,
+     * ready for rowBodyHtml()'s $eOwners.
      */
-    public static function combinedOwnerCountText(int $avanzaOwners, ?int $nordnetOwners): string
+    public static function combinedOwnerCountHtml(int $avanzaOwners, ?int $nordnetOwners): string
     {
         $avanzaText = number_format($avanzaOwners, 0, ',', ' ');
         $nordnetText = $nordnetOwners !== null
             ? number_format($nordnetOwners, 0, ',', ' ')
             : 'ingen data';
 
-        return "Avanza {$avanzaText} · Nordnet {$nordnetText}";
+        return self::ownerLineHtml('Avanza', $avanzaText) . self::ownerLineHtml('Nordnet', $nordnetText);
+    }
+
+    private static function ownerLineHtml(string $sourceLabel, string $value): string
+    {
+        return '<span class="stat-line"><span class="stat-src">' . self::e($sourceLabel) . '</span> '
+            . self::e($value) . '</span>';
     }
 
     /**
@@ -311,7 +318,7 @@ final class LeaderboardController
         $eIsin = self::e($isin);
         $eName = self::e($name);
         $eOwners = $source === self::SOURCE_ALL
-            ? self::e(self::combinedOwnerCountText($owners, $nordnetOwners))
+            ? self::combinedOwnerCountHtml($owners, $nordnetOwners)
             : self::e(number_format($owners, 0, ',', ' '));
         $starGlyph = $starred ? '★' : '☆';
         $starClass = $starred ? 'star star--filled' : 'star star--empty';

@@ -336,32 +336,37 @@ final class LeaderboardControllerTest extends TestCase
         self::assertSame('avanza', LeaderboardController::normalizeSource('avanza'));
     }
 
-    // -- spec-5-4: combinedOwnerCountText() — "Avanza {n} · Nordnet {m}" -------
+    // -- spec-5-4: combinedOwnerCountHtml() — Avanza / Nordnet stacked ---------
 
-    public function testCombinedOwnerCountTextShowsBothSourcesSideBySideWhenBothPresent(): void
+    private const AVANZA_1234 = '<span class="stat-line"><span class="stat-src">Avanza</span> 1 234</span>';
+
+    public function testCombinedOwnerCountHtmlStacksBothSourcesAsSeparateLinesWhenBothPresent(): void
     {
         self::assertSame(
-            'Avanza 1 234 · Nordnet 567',
-            LeaderboardController::combinedOwnerCountText(1234, 567),
+            self::AVANZA_1234 . '<span class="stat-line"><span class="stat-src">Nordnet</span> 567</span>',
+            LeaderboardController::combinedOwnerCountHtml(1234, 567),
         );
     }
 
-    public function testCombinedOwnerCountTextShowsIngenDataWhenNordnetIsMissingNeverAZeroOrBlank(): void
+    public function testCombinedOwnerCountHtmlShowsIngenDataWhenNordnetIsMissingNeverAZeroOrBlank(): void
     {
-        $text = LeaderboardController::combinedOwnerCountText(1234, null);
+        $html = LeaderboardController::combinedOwnerCountHtml(1234, null);
 
-        self::assertSame('Avanza 1 234 · Nordnet ingen data', $text);
-        self::assertStringNotContainsString('Nordnet 0', $text);
+        self::assertSame(
+            self::AVANZA_1234 . '<span class="stat-line"><span class="stat-src">Nordnet</span> ingen data</span>',
+            $html,
+        );
+        self::assertStringNotContainsString('</span> 0<', $html);
     }
 
-    public function testCombinedOwnerCountTextShowsALiteralZeroDistinctFromMissingData(): void
+    public function testCombinedOwnerCountHtmlShowsALiteralZeroDistinctFromMissingData(): void
     {
         // A stored Nordnet row of exactly 0 owners is real data, not the
         // "no stored row" case -- the null-check must stay a strict
         // `!== null`, never a falsy/empty() check that would conflate the two.
         self::assertSame(
-            'Avanza 1 234 · Nordnet 0',
-            LeaderboardController::combinedOwnerCountText(1234, 0),
+            self::AVANZA_1234 . '<span class="stat-line"><span class="stat-src">Nordnet</span> 0</span>',
+            LeaderboardController::combinedOwnerCountHtml(1234, 0),
         );
     }
 }
