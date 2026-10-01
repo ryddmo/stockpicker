@@ -123,6 +123,11 @@ GET https://www.nordnet.se/api/2/instrument_search/query/stocklist?free_text_sea
   - `results[].statistical_info.statistics_timestamp` — källans egen tidsstämpel.
   - `results[].nnx_info.nnx_instrument_id` — Nordnets interna instrument-id.
   - Dessutom: nyckeltal, börsvärde, nästa rapportdatum.
+- `free_text_search` tar även en ISIN (verifierat 2026-10-01) — adaptern söker på ISIN
+  först och faller tillbaka på namn, eftersom Avanzas namn inte alltid hittas hos Nordnet
+  ("SBB Norden B" ger 0 träffar). Ett dubbellistat bolag (t.ex. International Petroleum,
+  Stockholm + Toronto) ger en träff per listning med samma ISIN; välj den med
+  `results[].exchange_info.exchange_country == "SE"`.
 - `stocklist`-endpointen stödjer marknads-/listfilter — kandidat för att lösa upp
   universumet (K1). Exakt filtersyntax behöver verifieras.
 
