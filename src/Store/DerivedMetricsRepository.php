@@ -17,7 +17,7 @@ final class DerivedMetricsRepository
     /**
      * Story 4.2/spec-4-2 — the single source of truth for the spike
      * threshold: `spike_score >= 2` marks a row spiking, upward only. Shared
-     * by topByTrendQuality()'s exclusion filter (bound as a query parameter,
+     * by topByTrendQualityForPeriod()'s exclusion filter (bound as a query parameter,
      * never a raw literal) and LeaderboardController::isSpiking() (the Spike
      * badge condition), so the two can never drift apart.
      */
@@ -118,25 +118,31 @@ final class DerivedMetricsRepository
     }
 
     /**
-     * Story 4.2 — Topplista's "Stadig tillväxt" ranking: the top `$limit`
-     * active instruments for `$source` by `up_streak` DESC alone, on each
-     * isin's *latest* row (see topByOwnerCount()). To "qualify" at all a row
-     * must have a real ongoing streak (`up_streak >= 1` — the same condition
-     * as the Streak badge) and must not be spiking: any row at or above
-     * self::SPIKE_THRESHOLD is excluded from the ranking entirely (decided
-     * 2026-09-13, spec-4-2) — a genuine spike must never outrank, or even
-     * appear among, steady growers, however long its streak. No separate
-     * sma_30-slope calculation. Flat/no-streak instruments (`up_streak` 0 or
-     * NULL) never qualify either — this is what makes the zero-qualifiers
-     * empty state ("Inga aktier med stadig tillväxt just nu.") reachable on
-     * an otherwise data-rich day.
+     * spec-stadig-tillvaxt-period — Topplista's "Stadig tillväxt" ranking
+     * for a chosen period (Vecka 7 / Månad 30 / 3 mån 90 / År 365 days).
+     * To qualify, an isin's latest row must be active
+     * (`instrument.last_seen IS NULL`), have a real ongoing streak
+     * (`up_streak >= 1`, the Streak badge condition) and not be spiking
+     * (any row at or above self::SPIKE_THRESHOLD is excluded outright,
+     * decided 2026-09-13, spec-4-2 — however long its streak). Flat/
+     * no-streak rows (0 or NULL) never qualify, which keeps the
+     * zero-qualifiers empty state reachable. Ordered by the period's percentage
+     * growth (`pct_7d`/`pct_30d`/`pct_90d`/`pct_365d`) DESC; rows lacking
+     * that percentage (NULL, e.g. a new listing) come after every row with
+     * one, then `up_streak` DESC, then `isin` ASC. The `$days` → column
+     * mapping is a fixed whitelist (self::periodPctColumn()), never
+     * interpolated from input.
      *
      * @return list<array<string, mixed>>
+     *
+     * @throws \InvalidArgumentException when `$days` is not 7/30/90/365
      */
-    public function topByTrendQuality(string $source, int $limit): array
+    public function topByTrendQualityForPeriod(string $source, int $days, int $limit): array
     {
+        $col = self::periodPctColumn($days);
+
         $stmt = $this->pdo->prepare(
-            <<<'SQL'
+            <<<SQL
             WITH latest AS (
                 SELECT
                     m.*,
@@ -156,7 +162,7 @@ final class DerivedMetricsRepository
               AND i.last_seen IS NULL
               AND latest.up_streak >= 1
               AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)
-            ORDER BY latest.up_streak DESC, latest.isin ASC
+            ORDER BY latest.{$col} IS NULL, latest.{$col} DESC, latest.up_streak DESC, latest.isin ASC
             LIMIT :lim
             SQL
         );
@@ -166,6 +172,21 @@ final class DerivedMetricsRepository
         $stmt->execute();
 
         return array_values($stmt->fetchAll());
+    }
+
+    /**
+     * Whitelisted period-length → view column mapping for
+     * topByTrendQualityForPeriod().
+     */
+    private static function periodPctColumn(int $days): string
+    {
+        return match ($days) {
+            7 => 'pct_7d',
+            30 => 'pct_30d',
+            90 => 'pct_90d',
+            365 => 'pct_365d',
+            default => throw new \InvalidArgumentException(sprintf('Unsupported period length: %d days', $days)),
+        };
     }
 
     /**
@@ -359,7 +380,7 @@ final class DerivedMetricsRepository
     /**
      * Story 4.4 — `/list`'s combined search/filter/sort query: every active
      * instrument for `$source` (same "latest row per isin" + "active"
-     * shape as topByOwnerCount()/topByTrendQuality()), narrowed by whichever
+     * shape as topByOwnerCount()/topByTrendQualityForPeriod()), narrowed by whichever
      * of `$filters` are present, all combined with AND. No `LIMIT` (the spec
      * renders the full result in one page load).
      *
@@ -550,7 +571,7 @@ final class DerivedMetricsRepository
 
     /**
      * spec-5-6 — TopTenDigest's "Stadig tillväxt" snapshot for one exact
-     * calendar date: same qualifying rule as topByTrendQuality() (`up_streak
+     * calendar date: same qualifying rule as topByTrendQualityForPeriod() (`up_streak
      * >= 1`, spike-excluded), pinned to `m.as_of_date = :date` instead of the
      * "latest per isin" CTE. See topByOwnerCountAsOf() for why no window
      * function is needed here.

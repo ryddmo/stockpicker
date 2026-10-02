@@ -216,27 +216,26 @@ select:focus-visible,
   background: var(--accent-tint); color: var(--accent);
 }
 
-/* -- Plusdagar (spec-plusdagar): the ranking toggle and, in Plusdagar mode
-   only, a subordinate line of plain period links + the "Dölj spikar"
-   checkbox-link directly under it. No pill container of its own (DESIGN.md:
-   it must not read as a third segmented control). Every link is a ≥44px
-   tap target. -- */
-.ranking-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 100%; }
 .ranking-toggle { max-width: 100%; flex-wrap: wrap; }
-.plus-options {
-  display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-4);
-  font-size: 13px;
+
+/* -- Period row (spec-stadig-tillvaxt-period): Stadig tillväxt and
+   Plusdagar only. Its own full-width line under .controls, left-aligned
+   with the source switcher: the shared .range-picker pill (same look and
+   32px tap targets as Aktiedetalj's Range picker), and in Plusdagar the
+   checkbox-styled "Dölj spikar" link to its right. Wraps below the pill on
+   a narrow viewport rather than scrolling. -- */
+.period-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
+  gap: var(--sp-2) var(--sp-4);
+  margin: calc(var(--sp-2) - var(--sp-4)) 0 var(--sp-4);
+  max-width: 100%;
 }
-.period-links { display: inline-flex; flex-wrap: wrap; align-items: center; }
-.period-link, .spike-toggle {
-  display: inline-flex; align-items: center; min-height: 44px; min-width: 44px;
+.spike-toggle {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 38px;
   padding: 0 var(--sp-2);
-  text-decoration: none; font-weight: 600; color: var(--text-secondary);
+  text-decoration: none; font-size: 13px; font-weight: 500; color: var(--text-secondary);
   border-radius: var(--radius-sm);
 }
-.period-link--active { color: var(--accent); }
-.period-sep { color: var(--text-muted); }
-.spike-toggle { gap: 6px; font-weight: 500; }
 .spike-toggle--active { color: var(--text-primary); }
 
 .market-filter {
@@ -505,9 +504,8 @@ section {
 
 /* -- Breakpoints ------------------------------------------------------------- */
 
-/* <700px: tighter ranking tabs so the three modes (incl. "Plusdagar ·
-   Månad") fit a 390px viewport on one line; .ranking-toggle wraps as a
-   last resort rather than clipping. */
+/* <700px: tighter ranking tabs so the three modes fit a 390px viewport on
+   one line; .ranking-toggle wraps as a last resort rather than clipping. */
 @media (max-width: 699px) {
   .ranking-toggle .tab { padding: var(--sp-1) var(--sp-2); }
 }
@@ -516,10 +514,7 @@ section {
    shape as mobile (real column alignment needs the grid at 900px — forcing
    a single line here at this width just clips company names). */
 @media (min-width: 700px) {
-  .controls { flex-direction: row; flex-wrap: wrap; }
-  /* Plusdagar's period line makes .ranking-group taller than the source
-     pill beside it -- keep the pill its own height instead of stretching. */
-  .controls > .source-switcher { align-self: flex-start; }
+  .controls { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
 }
 
 /* ≥900px: real column-aligned table via CSS grid. .row-body/.statcol unwrap

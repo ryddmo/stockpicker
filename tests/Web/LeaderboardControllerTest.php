@@ -410,6 +410,27 @@ final class LeaderboardControllerTest extends TestCase
         );
     }
 
+    public function testEmptyStateCopyForSteadyModeDistinguishesShortHistoryFromNoQualifiers(): void
+    {
+        self::assertSame(
+            'Inga aktier med stadig tillväxt just nu.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'manad'),
+        );
+        self::assertSame(
+            'För lite historik för månad ännu.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'manad', true),
+        );
+        self::assertSame(
+            'För lite historik för vecka ännu.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'vecka', true),
+        );
+        self::assertSame(
+            'Inga aktier hittades.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_COUNT, 'manad', true),
+            'Flest ägare has no period and no short-history state',
+        );
+    }
+
     public function testPlusDaysChipHtmlShowsPlusOverDataDaysAndNewOwnersInTheQuietGreyBadge(): void
     {
         $html = LeaderboardController::plusDaysChipHtml(15, 16, 1035);

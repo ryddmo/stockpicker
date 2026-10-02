@@ -638,9 +638,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
     public function testRootWithRankingSteadyShowsZeroQualifiersMessageWhenNothingQualifies(): void
     {
         $this->seedMatchedUniverse();
-        // Only one day of history anywhere -> up_streak is NULL/0 for
-        // everything, so nothing qualifies for "Stadig tillväxt".
+        // Over a month of history, but the last day is down -> up_streak 0
+        // everywhere, so nothing qualifies for "Stadig tillväxt" (and the
+        // short-history gate does not apply).
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001001', '2026-02-15', 990);
 
         [$status, $body] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
 
@@ -648,7 +650,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
     }
 
-    public function testRootWithRankingSteadyOrdersByUpStreakAndExcludesTheSpikingInstrument(): void
+    public function testRootWithRankingSteadyListsTheNonSpikingStreakerAndExcludesTheSpikingInstrument(): void
     {
         $this->seedMatchedUniverse();
 
@@ -801,6 +803,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
     {
         $this->seedMatchedUniverse();
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
+        $this->seedOwnerCount('SE0000001001', '2026-02-15', 990);
         // No up-streak seeded anywhere -- nothing qualifies for Stadig
         // tillväxt, in Alla mode either. The Nordnet batch fetch must not
         // be attempted (nothing to fetch for) and must not error.
@@ -809,6 +812,130 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
+    }
+
+    // -- spec-stadig-tillvaxt-period: /?ranking=steady with a period ---------
+
+    public function testRootRankingSteadyDefaultsToManadInItsOwnPeriodRowAndOrdersByPct30d(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha: +1 every weekday -> longest streak, ~2 % over the month.
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        // Beta: +20 a day with a flat day on 2026-09-29 -> streak 2, but
+        // ~40 % over the month -> ranks first on the period's growth.
+        $this->seedPlusMonth('SE0000001002', 1000, 20, ['2026-09-29' => 0]);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=steady">Stadig tillväxt</a>', $body);
+        $periodRow = $this->periodRowHtmlFor($body);
+        self::assertStringContainsString('class="range-picker" role="tablist" aria-label="Period"', $periodRow);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=steady" aria-current="true">Månad</a>', $periodRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=steady&amp;period=vecka">Vecka</a>', $periodRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=steady&amp;period=3man">3 mån</a>', $periodRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=steady&amp;period=ar">År</a>', $periodRow);
+        self::assertStringNotContainsString('Dölj spikar', $body, 'Stadig tillväxt always excludes spikes -- no toggle');
+        // Its own row after the header controls, not inside them: by the
+        // time the period row opens, every <div> opened since .controls
+        // (that one included) must already be closed.
+        $controlsStart = strpos($body, '<div class="controls">');
+        $periodRowStart = strpos($body, '<div class="period-row">');
+        self::assertNotFalse($controlsStart);
+        self::assertNotFalse($periodRowStart);
+        self::assertLessThan($periodRowStart, $controlsStart);
+        $between = substr($body, $controlsStart, $periodRowStart - $controlsStart);
+        self::assertSame(substr_count($between, '<div'), substr_count($between, '</div>'), '.controls must close before the period row');
+
+        self::assertLessThan(strpos($body, 'Alpha AB'), strpos($body, 'Beta AB'), 'ordered by pct_30d, not streak length');
+    }
+
+    public function testRootRankingSteadyVeckaOrdersByPct7dAndSharesThePeriodWithPlusdagar(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha: +20 a day all month, then +1 the last week -> leads on
+        // the month, trails on the week.
+        $this->seedPlusMonth('SE0000001001', 1000, 20, [
+            '2026-09-24' => 1, '2026-09-25' => 1, '2026-09-28' => 1,
+            '2026-09-29' => 1, '2026-09-30' => 1, '2026-10-01' => 1,
+        ]);
+        // Beta: +1 a day, then +30 the last week.
+        $this->seedPlusMonth('SE0000001002', 1000, 1, [
+            '2026-09-24' => 30, '2026-09-25' => 30, '2026-09-28' => 30,
+            '2026-09-29' => 30, '2026-09-30' => 30, '2026-10-01' => 30,
+        ]);
+
+        [, $manadBody] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&period=vecka&spikes=exclude', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertLessThan(strpos($manadBody, 'Beta AB'), strpos($manadBody, 'Alpha AB'), 'Månad: Alpha leads');
+        self::assertLessThan(strpos($body, 'Alpha AB'), strpos($body, 'Beta AB'), 'Vecka: Beta leads on pct_7d');
+
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=steady&amp;period=vecka" aria-current="true">Vecka</a>', $this->periodRowHtmlFor($body));
+        // Switching steady -> plus keeps the period; Flest ägare drops it.
+        self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka">Plusdagar</a>', $body);
+        self::assertStringContainsString('class="tab" href="/">Flest ägare</a>', $body);
+        // The period survives a source switch.
+        self::assertStringContainsString(
+            'href="/?source=nordnet&amp;ranking=steady&amp;period=vecka">Nordnet</a>',
+            $this->sourceSwitcherHtmlFor($body),
+        );
+        // ?spikes=exclude is ignored in Stadig tillväxt and never carried.
+        self::assertStringNotContainsString('spikes=', $body);
+        self::assertStringNotContainsString('Dölj spikar', $body);
+    }
+
+    public function testRootRankingSteadyShowsShortHistoryEmptyStateWhenHistoryIsShorterThanThePeriod(): void
+    {
+        $this->seedMatchedUniverse();
+        // 2026-09-22 .. 2026-10-01: 9 calendar days of history, all growing.
+        foreach (['2026-09-22' => 100, '2026-09-23' => 105, '2026-09-24' => 110, '2026-09-25' => 115, '2026-09-28' => 120, '2026-09-29' => 130, '2026-09-30' => 140, '2026-10-01' => 150] as $date => $owners) {
+            $this->seedOwnerCount('SE0000001001', $date, $owners);
+        }
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('För lite historik för månad ännu.', $body);
+        self::assertStringNotContainsString('data-isin=', $body);
+        self::assertStringNotContainsString('Inga aktier med stadig tillväxt', $body);
+        self::assertStringContainsString('class="period-row"', $body, 'the period row stays so another period can be chosen');
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&period=ar', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('För lite historik för ett år ännu.', $body);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&period=vecka', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Alpha AB', $body, 'a week of history is enough for Vecka');
+    }
+
+    public function testRootRankingSteadyWithGarbagePeriodFallsBackToManad(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&period=xyz', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=steady" aria-current="true">Månad</a>', $this->periodRowHtmlFor($body));
+        self::assertStringContainsString('Alpha AB', $body);
+
+        [$status] = $this->endpoint->get('/?ranking=steady&period[]=vecka', $this->validCookie());
+        self::assertSame(200, $status, 'array-shaped params never 500');
+    }
+
+    public function testRootRankingTabsAreAlwaysPlainNames(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        foreach (['/', '/?ranking=steady&period=3man', '/?ranking=plus&period=ar', '/?source=alla&ranking=plus'] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            self::assertSame(1, preg_match('~<div class="ranking-toggle"[^>]*>(.*?)</div>~s', $body, $m), $path);
+            self::assertSame(['Flest ägare', 'Stadig tillväxt', 'Plusdagar'], array_map('trim', explode("\n", trim(strip_tags($m[1])))), $path);
+        }
     }
 
     // -- spec-plusdagar: /?ranking=plus ------------------------------------------
@@ -853,8 +980,8 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         [$status, $body] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
 
         self::assertSame(200, $status, $body);
-        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Plusdagar · Månad</a>', $body);
-        self::assertStringContainsString('class="period-link period-link--active" href="/?ranking=plus" aria-current="true">Månad</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Plusdagar</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus" aria-current="true">Månad</a>', $this->periodRowHtmlFor($body));
         self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka">Vecka</a>', $body);
         self::assertStringContainsString('href="/?ranking=plus&amp;period=3man">3 mån</a>', $body);
         self::assertStringContainsString('href="/?ranking=plus&amp;period=ar">År</a>', $body);
@@ -900,10 +1027,13 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         [$status, $body] = $this->endpoint->get('/?ranking=plus&period=vecka', $this->validCookie());
         self::assertSame(200, $status);
-        self::assertStringContainsString('>Plusdagar · Vecka</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus&amp;period=vecka">Plusdagar</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus&amp;period=vecka" aria-current="true">Vecka</a>', $this->periodRowHtmlFor($body));
         self::assertStringContainsString('5/5 · +15', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
-        // Leaving Plusdagar drops period/spikes from the other ranking links.
-        self::assertStringContainsString('href="/?ranking=steady">Stadig tillväxt</a>', $body);
+        // spec-stadig-tillvaxt-period: the period is shared with Stadig
+        // tillväxt (kept on switch); Flest ägare drops it.
+        self::assertStringContainsString('href="/?ranking=steady&amp;period=vecka">Stadig tillväxt</a>', $body);
+        self::assertStringContainsString('href="/">Flest ägare</a>', $body);
     }
 
     public function testRootRankingPlusShowsShortHistoryEmptyStateFor3ManAndAr(): void
@@ -1007,7 +1137,8 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         [$status, $body] = $this->endpoint->get('/?ranking=plus&period=xyz&spikes=7', $this->validCookie());
 
         self::assertSame(200, $status);
-        self::assertStringContainsString('>Plusdagar · Månad</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Plusdagar</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus" aria-current="true">Månad</a>', $this->periodRowHtmlFor($body));
         self::assertStringContainsString('<span aria-hidden="true">☐</span> Dölj spikar', $body);
         self::assertStringContainsString('22/22 · +22', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
 
@@ -1024,7 +1155,8 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertStringContainsString('class="tab" href="/?ranking=plus">Plusdagar</a>', $body);
-        self::assertStringNotContainsString('period-links', $body);
+        self::assertStringNotContainsString('period-row', $body);
+        self::assertStringNotContainsString('aria-label="Period"', $body);
         self::assertStringNotContainsString('Dölj spikar', $body);
         self::assertStringNotContainsString('badge--plusdays', $body);
     }
@@ -1798,7 +1930,11 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('★', $body);
         self::assertStringContainsString('Delta-chip', $body);
         self::assertStringContainsString(
-            'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar; sorteras med längst svit först',
+            'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar.',
+            $body,
+        );
+        self::assertStringContainsString(
+            'sorteras de kvalificerade aktierna efter ägarantalets procentuella ökning under vald period',
             $body,
         );
     }
@@ -1898,6 +2034,21 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
 
         $end = strpos($body, '</div>', $start);
         self::assertNotFalse($end, 'source-switcher has no closing </div>');
+
+        return substr($body, $start, $end - $start);
+    }
+
+    /**
+     * spec-stadig-tillvaxt-period — slices out Topplista's period row
+     * (`.period-row` up to the end of the header).
+     */
+    private function periodRowHtmlFor(string $body): string
+    {
+        $start = strpos($body, 'class="period-row"');
+        self::assertNotFalse($start, 'no period-row found in body');
+
+        $end = strpos($body, '</header>', $start);
+        self::assertNotFalse($end, 'period-row is not inside the header');
 
         return substr($body, $start, $end - $start);
     }

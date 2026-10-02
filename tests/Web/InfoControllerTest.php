@@ -13,7 +13,7 @@ use Stockpicker\Web\InfoController;
  * StoreTestCase (Code Map, spec-5-3). Asserts the rendered HTML covers
  * every Acceptance Criterion: all four pages described, all four symbols
  * explained, and the Stadig tillväxt qualifying rule stated in the exact
- * wording tied to DerivedMetricsRepository::topByTrendQuality()'s real
+ * wording tied to DerivedMetricsRepository::topByTrendQualityForPeriod()'s real
  * behavior (Design Notes, spec-5-3) — a literal substring so this test
  * cannot silently drift from the code.
  */
@@ -46,13 +46,21 @@ final class InfoControllerTest extends TestCase
     {
         $html = InfoController::render();
 
-        // Tied to DerivedMetricsRepository::topByTrendQuality()'s real rule
-        // (up_streak >= 1 AND not spiking, ordered by up_streak DESC) —
-        // not a paraphrase.
+        // Tied to DerivedMetricsRepository::topByTrendQualityForPeriod()'s
+        // real rule (up_streak >= 1 AND not spiking, ordered by the chosen
+        // period's % growth, NULL % last by streak) — not a paraphrase.
         self::assertStringContainsString(
-            'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar; sorteras med längst svit först',
+            'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar.',
             $html,
         );
+        self::assertStringContainsString(
+            'sorteras de kvalificerade aktierna efter ägarantalets procentuella ökning under vald period',
+            $html,
+        );
+        self::assertStringContainsString('standard är Månad), med störst ökning först', $html);
+        self::assertStringContainsString('Spikande aktier utesluts alltid', $html);
+        self::assertStringContainsString('perioden delas mellan de två lägena', $html);
+        self::assertStringNotContainsString('sorteras med längst', $html, 'no leftover streak-length sort copy');
     }
 
     public function testRenderIncludesTheTabBarWithTopplistaMarkedActiveAndAPlainWatchlistLink(): void

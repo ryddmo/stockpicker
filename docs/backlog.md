@@ -296,3 +296,11 @@ independent of a review pass.
   Fine at today's size; same linear-growth caveat as item 2 of 2026-09-28. A
   `WHERE as_of_date > D − N − 6` pre-filter would bound the window work if it ever
   matters (the baseline row on/before D − N would then need its own lookup).
+- **"Stadig tillväxt" now means two different orders.** Since spec-stadig-tillvaxt-period,
+  Topplista's Stadig tillväxt sorts qualifying rows by the chosen period's % growth
+  (`topByTrendQualityForPeriod`, default Månad), while the e-mail digest
+  (`topByTrendQualityAsOf`) still ranks by longest `up_streak`, and Fullständig lista's
+  Stadig tillväxt filter only applies the qualifier (no streak ordering of its own). Same
+  label, same qualifier, different ranking. Left alone on purpose (spec's Never list).
+  Option for later: align the digest to the period % (e.g. Månad) and/or let Fullständig
+  lista's filter sort the same way, or rename one of them.

@@ -13,9 +13,11 @@ use Stockpicker\Store\WatchlistRepository;
  * switcher (Avanza/Nordnet), a Ranking-mode toggle ("Flest ägare" / "Stadig
  * tillväxt" / "Plusdagar"), and the top-10 Leaderboard rows for the resolved
  * (source, ranking) pair, each with its Watchlist star, badges, sparkline,
- * owner count and delta chip. In Plusdagar mode (spec-plusdagar) a period
- * line (Vecka · Månad · 3 mån · År) and a "Dölj spikar" toggle sit under
- * the ranking toggle, and each row carries a "{plus}/{data} · +{new}" chip.
+ * owner count and delta chip. In Stadig tillväxt and Plusdagar mode
+ * (spec-plusdagar, spec-stadig-tillvaxt-period) a shared period row
+ * (Vecka | Månad | 3 mån | År) sits on its own line under the header
+ * controls; in Plusdagar it also holds the "Dölj spikar" toggle, and each
+ * row carries a "{plus}/{data} · +{new}" chip.
  *
  * Source/ranking are per-request only (AD-14) — this controller never reads
  * or writes `settings`; the front controller resolves both from query
@@ -35,7 +37,8 @@ final class LeaderboardController
     public const RANKING_PLUS = 'plus';
 
     /**
-     * spec-plusdagar — Plusdagar's period query values, mapped to their
+     * spec-plusdagar / spec-stadig-tillvaxt-period — the period query
+     * values shared by Stadig tillväxt and Plusdagar, mapped to their
      * calendar window (same N as the period chips, spec-calendar-period-
      * metrics), Swedish label, and the lowercase phrase used mid-sentence
      * in the empty state. PERIOD_DEFAULT is omitted from URLs.
@@ -103,7 +106,15 @@ final class LeaderboardController
                 ? []
                 : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N);
         } elseif ($rankingMode === self::RANKING_STEADY) {
-            $rows = $this->metrics->topByTrendQuality($rankingSource, self::TOP_N);
+            // spec-stadig-tillvaxt-period — sorted by the period's % growth;
+            // every period is history-gated (the % needs a row N days back).
+            // Spikes are always excluded here, so `?spikes` is ignored.
+            $excludeSpikes = false;
+            $days = self::PERIODS[$period]['days'];
+            $insufficientHistory = !$this->metrics->historySpansDays($rankingSource, $days);
+            $rows = $insufficientHistory
+                ? []
+                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N);
         } else {
             $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N);
         }
@@ -200,20 +211,21 @@ final class LeaderboardController
      * Steady growth and Plusdagar have product-specified copy; the
      * owner-count mode's empty case is not reachable in normal operation
      * (it would mean zero active instruments) but still gets a plain
-     * fallback rather than a blank page. Plusdagar distinguishes "the
-     * source's history is shorter than the 3 mån/År window"
-     * ($insufficientHistory) from "nothing gained owners in the period".
+     * fallback rather than a blank page. Plusdagar (3 mån/År) and Stadig
+     * tillväxt (every period) distinguish "the source's history is shorter
+     * than the period window" ($insufficientHistory) from "nothing
+     * qualifies"; both use the same short-history copy.
      */
     public static function emptyStateCopy(
         string $rankingMode,
         string $period = self::PERIOD_DEFAULT,
         bool $insufficientHistory = false,
     ): string {
-        if ($rankingMode === self::RANKING_PLUS) {
-            if ($insufficientHistory) {
-                return sprintf('För lite historik för %s ännu.', self::PERIODS[self::normalizePeriod($period)]['phrase']);
-            }
+        if ($insufficientHistory && ($rankingMode === self::RANKING_PLUS || $rankingMode === self::RANKING_STEADY)) {
+            return sprintf('För lite historik för %s ännu.', self::PERIODS[self::normalizePeriod($period)]['phrase']);
+        }
 
+        if ($rankingMode === self::RANKING_PLUS) {
             return 'Inga aktier med fler ägare under perioden.';
         }
 
@@ -374,7 +386,7 @@ final class LeaderboardController
     }
 
     /**
-     * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQuality() row
+     * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQualityForPeriod()/topByPlusDays() row
      * @param ?int $nordnetOwners only meaningful when $source is
      *   self::SOURCE_ALL (null otherwise) — Nordnet's latest owner count for
      *   this row's isin, or null when Nordnet has no stored data for it
@@ -548,8 +560,8 @@ final class LeaderboardController
         $tabBar = self::tabBarHtml('topplista', $source);
         $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes);
         $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes);
-        $plusOptions = $rankingMode === self::RANKING_PLUS
-            ? self::plusOptionsHtml($source, $period, $excludeSpikes)
+        $periodRow = self::hasPeriod($rankingMode)
+            ? self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes)
             : '';
         $fullListHref = self::e(self::fullListUrl($source));
         $infoHref = self::e(self::infoUrl($source));
@@ -575,11 +587,9 @@ final class LeaderboardController
             <p class="subtitle">Ägarantal, rankade. Spikar uppmärksammas, döljs inte.</p>
             <div class="controls">
               {$sourceSwitcher}
-              <div class="ranking-group">
-                {$rankingToggle}
-                {$plusOptions}
-              </div>
+              {$rankingToggle}
             </div>
+            {$periodRow}
           </header>
           <main class="rows rows--ranked">
             {$rowHead}
@@ -674,7 +684,8 @@ final class LeaderboardController
     private static function sourceSwitcherHtml(string $source, string $rankingMode, string $period, bool $excludeSpikes): string
     {
         // spec-5-4 — Alla shown first, before Avanza and Nordnet (Intent).
-        // spec-plusdagar — period and spike toggle survive a source switch.
+        // spec-plusdagar / spec-stadig-tillvaxt-period — period (steady and
+        // plus) and spike toggle (plus only) survive a source switch.
         $allaClass = $source === self::SOURCE_ALL ? 'tab tab--active' : 'tab';
         $avanzaClass = $source === NormalizedRow::SOURCE_AVANZA ? 'tab tab--active' : 'tab';
         $nordnetClass = $source === NormalizedRow::SOURCE_NORDNET ? 'tab tab--active' : 'tab';
@@ -696,49 +707,61 @@ final class LeaderboardController
         $countClass = $rankingMode === self::RANKING_COUNT ? 'tab tab--active' : 'tab';
         $steadyClass = $rankingMode === self::RANKING_STEADY ? 'tab tab--active' : 'tab';
         $plusClass = $rankingMode === self::RANKING_PLUS ? 'tab tab--active' : 'tab';
+        // spec-stadig-tillvaxt-period — Stadig tillväxt and Plusdagar share
+        // the period, so switching between them keeps it; only Plusdagar
+        // carries the spike toggle. Plain labels: the period lives in the
+        // period row, never in a tab.
         $countHref = self::e(self::url($source, self::RANKING_COUNT));
-        $steadyHref = self::e(self::url($source, self::RANKING_STEADY));
+        $steadyHref = self::e(self::url($source, self::RANKING_STEADY, $period));
         $plusHref = self::e(self::url($source, self::RANKING_PLUS, $period, $excludeSpikes));
-        // The active Plusdagar tab carries its period ("Plusdagar · Månad").
-        $plusLabel = self::e($rankingMode === self::RANKING_PLUS
-            ? 'Plusdagar · ' . self::PERIODS[$period]['label']
-            : 'Plusdagar');
 
         return <<<HTML
         <div class="ranking-toggle" role="tablist" aria-label="Rankningsläge">
           <a class="{$countClass}" href="{$countHref}">Flest ägare</a>
           <a class="{$steadyClass}" href="{$steadyHref}">Stadig tillväxt</a>
-          <a class="{$plusClass}" href="{$plusHref}">{$plusLabel}</a>
+          <a class="{$plusClass}" href="{$plusHref}">Plusdagar</a>
         </div>
         HTML;
     }
 
-    /**
-     * spec-plusdagar — the line directly under the ranking toggle, Plusdagar
-     * mode only: plain period links "Vecka · Månad · 3 mån · År" (active
-     * one marked) and the checkbox-styled "☐/☑ Dölj spikar" link. Plain
-     * links, no JS (AD-12); source and the other control survive each click.
-     */
-    private static function plusOptionsHtml(string $source, string $period, bool $excludeSpikes): string
+    /** Whether $rankingMode has a period (Stadig tillväxt, Plusdagar). */
+    private static function hasPeriod(string $rankingMode): bool
     {
-        $links = [];
-        foreach (self::PERIODS as $key => $def) {
-            $href = self::e(self::url($source, self::RANKING_PLUS, $key, $excludeSpikes));
-            $label = self::e($def['label']);
-            $links[] = $key === $period
-                ? "<a class=\"period-link period-link--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
-                : "<a class=\"period-link\" href=\"{$href}\">{$label}</a>";
-        }
-        $periodLinks = implode('<span class="period-sep" aria-hidden="true">·</span>', $links);
+        return $rankingMode === self::RANKING_STEADY || $rankingMode === self::RANKING_PLUS;
+    }
 
-        $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes));
-        $spikeClass = $excludeSpikes ? 'spike-toggle spike-toggle--active' : 'spike-toggle';
-        $spikeGlyph = $excludeSpikes ? '☑' : '☐';
+    /**
+     * spec-stadig-tillvaxt-period — the period row: its own full-width line
+     * under the header controls, Stadig tillväxt and Plusdagar only. A
+     * compact segmented pill "Vecka | Månad | 3 mån | År" (same
+     * `.range-picker` markup as Aktiedetalj's Range picker), plus — in
+     * Plusdagar only — the checkbox-styled "☐/☑ Dölj spikar" link to its
+     * right (Stadig tillväxt always excludes spikes). Plain links, no JS
+     * (AD-12); source and the other control survive each click.
+     */
+    private static function periodRowHtml(string $source, string $rankingMode, string $period, bool $excludeSpikes): string
+    {
+        $segments = '';
+        foreach (self::PERIODS as $key => $def) {
+            $href = self::e(self::url($source, $rankingMode, $key, $excludeSpikes));
+            $label = self::e($def['label']);
+            $segments .= $key === $period
+                ? "<a class=\"tab tab--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
+                : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
+        }
+
+        $spikeHtml = '';
+        if ($rankingMode === self::RANKING_PLUS) {
+            $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes));
+            $spikeClass = $excludeSpikes ? 'spike-toggle spike-toggle--active' : 'spike-toggle';
+            $spikeGlyph = $excludeSpikes ? '☑' : '☐';
+            $spikeHtml = "<a class=\"{$spikeClass}\" href=\"{$spikeHref}\"><span aria-hidden=\"true\">{$spikeGlyph}</span> Dölj spikar</a>";
+        }
 
         return <<<HTML
-        <div class="plus-options">
-          <nav class="period-links" aria-label="Period">{$periodLinks}</nav>
-          <a class="{$spikeClass}" href="{$spikeHref}"><span aria-hidden="true">{$spikeGlyph}</span> Dölj spikar</a>
+        <div class="period-row">
+          <div class="range-picker" role="tablist" aria-label="Period">{$segments}</div>
+          {$spikeHtml}
         </div>
         HTML;
     }
@@ -747,8 +770,9 @@ final class LeaderboardController
      * Builds the "/" URL for a given (source, ranking[, period, spikes])
      * combination, omitting a query param entirely when it is the default —
      * so the default view's own links stay a plain "/" (never stored
-     * server-side either way, AD-14). `period`/`spikes` only exist in
-     * Plusdagar mode and are dropped for the other rankings.
+     * server-side either way, AD-14). `period` exists in Stadig tillväxt
+     * and Plusdagar mode; `spikes` only in Plusdagar; both are dropped for
+     * the other rankings.
      */
     private static function url(
         string $source,
@@ -766,12 +790,12 @@ final class LeaderboardController
             $params['ranking'] = 'steady';
         } elseif ($rankingMode === self::RANKING_PLUS) {
             $params['ranking'] = 'plus';
-            if ($period !== self::PERIOD_DEFAULT) {
-                $params['period'] = $period;
-            }
-            if ($excludeSpikes) {
-                $params['spikes'] = self::SPIKES_EXCLUDE;
-            }
+        }
+        if (self::hasPeriod($rankingMode) && $period !== self::PERIOD_DEFAULT) {
+            $params['period'] = $period;
+        }
+        if ($rankingMode === self::RANKING_PLUS && $excludeSpikes) {
+            $params['spikes'] = self::SPIKES_EXCLUDE;
         }
 
         return $params === [] ? '/' : '/?' . http_build_query($params);

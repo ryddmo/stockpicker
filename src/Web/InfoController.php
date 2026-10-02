@@ -12,9 +12,10 @@ use Stockpicker\Adapter\NormalizedRow;
  * Fullständig lista/Bevakningslista/Aktiedetalj), what each symbol means
  * (🔥 Streak, ⚡ Spike, ☆/★ Watchlist star, Delta chip), and exactly what
  * qualifies an instrument for "Stadig tillväxt" and how it is ordered —
- * copied faithfully from DerivedMetricsRepository::topByTrendQuality()'s
- * real rule (up_streak >= 1 AND not spiking, ordered by up_streak DESC;
- * Code Map, spec-5-3), not restated from memory or the epic's prose.
+ * copied faithfully from DerivedMetricsRepository::
+ * topByTrendQualityForPeriod()'s real rule (up_streak >= 1 AND not spiking,
+ * ordered by the chosen period's % growth, default Månad; spec-5-3,
+ * spec-stadig-tillvaxt-period), not restated from memory or the epic's prose.
  *
  * Pure content: no constructor, no repository, no PDO — render() is a
  * plain static function so the route can call it with zero setup (Code
@@ -60,7 +61,7 @@ final class InfoController
           <main class="content">
             <section>
               <h2>Topplista</h2>
-              <p>Startsidan. Visar en topplista med instrument rankade efter antal ägare ("Flest ägare"), efter hur länge ägarantalet har ökat i följd utan avbrott ("Stadig tillväxt") eller efter hur många dagar under en period ägarantalet har stått still eller ökat ("Plusdagar"). Du väljer källa (Avanza eller Nordnet) och rankningsläge högst upp på sidan.</p>
+              <p>Startsidan. Visar en topplista med instrument rankade efter antal ägare ("Flest ägare"), efter hur mycket ägarantalet har ökat under en period bland aktier som just nu ökar i följd utan att spika ("Stadig tillväxt") eller efter hur många dagar under en period ägarantalet har stått still eller ökat ("Plusdagar"). Du väljer källa (Avanza eller Nordnet) och rankningsläge högst upp på sidan. I Stadig tillväxt och Plusdagar väljer du dessutom period (Vecka, Månad, 3 mån eller År) på en egen rad under; perioden delas mellan de två lägena.</p>
               <p>Under varje rad visas ägarantalets procentuella förändring över fyra perioder: <strong>Vecka</strong>, <strong>Månad</strong>, <strong>3 mån</strong> och <strong>År</strong> (7, 30, 90 respektive 365 kalenderdagar). Varje period jämförs mot den senast lagrade dagen på eller före startdagen, så helger och helgdagar hanteras automatiskt. Ligger den dagen mer än fem dagar före startdagen, eller finns ingen så gammal data ännu, visas "–" i stället för en missvisande siffra.</p>
             </section>
             <section>
@@ -106,8 +107,8 @@ final class InfoController
             </section>
             <section>
               <h2>Stadig tillväxt</h2>
-              <p>Rankningsläget "Stadig tillväxt" på Topplista, och filtret med samma namn på Fullständig lista, kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar; sorteras med längst svit först.</p>
-              <p>Med andra ord: instrumentet måste ha en pågående uppgångssvit (samma villkor som Streak-symbolen ovan), och får inte samtidigt vara flaggat som en spik (samma villkor som Spike-symbolen ovan). Ett instrument med lång uppgångssvit men en kraftig engångsökning den senaste dagen räknas alltså inte som stadig tillväxt — det visas inte alls i det läget, oavsett hur lång sviten är. Instrument utan pågående uppgångssvit (0 dagar eller okänt) kvalificerar aldrig. De instrument som kvalificerar sorteras med längst uppgångssvit högst upp.</p>
+              <p>Rankningsläget "Stadig tillväxt" på Topplista, och filtret med samma namn på Fullständig lista, kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar. På Topplista sorteras de kvalificerade aktierna efter ägarantalets procentuella ökning under vald period (<strong>Vecka</strong>, <strong>Månad</strong>, <strong>3 mån</strong> eller <strong>År</strong>; standard är Månad), med störst ökning först. Aktier som saknar procentsats för perioden (till exempel nyligen noterade) hamnar sist, ordnade efter längst svit. Spikande aktier utesluts alltid, så här finns ingen "Dölj spikar"-växlare. Ingen rankning visas förrän källans historik täcker hela perioden.</p>
+              <p>Med andra ord: instrumentet måste ha en pågående uppgångssvit (samma villkor som Streak-symbolen ovan), och får inte samtidigt vara flaggat som en spik (samma villkor som Spike-symbolen ovan). Ett instrument med lång uppgångssvit men en kraftig engångsökning den senaste dagen räknas alltså inte som stadig tillväxt — det visas inte alls i det läget, oavsett hur lång sviten är. Instrument utan pågående uppgångssvit (0 dagar eller okänt) kvalificerar aldrig. På Topplista avgör sedan periodens procentuella ökning ordningen; svitens längd används bara när två instrument har samma ökning och för instrument som saknar procentsats för perioden.</p>
             </section>
             <section>
               <h2>Plusdagar</h2>
