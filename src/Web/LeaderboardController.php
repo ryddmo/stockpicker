@@ -13,15 +13,18 @@ use Stockpicker\Store\WatchlistRepository;
  * switcher (Avanza/Nordnet), a Ranking-mode toggle ("Flest ägare" / "Stadig
  * tillväxt" / "Plusdagar"), and the top-10 Leaderboard rows for the resolved
  * (source, ranking) pair, each with its Watchlist star, badges, sparkline,
- * owner count and delta chip. In Stadig tillväxt and Plusdagar mode
- * (spec-plusdagar, spec-stadig-tillvaxt-period) a shared period row
- * (Vecka | Månad | 3 mån | År) sits on its own line under the header
- * controls; in Plusdagar it also holds the "Dölj spikar" toggle, and each
+ * owner count and delta chip. The header is the same three rows in every
+ * mode (spec-topplista-market-filter): row 1 source switcher + ranking
+ * toggle; row 2 the shared period row (Vecka | Månad | 3 mån | År — greyed
+ * out and inert in Flest ägare, with "Dölj spikar" to its right in
+ * Plusdagar only); row 3 the market filter (Alla | LC | MC | SC | First
+ * North), which narrows the top 10 *within* the market. In Plusdagar each
  * row carries a "{plus}/{data} · +{new}" chip.
  *
- * Source/ranking are per-request only (AD-14) — this controller never reads
- * or writes `settings`; the front controller resolves both from query
- * params (falling back to the defaults below) and passes them in.
+ * Source, ranking, period, market and the spike toggle are per-request
+ * only (AD-14) — this controller never reads or writes `settings`, nor
+ * any cookie; the front controller reads all five from query params and
+ * passes them in; render() falls back to the default for any unknown value.
  *
  * No templating engine (repo convention) — plain heredoc + htmlspecialchars,
  * same as AuthController::renderLoginPage(). The badge/no-history/spike
@@ -82,16 +85,25 @@ final class LeaderboardController
     }
 
     /**
-     * Renders the full page for the given (already-fallback-resolved-by-the-
-     * caller-or-not) source/ranking query values. Unrecognized values fall
-     * back to the defaults here too, so a garbage query string never 500s.
+     * Renders the full page for the given raw source, ranking, period,
+     * spikes and market query values. Unrecognized values fall back to the
+     * defaults here (Avanza, Flest ägare, Månad, spikes included, Alla), so
+     * a garbage query string never 500s.
      */
-    public function render(string $source, string $rankingMode, string $period = '', string $spikes = ''): string
-    {
+    public function render(
+        string $source,
+        string $rankingMode,
+        string $period = '',
+        string $spikes = '',
+        string $market = '',
+    ): string {
         $source = self::normalizeSource($source);
         $rankingMode = self::normalizeRanking($rankingMode);
         $period = self::normalizePeriod($period);
         $excludeSpikes = $spikes === self::SPIKES_EXCLUDE;
+        // spec-topplista-market-filter — same whitelist as Fullständig
+        // lista's `?market=`; anything else (garbage) means Alla (null).
+        $market = FullListController::normalizeMarket($market);
 
         // Alla mode ranks by Avanza's data always (Intent) — badges/
         // sparkline/rank basis stay Avanza-derived, Nordnet is display-only.
@@ -104,7 +116,7 @@ final class LeaderboardController
                 && !$this->metrics->historySpansDays($rankingSource, $days);
             $rows = $insufficientHistory
                 ? []
-                : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N);
+                : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N, $market);
         } elseif ($rankingMode === self::RANKING_STEADY) {
             // spec-stadig-tillvaxt-period — sorted by the period's % growth;
             // every period is history-gated (the % needs a row N days back).
@@ -114,9 +126,9 @@ final class LeaderboardController
             $insufficientHistory = !$this->metrics->historySpansDays($rankingSource, $days);
             $rows = $insufficientHistory
                 ? []
-                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N);
+                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N, $market);
         } else {
-            $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N);
+            $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N, $market);
         }
 
         $starred = array_flip($this->watchlist->starredIsins());
@@ -139,7 +151,7 @@ final class LeaderboardController
             }
         }
 
-        return self::pageHtml($source, $rankingMode, $period, $excludeSpikes, $bodyHtml, $rows !== []);
+        return self::pageHtml($source, $rankingMode, $period, $excludeSpikes, $market, $bodyHtml, $rows !== []);
     }
 
     /**
@@ -554,16 +566,16 @@ final class LeaderboardController
         string $rankingMode,
         string $period,
         bool $excludeSpikes,
+        ?string $market,
         string $rowsHtml,
         bool $hasRows,
     ): string {
         $tabBar = self::tabBarHtml('topplista', $source);
-        $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes);
-        $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes);
-        $periodRow = self::hasPeriod($rankingMode)
-            ? self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes)
-            : '';
-        $fullListHref = self::e(self::fullListUrl($source));
+        $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes, $market);
+        $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes, $market);
+        $periodRow = self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes, $market);
+        $marketRow = self::marketRowHtml($source, $rankingMode, $period, $excludeSpikes, $market);
+        $fullListHref = self::e(self::fullListUrl($source, $market));
         $infoHref = self::e(self::infoUrl($source));
         $rowHead = $hasRows ? self::rowHeadHtml() : '';
 
@@ -590,6 +602,7 @@ final class LeaderboardController
               {$rankingToggle}
             </div>
             {$periodRow}
+            {$marketRow}
           </header>
           <main class="rows rows--ranked">
             {$rowHead}
@@ -681,17 +694,22 @@ final class LeaderboardController
         HTML;
     }
 
-    private static function sourceSwitcherHtml(string $source, string $rankingMode, string $period, bool $excludeSpikes): string
-    {
+    private static function sourceSwitcherHtml(
+        string $source,
+        string $rankingMode,
+        string $period,
+        bool $excludeSpikes,
+        ?string $market,
+    ): string {
         // spec-5-4 — Alla shown first, before Avanza and Nordnet (Intent).
-        // spec-plusdagar / spec-stadig-tillvaxt-period — period (steady and
-        // plus) and spike toggle (plus only) survive a source switch.
+        // spec-topplista-market-filter — period and market (every mode) and
+        // the spike toggle (plus only) survive a source switch.
         $allaClass = $source === self::SOURCE_ALL ? 'tab tab--active' : 'tab';
         $avanzaClass = $source === NormalizedRow::SOURCE_AVANZA ? 'tab tab--active' : 'tab';
         $nordnetClass = $source === NormalizedRow::SOURCE_NORDNET ? 'tab tab--active' : 'tab';
-        $allaHref = self::e(self::url(self::SOURCE_ALL, $rankingMode, $period, $excludeSpikes));
-        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode, $period, $excludeSpikes));
-        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode, $period, $excludeSpikes));
+        $allaHref = self::e(self::url(self::SOURCE_ALL, $rankingMode, $period, $excludeSpikes, $market));
+        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode, $period, $excludeSpikes, $market));
+        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode, $period, $excludeSpikes, $market));
 
         return <<<HTML
         <div class="source-switcher" role="tablist" aria-label="Källa">
@@ -702,18 +720,24 @@ final class LeaderboardController
         HTML;
     }
 
-    private static function rankingToggleHtml(string $source, string $rankingMode, string $period, bool $excludeSpikes): string
-    {
+    private static function rankingToggleHtml(
+        string $source,
+        string $rankingMode,
+        string $period,
+        bool $excludeSpikes,
+        ?string $market,
+    ): string {
         $countClass = $rankingMode === self::RANKING_COUNT ? 'tab tab--active' : 'tab';
         $steadyClass = $rankingMode === self::RANKING_STEADY ? 'tab tab--active' : 'tab';
         $plusClass = $rankingMode === self::RANKING_PLUS ? 'tab tab--active' : 'tab';
-        // spec-stadig-tillvaxt-period — Stadig tillväxt and Plusdagar share
-        // the period, so switching between them keeps it; only Plusdagar
-        // carries the spike toggle. Plain labels: the period lives in the
-        // period row, never in a tab.
-        $countHref = self::e(self::url($source, self::RANKING_COUNT));
-        $steadyHref = self::e(self::url($source, self::RANKING_STEADY, $period));
-        $plusHref = self::e(self::url($source, self::RANKING_PLUS, $period, $excludeSpikes));
+        // spec-topplista-market-filter — all three modes share the period
+        // and market, so every mode switch keeps both (Flest ägare carries
+        // the period too, so it survives a round trip through it); only
+        // Plusdagar carries the spike toggle. Plain labels: the period lives
+        // in the period row, never in a tab.
+        $countHref = self::e(self::url($source, self::RANKING_COUNT, $period, false, $market));
+        $steadyHref = self::e(self::url($source, self::RANKING_STEADY, $period, false, $market));
+        $plusHref = self::e(self::url($source, self::RANKING_PLUS, $period, $excludeSpikes, $market));
 
         return <<<HTML
         <div class="ranking-toggle" role="tablist" aria-label="Rankningsläge">
@@ -724,61 +748,112 @@ final class LeaderboardController
         HTML;
     }
 
-    /** Whether $rankingMode has a period (Stadig tillväxt, Plusdagar). */
-    private static function hasPeriod(string $rankingMode): bool
-    {
-        return $rankingMode === self::RANKING_STEADY || $rankingMode === self::RANKING_PLUS;
-    }
-
     /**
-     * spec-stadig-tillvaxt-period — the period row: its own full-width line
-     * under the header controls, Stadig tillväxt and Plusdagar only. A
-     * compact segmented pill "Vecka | Månad | 3 mån | År" (same
-     * `.range-picker` markup as Aktiedetalj's Range picker), plus — in
-     * Plusdagar only — the checkbox-styled "☐/☑ Dölj spikar" link to its
-     * right (Stadig tillväxt always excludes spikes). Plain links, no JS
-     * (AD-12); source and the other control survive each click.
+     * spec-stadig-tillvaxt-period / spec-topplista-market-filter — the
+     * period row (header row 2), rendered in every mode: a compact
+     * segmented pill "Vecka | Månad | 3 mån | År" (same `.range-picker`
+     * markup as Aktiedetalj's Range picker), plus — in Plusdagar only — the
+     * checkbox-styled "☐/☑ Dölj spikar" link to its right (Stadig tillväxt
+     * always excludes spikes). In Flest ägare the period doesn't apply: the
+     * row is greyed out (`.period-row--muted`), its segments are inert
+     * `<span>`s rather than links, the remembered period stays marked, and
+     * a muted note says "Gäller inte Flest ägare". Plain links, no JS
+     * (AD-12); source, market and the other controls survive each click.
      */
-    private static function periodRowHtml(string $source, string $rankingMode, string $period, bool $excludeSpikes): string
-    {
+    private static function periodRowHtml(
+        string $source,
+        string $rankingMode,
+        string $period,
+        bool $excludeSpikes,
+        ?string $market,
+    ): string {
+        $inert = $rankingMode === self::RANKING_COUNT;
+
         $segments = '';
         foreach (self::PERIODS as $key => $def) {
-            $href = self::e(self::url($source, $rankingMode, $key, $excludeSpikes));
             $label = self::e($def['label']);
-            $segments .= $key === $period
+            $active = $key === $period;
+            if ($inert) {
+                $segments .= $active
+                    ? "<span class=\"tab tab--active\" aria-current=\"true\">{$label}</span>"
+                    : "<span class=\"tab\">{$label}</span>";
+                continue;
+            }
+            $href = self::e(self::url($source, $rankingMode, $key, $excludeSpikes, $market));
+            $segments .= $active
                 ? "<a class=\"tab tab--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
                 : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
         }
 
-        $spikeHtml = '';
-        if ($rankingMode === self::RANKING_PLUS) {
-            $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes));
+        $extraHtml = '';
+        if ($inert) {
+            $extraHtml = '<span class="period-note">Gäller inte Flest ägare</span>';
+        } elseif ($rankingMode === self::RANKING_PLUS) {
+            $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes, $market));
             $spikeClass = $excludeSpikes ? 'spike-toggle spike-toggle--active' : 'spike-toggle';
             $spikeGlyph = $excludeSpikes ? '☑' : '☐';
-            $spikeHtml = "<a class=\"{$spikeClass}\" href=\"{$spikeHref}\"><span aria-hidden=\"true\">{$spikeGlyph}</span> Dölj spikar</a>";
+            $extraHtml = "<a class=\"{$spikeClass}\" href=\"{$spikeHref}\"><span aria-hidden=\"true\">{$spikeGlyph}</span> Dölj spikar</a>";
         }
 
+        $rowClass = $inert ? 'period-row period-row--muted' : 'period-row';
+        $pickerAttrs = $inert ? ' aria-disabled="true"' : '';
+
         return <<<HTML
-        <div class="period-row">
-          <div class="range-picker" role="tablist" aria-label="Period">{$segments}</div>
-          {$spikeHtml}
+        <div class="{$rowClass}">
+          <div class="range-picker" role="tablist" aria-label="Period"{$pickerAttrs}>{$segments}</div>
+          {$extraHtml}
         </div>
         HTML;
     }
 
     /**
-     * Builds the "/" URL for a given (source, ranking[, period, spikes])
-     * combination, omitting a query param entirely when it is the default —
-     * so the default view's own links stay a plain "/" (never stored
-     * server-side either way, AD-14). `period` exists in Stadig tillväxt
-     * and Plusdagar mode; `spikes` only in Plusdagar; both are dropped for
-     * the other rankings.
+     * spec-topplista-market-filter — the market filter (header row 3, every
+     * mode): "Alla | LC | MC | SC | First North" as the same `.range-picker`
+     * segmented control as the period row. Same values as Fullständig
+     * lista's `?market=` (FullListController::MARKETS); Alla (no narrowing)
+     * is the default and omitted from URLs. Source, ranking, period and the
+     * spike toggle survive each click.
+     */
+    private static function marketRowHtml(
+        string $source,
+        string $rankingMode,
+        string $period,
+        bool $excludeSpikes,
+        ?string $market,
+    ): string {
+        $options = array_merge([null], FullListController::MARKETS);
+
+        $segments = '';
+        foreach ($options as $option) {
+            $href = self::e(self::url($source, $rankingMode, $period, $excludeSpikes, $option));
+            $label = self::e($option ?? 'Alla');
+            $segments .= $option === $market
+                ? "<a class=\"tab tab--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
+                : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
+        }
+
+        return <<<HTML
+        <div class="market-row">
+          <div class="range-picker" role="tablist" aria-label="Marknad">{$segments}</div>
+        </div>
+        HTML;
+    }
+
+    /**
+     * Builds the "/" URL for a given (source, ranking[, period, spikes,
+     * market]) combination, omitting a query param entirely when it is the
+     * default — so the default view's own links stay a plain "/" (never
+     * stored server-side either way, AD-14). `period` and `market` are
+     * carried in every mode (spec-topplista-market-filter — Flest ägare
+     * ignores the period but keeps it for the next mode switch); `spikes`
+     * only in Plusdagar.
      */
     private static function url(
         string $source,
         string $rankingMode,
         string $period = self::PERIOD_DEFAULT,
         bool $excludeSpikes = false,
+        ?string $market = null,
     ): string {
         $params = [];
         if ($source === self::SOURCE_ALL) {
@@ -791,11 +866,14 @@ final class LeaderboardController
         } elseif ($rankingMode === self::RANKING_PLUS) {
             $params['ranking'] = 'plus';
         }
-        if (self::hasPeriod($rankingMode) && $period !== self::PERIOD_DEFAULT) {
+        if ($period !== self::PERIOD_DEFAULT) {
             $params['period'] = $period;
         }
         if ($rankingMode === self::RANKING_PLUS && $excludeSpikes) {
             $params['spikes'] = self::SPIKES_EXCLUDE;
+        }
+        if ($market !== null) {
+            $params['market'] = $market;
         }
 
         return $params === [] ? '/' : '/?' . http_build_query($params);
@@ -810,13 +888,22 @@ final class LeaderboardController
      * (spec-5-4): `self::SOURCE_ALL` also omits the param — Fullständig
      * lista has no Alla concept of its own (Boundaries: unchanged by that
      * story), so landing there on Avanza is the only sensible target, not a
-     * regression of this docblock's guarantee.
+     * regression of this docblock's guarantee. spec-topplista-market-filter
+     * — the chosen market is carried too (`?market=`, same values as
+     * Fullständig lista's own market filter), so the list opens on the same
+     * market.
      */
-    private static function fullListUrl(string $source): string
+    private static function fullListUrl(string $source, ?string $market = null): string
     {
-        return $source === NormalizedRow::SOURCE_NORDNET
-            ? '/list?source=nordnet'
-            : '/list';
+        $params = [];
+        if ($source === NormalizedRow::SOURCE_NORDNET) {
+            $params['source'] = 'nordnet';
+        }
+        if ($market !== null) {
+            $params['market'] = $market;
+        }
+
+        return $params === [] ? '/list' : '/list?' . http_build_query($params);
     }
 
     private static function infoUrl(string $source): string

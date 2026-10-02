@@ -59,7 +59,11 @@ final class InfoControllerTest extends TestCase
         );
         self::assertStringContainsString('standard är Månad), med störst ökning först', $html);
         self::assertStringContainsString('Spikande aktier utesluts alltid', $html);
-        self::assertStringContainsString('perioden delas mellan de två lägena', $html);
+        self::assertStringContainsString('perioden delas mellan alla lägen', $html);
+        self::assertStringContainsString('periodraden nedtonad', $html);
+        self::assertStringContainsString('Alla, LC, MC, SC eller First North', $html);
+        self::assertStringContainsString('Topp tio räknas inom vald marknad', $html);
+        self::assertStringContainsString('ett nytt besök börjar på Månad och Alla', $html);
         self::assertStringNotContainsString('sorteras med längst', $html, 'no leftover streak-length sort copy');
     }
 
