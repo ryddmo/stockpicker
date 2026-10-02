@@ -556,13 +556,13 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
     // -- Story 4.2: / (Topplista) and /watchlist/toggle -----------------------
 
-    public function testRootDefaultViewShowsTop10ByOwnerCountForAvanza(): void
+    public function testRootFlestAgareViewShowsTop10ByOwnerCountForAvanza(): void
     {
         $this->seedMatchedUniverse();
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
         $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString('Topplista', $body);
@@ -587,10 +587,13 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         [$status, $body] = $this->endpoint->get('/', $this->validCookie());
 
         self::assertSame(200, $status);
-        // The default view's own Nordnet/Stadig tillväxt links — read from the
-        // controller's real output rather than a hand-typed query string.
-        self::assertStringContainsString('href="/?source=nordnet"', $body);
+        // The default (Plusdagar) view's own Nordnet/Stadig tillväxt/Flest
+        // ägare links — read from the controller's real output rather than
+        // a hand-typed query string. Every link carries `ranking`
+        // (spec-plusdagar-landing-cookie: a bare "/" means the remembered view).
+        self::assertStringContainsString('href="/?source=nordnet&amp;ranking=plus"', $body);
         self::assertStringContainsString('href="/?ranking=steady"', $body);
+        self::assertStringContainsString('href="/?ranking=count">Flest ägare</a>', $body);
     }
 
     public function testRootRendersTheSpikeStrokeClassForASpikingRowAndThePositiveClassForAGrowingRow(): void
@@ -600,7 +603,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // Alpha AB: 29 days of steady growth then a huge jump -> spike_score
         // >= 2 -> the sparkline must use the spike stroke class, not
         // positive/neutral, even though the last day is also numerically an
-        // increase. Rendered on the default (Flest ägare) view, since
+        // increase. Rendered on the Flest ägare view, since
         // Stadig tillväxt excludes spiking rows entirely (see the ranking
         // test above) and so never renders this row at all.
         $start = new DateTimeImmutable('2026-03-01');
@@ -615,7 +618,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
             $this->seedOwnerCount('SE0000001002', sprintf('2026-04-%02d', $i + 1), $v);
         }
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString('sparkline-line--spike', $this->rowHtmlFor($body, 'SE0000001001'));
@@ -628,7 +631,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 100, NormalizedRow::SOURCE_AVANZA);
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
 
-        [$status, $body] = $this->endpoint->get('/?source=nordnet', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?source=nordnet&ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString('999 999', $body);
@@ -685,10 +688,10 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         // Avanza (not Alla) is the active tab, and the default view's own
-        // Avanza link stays a plain "/" — Alla is first in the switcher's
+        // Avanza link omits `source` — Alla is first in the switcher's
         // tab order but is not the default landing source.
-        self::assertStringContainsString('class="tab tab--active" href="/">Avanza</a>', $body);
-        self::assertStringNotContainsString('class="tab tab--active" href="/?source=alla">Alla</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Avanza</a>', $body);
+        self::assertStringNotContainsString('class="tab tab--active" href="/?source=alla&amp;ranking=plus">Alla</a>', $body);
         self::assertStringNotContainsString('stat-src', $body);
     }
 
@@ -700,7 +703,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
 
         self::assertSame(200, $status);
-        self::assertStringContainsString('class="tab tab--active" href="/?source=alla">Alla</a>', $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?source=alla&amp;ranking=plus">Alla</a>', $body);
 
         $switcherHtml = $this->sourceSwitcherHtmlFor($body);
         $allaPos = strpos($switcherHtml, '>Alla<');
@@ -719,7 +722,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1234, NormalizedRow::SOURCE_AVANZA);
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 567, NormalizedRow::SOURCE_NORDNET);
 
-        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?source=alla&ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -733,7 +736,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1234, NormalizedRow::SOURCE_AVANZA);
         // No Nordnet row at all for SE0000001001.
 
-        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?source=alla&ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -750,7 +753,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 999999, NormalizedRow::SOURCE_NORDNET);
         $this->seedOwnerCount('SE0000001002', '2026-01-01', 5000, NormalizedRow::SOURCE_AVANZA);
 
-        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?source=alla&ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertGreaterThan(
@@ -877,7 +880,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // ägare (spec-topplista-market-filter — it ignores the period but
         // carries it so it survives the round trip).
         self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka">Plusdagar</a>', $body);
-        self::assertStringContainsString('class="tab" href="/?period=vecka">Flest ägare</a>', $body);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;period=vecka">Flest ägare</a>', $body);
         // The period survives a source switch.
         self::assertStringContainsString(
             'href="/?source=nordnet&amp;ranking=steady&amp;period=vecka">Nordnet</a>',
@@ -1036,7 +1039,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // tillväxt (kept on switch); spec-topplista-market-filter — Flest
         // ägare carries it too.
         self::assertStringContainsString('href="/?ranking=steady&amp;period=vecka">Stadig tillväxt</a>', $body);
-        self::assertStringContainsString('href="/?period=vecka">Flest ägare</a>', $body);
+        self::assertStringContainsString('href="/?ranking=count&amp;period=vecka">Flest ägare</a>', $body);
     }
 
     public function testRootRankingPlusShowsShortHistoryEmptyStateFor3ManAndAr(): void
@@ -1154,7 +1157,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedMatchedUniverse();
         $this->seedPlusMonth('SE0000001001', 1000, 1);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         self::assertStringContainsString('class="tab" href="/?ranking=plus">Plusdagar</a>', $body);
@@ -1214,7 +1217,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001002', '2026-10-01', 80000);
         $this->seedOwnerCount('SE0000001004', '2026-10-01', 70000);
 
-        [$status, $body] = $this->endpoint->get('/?market=SC', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count&market=SC', $this->validCookie());
 
         self::assertSame(200, $status, $body);
         $isins = $this->rowIsins($body);
@@ -1224,7 +1227,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
             $expected[] = sprintf('SE00000030%02d', $i);
         }
         self::assertSame($expected, $isins, 'the best 10 SC by owner count, not a post-filtered Alla top 10');
-        self::assertStringContainsString('class="tab tab--active" href="/?market=SC" aria-current="true">SC</a>', $this->marketRowHtmlFor($body));
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=count&amp;market=SC" aria-current="true">SC</a>', $this->marketRowHtmlFor($body));
     }
 
     public function testRootMarketNarrowsEachRankingModeInItsOwnOrder(): void
@@ -1250,11 +1253,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $betaTva = 'SE0000002002';
         $betaTre = 'SE0000003002';
         foreach ([
-            '/?market=MC' => [$beta, $betaTre, $betaTva],
+            '/?ranking=count&market=MC' => [$beta, $betaTre, $betaTva],
             '/?ranking=steady&market=MC' => [$betaTva, $betaTre, $beta],
             '/?ranking=plus&market=MC' => [$betaTre, $betaTva, $beta],
             // Alla source mode ranks on Avanza, narrowed to MC too.
-            '/?source=alla&market=MC' => [$beta, $betaTre, $betaTva],
+            '/?source=alla&ranking=count&market=MC' => [$beta, $betaTre, $betaTva],
         ] as $path => $expected) {
             [$status, $body] = $this->endpoint->get($path, $this->validCookie());
             self::assertSame(200, $status, $path . "\n" . $body);
@@ -1305,17 +1308,17 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001003', '2026-10-01', 200);
         $this->seedOwnerCount('SE0000001004', '2026-10-01', 100);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status, $body);
         self::assertSame(['SE0000001001', 'SE0000001002', 'SE0000001003', 'SE0000001004'], $this->rowIsins($body));
         $marketRow = $this->marketRowHtmlFor($body);
         self::assertStringContainsString('class="range-picker" role="tablist" aria-label="Marknad"', $marketRow);
-        self::assertStringContainsString('class="tab tab--active" href="/" aria-current="true">Alla</a>', $marketRow);
-        self::assertStringContainsString('class="tab" href="/?market=LC">LC</a>', $marketRow);
-        self::assertStringContainsString('class="tab" href="/?market=MC">MC</a>', $marketRow);
-        self::assertStringContainsString('class="tab" href="/?market=SC">SC</a>', $marketRow);
-        self::assertStringContainsString('class="tab" href="/?market=First+North">First North</a>', $marketRow);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=count" aria-current="true">Alla</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;market=LC">LC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;market=MC">MC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;market=SC">SC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;market=First+North">First North</a>', $marketRow);
         self::assertStringNotContainsString('market=', $this->sourceSwitcherHtmlFor($body), 'Alla is omitted from links');
         self::assertStringContainsString('<a href="/list">Visa fullständig lista</a>', $body);
     }
@@ -1326,11 +1329,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
         $this->seedOwnerCount('SE0000001002', '2026-10-01', 300);
 
-        foreach (['/?market=XX', '/?market[]=LC', '/?market=lc', "/?market=LC'%20OR%201=1"] as $path) {
+        foreach (['/?ranking=count&market=XX', '/?ranking=count&market[]=LC', '/?ranking=count&market=lc', "/?ranking=count&market=LC'%20OR%201=1"] as $path) {
             [$status, $body] = $this->endpoint->get($path, $this->validCookie());
             self::assertSame(200, $status, $path);
             self::assertSame(['SE0000001001', 'SE0000001002'], $this->rowIsins($body), $path);
-            self::assertStringContainsString('class="tab tab--active" href="/" aria-current="true">Alla</a>', $this->marketRowHtmlFor($body), $path);
+            self::assertStringContainsString('class="tab tab--active" href="/?ranking=count" aria-current="true">Alla</a>', $this->marketRowHtmlFor($body), $path);
         }
     }
 
@@ -1348,7 +1351,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status);
         self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body);
 
-        [$status, $body] = $this->endpoint->get('/?market=First%20North', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count&market=First%20North', $this->validCookie());
         self::assertSame(200, $status);
         self::assertStringContainsString('Inga aktier hittades.', $body);
         self::assertSame([], $this->rowIsins($body));
@@ -1364,19 +1367,19 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         [$status, $plusBody] = $this->endpoint->get('/?ranking=plus&period=vecka&market=LC', $this->validCookie());
         self::assertSame(200, $status);
-        self::assertStringContainsString('class="tab" href="/?period=vecka&amp;market=LC">Flest ägare</a>', $plusBody);
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;period=vecka&amp;market=LC">Flest ägare</a>', $plusBody);
 
         // Follow it: Flest ägare ranks LC by total owners.
-        [$status, $countBody] = $this->endpoint->get('/?period=vecka&market=LC', $this->validCookie());
+        [$status, $countBody] = $this->endpoint->get('/?ranking=count&period=vecka&market=LC', $this->validCookie());
         self::assertSame(200, $status);
         self::assertSame(['SE0000002001', 'SE0000001001'], $this->rowIsins($countBody));
-        self::assertStringContainsString('class="tab tab--active" href="/?period=vecka&amp;market=LC">Flest ägare</a>', $countBody);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=count&amp;period=vecka&amp;market=LC">Flest ägare</a>', $countBody);
 
         // And back to a period mode: Stadig tillväxt keeps both.
         self::assertStringContainsString('class="tab" href="/?ranking=steady&amp;period=vecka&amp;market=LC">Stadig tillväxt</a>', $countBody);
         self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka&amp;market=LC">Plusdagar</a>', $countBody);
         // The market row keeps the period; the spike toggle keeps the market.
-        self::assertStringContainsString('class="tab" href="/?period=vecka&amp;market=MC">MC</a>', $this->marketRowHtmlFor($countBody));
+        self::assertStringContainsString('class="tab" href="/?ranking=count&amp;period=vecka&amp;market=MC">MC</a>', $this->marketRowHtmlFor($countBody));
         self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka&amp;spikes=exclude&amp;market=LC"', $plusBody);
     }
 
@@ -1385,7 +1388,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedMatchedUniverse();
         $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $periodRow = $this->periodRowHtmlFor($body);
@@ -1396,7 +1399,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('<span class="period-note">Gäller inte Flest ägare</span>', $periodRow);
 
         // The remembered period stays marked.
-        [, $body] = $this->endpoint->get('/?period=ar', $this->validCookie());
+        [, $body] = $this->endpoint->get('/?ranking=count&period=ar', $this->validCookie());
         self::assertStringContainsString('<span class="tab tab--active" aria-current="true">År</span>', $this->periodRowHtmlFor($body));
     }
 
@@ -1405,7 +1408,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedMatchedUniverse();
         $this->seedPlusMonth('SE0000001001', 1000, 1);
 
-        foreach (['/', '/?ranking=steady', '/?ranking=plus'] as $path) {
+        foreach (['/?ranking=count', '/?ranking=steady', '/?ranking=plus'] as $path) {
             [$status, $body] = $this->endpoint->get($path, $this->validCookie());
             self::assertSame(200, $status, $path);
             $header = substr($body, (int) strpos($body, '<header'), (int) strpos($body, '</header>') - (int) strpos($body, '<header'));
@@ -1430,7 +1433,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
 
         foreach ([
-            '/?period=vecka&market=SC' => ['/?source=alla&amp;period=vecka&amp;market=SC', '/?source=nordnet&amp;period=vecka&amp;market=SC'],
+            '/?ranking=count&period=vecka&market=SC' => ['/?source=alla&amp;ranking=count&amp;period=vecka&amp;market=SC', '/?source=nordnet&amp;ranking=count&amp;period=vecka&amp;market=SC'],
             '/?ranking=steady&period=3man&market=MC' => ['/?source=alla&amp;ranking=steady&amp;period=3man&amp;market=MC', '/?source=nordnet&amp;ranking=steady&amp;period=3man&amp;market=MC'],
             '/?source=nordnet&ranking=plus&market=LC' => ['/?source=alla&amp;ranking=plus&amp;market=LC', '/?ranking=plus&amp;market=LC'],
         ] as $path => $hrefs) {
@@ -1459,6 +1462,294 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('<a href="/list?market=LC">Visa fullständig lista</a>', $body);
     }
 
+    // -- spec-plusdagar-landing-cookie: Plusdagar landing + topplista_view ----
+
+    /**
+     * The labels of every active segment on the page, in document order:
+     * tab bar, source, ranking, period, market.
+     *
+     * @return list<string>
+     */
+    private function activeLabels(string $body): array
+    {
+        preg_match_all('#class="tab tab--active"[^>]*>([^<]+)<#', $body, $m);
+
+        return $m[1];
+    }
+
+    /** The raw `Set-Cookie: topplista_view=…` header line, or null when none was sent. */
+    private function viewSetCookie(array $headers): ?string
+    {
+        foreach ($headers as $header) {
+            if (stripos($header, 'Set-Cookie: topplista_view=') === 0) {
+                return $header;
+            }
+        }
+
+        return null;
+    }
+
+    /** The decoded value of the response's topplista_view Set-Cookie. */
+    private function viewSetCookieValue(array $headers): string
+    {
+        $header = $this->viewSetCookie($headers);
+        self::assertNotNull($header, 'expected a topplista_view Set-Cookie');
+        preg_match('#^Set-Cookie: topplista_view=([^;]*)#i', $header, $m);
+
+        return urldecode($m[1]);
+    }
+
+    private function viewCookie(string $query): string
+    {
+        return $this->validCookie() . '; topplista_view=' . rawurlencode($query);
+    }
+
+    public function testRootFreshVisitLandsOnPlusdagarManadAllaAvanzaWithoutSettingTheViewCookie(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Avanza', 'Plusdagar', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertStringContainsString('22/22 · +22', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
+        self::assertNull($this->viewSetCookie($headers), 'a bare / never writes the cookie');
+    }
+
+    public function testRootExplicitViewRendersItAndWritesTheViewCookie(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?ranking=count&market=LC', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Avanza', 'Flest ägare', 'Månad', 'LC'], $this->activeLabels($body));
+        self::assertSame('ranking=count&market=LC', $this->viewSetCookieValue($headers));
+
+        $header = (string) $this->viewSetCookie($headers);
+        self::assertStringContainsStringIgnoringCase('; HttpOnly', $header);
+        self::assertStringContainsStringIgnoringCase('; SameSite=Lax', $header);
+        self::assertStringContainsStringIgnoringCase('; path=/', $header);
+        self::assertStringNotContainsStringIgnoringCase('; secure', $header, 'plain HTTP: no Secure flag');
+        self::assertSame(1, preg_match('#Max-Age=(\d+)#i', $header, $m), $header);
+        self::assertEqualsWithDelta(365 * 24 * 60 * 60, (int) $m[1], 60);
+    }
+
+    public function testRootBareRequestRendersTheRememberedView(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001003', '2026-10-01', 400, NormalizedRow::SOURCE_NORDNET);
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders(
+            '/',
+            $this->viewCookie('ranking=steady&period=vecka&market=SC&source=nordnet'),
+        );
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Nordnet', 'Stadig tillväxt', 'Vecka', 'SC'], $this->activeLabels($body));
+        self::assertNull($this->viewSetCookie($headers), 'rendering the remembered view does not rewrite it');
+    }
+
+    public function testRootQueryStringWinsAndMissingParamsTakeDefaultsNotCookieValues(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders(
+            '/?ranking=steady',
+            $this->viewCookie('ranking=plus&period=vecka&market=SC&source=nordnet'),
+        );
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Avanza', 'Stadig tillväxt', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertSame('ranking=steady', $this->viewSetCookieValue($headers), 'the cookie is overwritten');
+    }
+
+    public function testRootClickingAllaFromAMarketViewReturnsToAllaAndUpdatesTheCookie(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [, $lcBody] = $this->endpoint->get('/?ranking=plus&period=vecka&market=LC', $this->validCookie());
+        self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka">Alla</a>', $this->marketRowHtmlFor($lcBody));
+
+        [, $defaultBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+        self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;market=LC">LC</a>', $this->marketRowHtmlFor($defaultBody));
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus" aria-current="true">Alla</a>', $this->marketRowHtmlFor($defaultBody));
+
+        // Following the Alla link from an LC view, even with LC remembered.
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?ranking=plus', $this->viewCookie('ranking=plus&market=LC'));
+        self::assertSame(200, $status);
+        self::assertSame(['Topplista', 'Avanza', 'Plusdagar', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertSame('ranking=plus', $this->viewSetCookieValue($headers));
+    }
+
+    public function testRootEveryHeaderLinkCarriesRanking(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        foreach (['/', '/?ranking=count', '/?ranking=steady&market=LC', '/?source=alla&ranking=plus&spikes=exclude'] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            self::assertSame(1, preg_match('~<header class="page-header">(.*?)</header>~s', $body, $m), $path);
+            preg_match_all('~<a [^>]*href="([^"]*)"~', $m[1], $links);
+            self::assertNotEmpty($links[1], $path);
+            foreach ($links[1] as $href) {
+                self::assertStringContainsString('ranking=', $href, $path);
+            }
+            self::assertSame(1, preg_match('~href="([^"]*)">Flest ägare</a>~', $body, $count), $path);
+            self::assertStringContainsString('ranking=count', $count[1], $path);
+        }
+    }
+
+    public function testRootGarbageViewCookieFallsBackToTheDefaults(): void
+    {
+        $this->seedMatchedUniverse();
+
+        foreach (['%%%&ranking=xx&market=ZZ', 'ranking[]=count&market[]=LC&source[x]=nordnet', 'period=999&source=Alla'] as $raw) {
+            $cookie = $this->validCookie() . '; topplista_view=' . $raw;
+            [$status, $body, $headers] = $this->endpoint->getWithHeaders('/', $cookie);
+            self::assertSame(200, $status, $raw);
+            self::assertSame(['Topplista', 'Avanza', 'Plusdagar', 'Månad', 'Alla'], $this->activeLabels($body), $raw);
+            self::assertNull($this->viewSetCookie($headers), $raw);
+        }
+    }
+
+    public function testRootSpikesAreDroppedOutsidePlusdagar(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body] = $this->endpoint->get('/', $this->viewCookie('ranking=count&spikes=exclude'));
+        self::assertSame(200, $status);
+        self::assertSame(['Topplista', 'Avanza', 'Flest ägare', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertStringNotContainsString('spikes=', $body);
+
+        [, , $headers] = $this->endpoint->getWithHeaders('/?ranking=count&spikes=exclude', $this->validCookie());
+        self::assertSame('ranking=count', $this->viewSetCookieValue($headers));
+
+        [, , $headers] = $this->endpoint->getWithHeaders('/?ranking=plus&spikes=exclude', $this->validCookie());
+        self::assertSame('ranking=plus&spikes=exclude', $this->viewSetCookieValue($headers));
+    }
+
+    public function testOtherRoutesNeverSetTheViewCookie(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+        $cookie = $this->viewCookie('ranking=steady&market=LC');
+
+        foreach ([
+            '/list', '/list?ranking=count&market=LC',
+            '/stock/SE0000001001', '/stock/SE0000001001?range=vecka',
+            '/watchlist', '/watchlist?source=nordnet',
+            '/info', '/info?source=nordnet',
+        ] as $path) {
+            [$status, , $headers] = $this->endpoint->getWithHeaders($path, $cookie);
+            self::assertSame(200, $status, $path);
+            self::assertNull($this->viewSetCookie($headers), $path);
+        }
+    }
+
+    public function testRootWithoutASessionNeverTouchesTheViewCookie(): void
+    {
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?ranking=count&market=LC', 'topplista_view=ranking%3Dsteady');
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<form', $body);
+        self::assertNull($this->viewSetCookie($headers));
+    }
+
+    public function testTopplistaTabFromAktiedetaljReturnsToTheRememberedView(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [, , $headers] = $this->endpoint->getWithHeaders('/?ranking=plus&period=vecka&market=LC', $this->validCookie());
+        $remembered = $this->viewSetCookieValue($headers);
+        self::assertSame('ranking=plus&period=vecka&market=LC', $remembered);
+
+        [$status, $detail] = $this->endpoint->get('/stock/SE0000001001', $this->viewCookie($remembered));
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab tab--active" href="/">Topplista</a>', $detail);
+
+        [$status, $body] = $this->endpoint->get('/', $this->viewCookie($remembered));
+        self::assertSame(200, $status);
+        self::assertSame(['Topplista', 'Avanza', 'Plusdagar', 'Vecka', 'LC'], $this->activeLabels($body));
+        self::assertStringContainsString('Alpha AB', $body);
+    }
+
+    public function testRootJunkQueryRendersTheRememberedViewWithoutWritingTheCookie(): void
+    {
+        $this->seedMatchedUniverse();
+
+        foreach (['/?fbclid=abc', '/?utm_source=x&utm_medium=y'] as $path) {
+            [$status, $body, $headers] = $this->endpoint->getWithHeaders($path, $this->viewCookie('ranking=steady&market=SC'));
+            self::assertSame(200, $status, $path);
+            self::assertSame(['Topplista', 'Avanza', 'Stadig tillväxt', 'Månad', 'SC'], $this->activeLabels($body), $path);
+            self::assertNull($this->viewSetCookie($headers), $path);
+        }
+    }
+
+    public function testRootSourceOnlyRestoresTheRememberedViewWithThatSource(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders(
+            '/?source=nordnet',
+            $this->viewCookie('ranking=steady&period=vecka&market=LC'),
+        );
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Nordnet', 'Stadig tillväxt', 'Vecka', 'LC'], $this->activeLabels($body));
+        self::assertSame('source=nordnet&ranking=steady&period=vecka&market=LC', $this->viewSetCookieValue($headers));
+    }
+
+    public function testRootSourceOnlyWithoutACookieUsesTheDefaultsAndWritesTheCookie(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?source=alla', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['Topplista', 'Alla', 'Plusdagar', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertSame('source=alla&ranking=plus', $this->viewSetCookieValue($headers));
+    }
+
+    public function testTopplistasOwnTabInAllaRestoresTheSameView(): void
+    {
+        $this->seedMatchedUniverse();
+
+        [, $body, $headers] = $this->endpoint->getWithHeaders('/?source=alla&ranking=steady&market=SC', $this->validCookie());
+        $remembered = $this->viewSetCookieValue($headers);
+        self::assertSame('source=alla&ranking=steady&market=SC', $remembered);
+        self::assertSame(1, preg_match('~href="([^"]*)">Topplista</a>~', $body, $tab));
+        $tabHref = html_entity_decode($tab[1]);
+        self::assertSame('/?source=alla', $tabHref);
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders($tabHref, $this->viewCookie($remembered));
+        self::assertSame(200, $status);
+        self::assertSame(['Topplista', 'Alla', 'Stadig tillväxt', 'Månad', 'SC'], $this->activeLabels($body));
+        self::assertSame($remembered, $this->viewSetCookieValue($headers));
+    }
+
+    public function testTopplistaTabFromOtherPagesInNordnetReturnsToTheRememberedView(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400, NormalizedRow::SOURCE_NORDNET);
+        $remembered = 'source=nordnet&ranking=steady&period=vecka&market=LC';
+
+        foreach (['/list?source=nordnet', '/watchlist?source=nordnet', '/stock/SE0000001001?source=nordnet', '/info?source=nordnet'] as $path) {
+            [$status, $page] = $this->endpoint->get($path, $this->viewCookie($remembered));
+            self::assertSame(200, $status, $path);
+            self::assertSame(1, preg_match('~href="([^"]*)">Topplista</a>~', $page, $tab), $path);
+            $tabHref = html_entity_decode($tab[1]);
+
+            [$status, $body] = $this->endpoint->get($tabHref, $this->viewCookie($remembered));
+            self::assertSame(200, $status, $path);
+            self::assertSame(['Topplista', 'Nordnet', 'Stadig tillväxt', 'Vecka', 'LC'], $this->activeLabels($body), $path . ' → ' . $tabHref);
+        }
+    }
+
     // -- / period percentages (Vecka/Månad/3 mån/År line) --------------------
 
     public function testRootShowsAllFourPeriodPercentagesPopulatedWithMonToFriHistorySpanningAYear(): void
@@ -1471,7 +1762,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $count = $this->seedWeekdays('SE0000001001', '2025-06-02', 300, 1000, 5);
         self::assertSame(300, $count);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status, $body);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -1492,7 +1783,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         // calendar-days-back comparison row yet.
         $this->seedOwnerCount('SE0000001001', '2026-01-01', 1000);
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -1508,7 +1799,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         $this->seedOwnerCount('SE0000001001', '2026-09-25', 1000); // Fri
         $this->seedOwnerCount('SE0000001001', '2026-09-28', 1010); // Mon
 
-        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -1530,7 +1821,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
             $this->seedOwnerCount('SE0000001001', sprintf('2026-05-%02d', $i + 1), $v, NormalizedRow::SOURCE_NORDNET);
         }
 
-        [$status, $body] = $this->endpoint->get('/?source=alla', $this->validCookie());
+        [$status, $body] = $this->endpoint->get('/?source=alla&ranking=count', $this->validCookie());
 
         self::assertSame(200, $status);
         $rowHtml = $this->rowHtmlFor($body, 'SE0000001001');
@@ -1584,7 +1875,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         );
 
         // Reload / — the star must render filled (persisted, not per-request).
-        [$rootStatus, $rootBody] = $this->endpoint->get('/', $cookie);
+        [$rootStatus, $rootBody] = $this->endpoint->get('/?ranking=count', $cookie);
         self::assertSame(200, $rootStatus);
         self::assertStringContainsString('star--filled', $rootBody);
 

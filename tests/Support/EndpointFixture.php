@@ -191,13 +191,29 @@ final class EndpointFixture
     /** @return array{0: int, 1: string} */
     public function get(string $path, ?string $cookie = null): array
     {
+        [$status, $body] = $this->request('GET', $path, $cookie);
+
+        return [$status, $body];
+    }
+
+    /**
+     * Like get(), plus the raw response header lines
+     * (`http_get_last_response_headers()`) so a test can assert Set-Cookie. `$cookie` is a raw `Cookie:` header
+     * value — several cookies are joined as `a=b; c=d`.
+     *
+     * @return array{0: int, 1: string, 2: list<string>}
+     */
+    public function getWithHeaders(string $path, ?string $cookie = null): array
+    {
         return $this->request('GET', $path, $cookie);
     }
 
     /** @return array{0: int, 1: string} */
     public function postJson(string $path, array $payload, ?string $cookie = null): array
     {
-        return $this->request('POST', $path, $cookie, json_encode($payload, JSON_THROW_ON_ERROR), 'application/json');
+        [$status, $body] = $this->request('POST', $path, $cookie, json_encode($payload, JSON_THROW_ON_ERROR), 'application/json');
+
+        return [$status, $body];
     }
 
     /**
@@ -212,7 +228,7 @@ final class EndpointFixture
         return base64_encode($payload) . '.' . hash_hmac('sha256', $payload, self::SESSION_KEY);
     }
 
-    /** @return array{0: int, 1: string} */
+    /** @return array{0: int, 1: string, 2: list<string>} */
     private function request(
         string $method,
         string $path,
@@ -238,14 +254,15 @@ final class EndpointFixture
 
         $context = stream_context_create(['http' => $options]);
         $responseBody = file_get_contents($this->base . $path, false, $context);
+        $responseHeaders = http_get_last_response_headers() ?? [];
         $status = 0;
-        foreach ($http_response_header ?? [] as $header) {
+        foreach ($responseHeaders as $header) {
             if (preg_match('#^HTTP/\\S+\\s+(\\d{3})#', $header, $matches)) {
                 $status = (int) $matches[1];
             }
         }
 
-        return [$status, (string) $responseBody];
+        return [$status, (string) $responseBody, array_values($responseHeaders)];
     }
 
     public function stop(): void
