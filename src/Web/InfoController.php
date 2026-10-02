@@ -36,6 +36,7 @@ final class InfoController
             : NormalizedRow::SOURCE_AVANZA;
 
         $tabBar = self::tabBarHtml($source);
+        $plusDaysChip = LeaderboardController::plusDaysChipHtml(16, 18, 1035);
 
         return <<<HTML
         <!DOCTYPE html>
@@ -54,12 +55,12 @@ final class InfoController
           </div>
           <header class="page-header">
             <h1>Information</h1>
-            <p class="subtitle">Vad sidorna visar, vad symbolerna betyder och exakt vad som räknas som stadig tillväxt.</p>
+            <p class="subtitle">Vad sidorna visar, vad symbolerna betyder och exakt vad som räknas som stadig tillväxt och plusdagar.</p>
           </header>
           <main class="content">
             <section>
               <h2>Topplista</h2>
-              <p>Startsidan. Visar en topplista med instrument rankade efter antal ägare ("Flest ägare") eller efter hur länge ägarantalet har ökat i följd utan avbrott ("Stadig tillväxt"). Du väljer källa (Avanza eller Nordnet) och rankningsläge högst upp på sidan.</p>
+              <p>Startsidan. Visar en topplista med instrument rankade efter antal ägare ("Flest ägare"), efter hur länge ägarantalet har ökat i följd utan avbrott ("Stadig tillväxt") eller efter hur många dagar under en period ägarantalet har stått still eller ökat ("Plusdagar"). Du väljer källa (Avanza eller Nordnet) och rankningsläge högst upp på sidan.</p>
               <p>Under varje rad visas ägarantalets procentuella förändring över fyra perioder: <strong>Vecka</strong>, <strong>Månad</strong>, <strong>3 mån</strong> och <strong>År</strong> (7, 30, 90 respektive 365 kalenderdagar). Varje period jämförs mot den senast lagrade dagen på eller före startdagen, så helger och helgdagar hanteras automatiskt. Ligger den dagen mer än fem dagar före startdagen, eller finns ingen så gammal data ännu, visas "–" i stället för en missvisande siffra.</p>
             </section>
             <section>
@@ -107,6 +108,13 @@ final class InfoController
               <h2>Stadig tillväxt</h2>
               <p>Rankningsläget "Stadig tillväxt" på Topplista, och filtret med samma namn på Fullständig lista, kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar; sorteras med längst svit först.</p>
               <p>Med andra ord: instrumentet måste ha en pågående uppgångssvit (samma villkor som Streak-symbolen ovan), och får inte samtidigt vara flaggat som en spik (samma villkor som Spike-symbolen ovan). Ett instrument med lång uppgångssvit men en kraftig engångsökning den senaste dagen räknas alltså inte som stadig tillväxt — det visas inte alls i det läget, oavsett hur lång sviten är. Instrument utan pågående uppgångssvit (0 dagar eller okänt) kvalificerar aldrig. De instrument som kvalificerar sorteras med längst uppgångssvit högst upp.</p>
+            </section>
+            <section>
+              <h2>Plusdagar</h2>
+              <p>Rankningsläget "Plusdagar" på Topplista räknar, för vald period (<strong>Vecka</strong>, <strong>Månad</strong>, <strong>3 mån</strong> eller <strong>År</strong> — 7, 30, 90 respektive 365 kalenderdagar bakåt från källans senaste dag; standard är Månad), hur många dagar ägarantalet var oförändrat eller högre än föregående lagrade dag. En dag räknas bara om föregående lagrade dag ligger högst fem dagar bakåt.</p>
+              <p>Bara aktier med netto fler ägare under perioden rankas: nya ägare räknas som ägarantalet i dag minus ägarantalet den senast lagrade dagen på eller före periodens start (för en nyintroducerad aktie: dess första dag i perioden). Står ägarantalet still hela perioden, eller har det minskat netto, visas aktien inte. De som kvalificerar sorteras efter flest plusdagar (antal, inte andel), därefter flest nya ägare.</p>
+              <p>Varje rad visar <span aria-hidden="true">{$plusDaysChip}</span> — 16 plusdagar av 18 dagar med jämförbar data, och 1 035 nya ägare under perioden. Nämnaren visas alltid, så att en ny aktie på "5/5" inte förväxlas med en som hållit i sig hela månaden. Till skillnad från Stadig tillväxt försvinner en aktie inte på grund av en enda dålig dag; dagens förändring syns fortfarande i delta-chipet.</p>
+              <p>Spikande aktier ingår som standard. Med "Dölj spikar" döljs aktier vars senaste dag är flaggad som spik (samma villkor som Spike-symbolen ovan). Spikvärden kräver 30 lagrade dagar, så fram till dess ändrar växlaren ingenting. För 3 mån och År visas ingen rankning förrän källans historik täcker hela perioden.</p>
             </section>
           </main>
         </div>

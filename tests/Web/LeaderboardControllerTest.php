@@ -369,4 +369,61 @@ final class LeaderboardControllerTest extends TestCase
             LeaderboardController::combinedOwnerCountHtml(1234, 0),
         );
     }
+
+    // -- spec-plusdagar ---------------------------------------------------------
+
+    public function testNormalizeRankingRecognizesAllThreeModesAndFallsBackToCount(): void
+    {
+        self::assertSame(LeaderboardController::RANKING_PLUS, LeaderboardController::normalizeRanking('plus'));
+        self::assertSame(LeaderboardController::RANKING_STEADY, LeaderboardController::normalizeRanking('steady'));
+        self::assertSame(LeaderboardController::RANKING_COUNT, LeaderboardController::normalizeRanking(''));
+        self::assertSame(LeaderboardController::RANKING_COUNT, LeaderboardController::normalizeRanking('xyz'));
+    }
+
+    public function testNormalizePeriodRecognizesTheFourPeriodsAndFallsBackToManad(): void
+    {
+        foreach (['vecka', 'manad', '3man', 'ar'] as $period) {
+            self::assertSame($period, LeaderboardController::normalizePeriod($period));
+        }
+        self::assertSame('manad', LeaderboardController::normalizePeriod(''));
+        self::assertSame('manad', LeaderboardController::normalizePeriod('xyz'));
+        self::assertSame(
+            [7, 30, 90, 365],
+            array_column(array_values(LeaderboardController::PERIODS), 'days'),
+            'same calendar windows as the period chips',
+        );
+    }
+
+    public function testEmptyStateCopyForPlusModeDistinguishesShortHistoryFromNoQualifiers(): void
+    {
+        self::assertSame(
+            'Inga aktier med fler ägare under perioden.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_PLUS, 'manad'),
+        );
+        self::assertSame(
+            'För lite historik för 3 mån ännu.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_PLUS, '3man', true),
+        );
+        self::assertSame(
+            'För lite historik för ett år ännu.',
+            LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_PLUS, 'ar', true),
+        );
+    }
+
+    public function testPlusDaysChipHtmlShowsPlusOverDataDaysAndNewOwnersInTheQuietGreyBadge(): void
+    {
+        $html = LeaderboardController::plusDaysChipHtml(15, 16, 1035);
+
+        self::assertSame('15/16 · +1 035', strip_tags($html));
+        self::assertStringContainsString('badge badge--nohist badge--plusdays', $html);
+        self::assertStringNotContainsString('positive', $html, 'green means today\'s direction, not the period');
+    }
+
+    public function testPlusDaysChipHtmlAlwaysShowsTheDenominator(): void
+    {
+        $html = LeaderboardController::plusDaysChipHtml(5, 5, 4602);
+
+        self::assertSame('5/5 · +4 602', strip_tags($html));
+        self::assertStringContainsString('<span class="plusdays-part">5/5 ·</span> <span class="plusdays-part">+4 602</span>', $html, 'breaks only after the separator');
+    }
 }

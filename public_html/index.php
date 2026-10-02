@@ -91,10 +91,14 @@ try {
 
             $source = $_GET['source'] ?? '';
             $ranking = $_GET['ranking'] ?? '';
+            $period = $_GET['period'] ?? '';
+            $spikes = $_GET['spikes'] ?? '';
             $source = is_string($source) ? $source : '';
             $ranking = is_string($ranking) ? $ranking : '';
+            $period = is_string($period) ? $period : '';
+            $spikes = is_string($spikes) ? $spikes : '';
 
-            render_html(200, $controller->render($source, $ranking));
+            render_html(200, $controller->render($source, $ranking, $period, $spikes));
             break;
 
         case '/list':

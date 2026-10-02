@@ -216,6 +216,29 @@ select:focus-visible,
   background: var(--accent-tint); color: var(--accent);
 }
 
+/* -- Plusdagar (spec-plusdagar): the ranking toggle and, in Plusdagar mode
+   only, a subordinate line of plain period links + the "Dölj spikar"
+   checkbox-link directly under it. No pill container of its own (DESIGN.md:
+   it must not read as a third segmented control). Every link is a ≥44px
+   tap target. -- */
+.ranking-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 100%; }
+.ranking-toggle { max-width: 100%; flex-wrap: wrap; }
+.plus-options {
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-4);
+  font-size: 13px;
+}
+.period-links { display: inline-flex; flex-wrap: wrap; align-items: center; }
+.period-link, .spike-toggle {
+  display: inline-flex; align-items: center; min-height: 44px; min-width: 44px;
+  padding: 0 var(--sp-2);
+  text-decoration: none; font-weight: 600; color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+}
+.period-link--active { color: var(--accent); }
+.period-sep { color: var(--text-muted); }
+.spike-toggle { gap: 6px; font-weight: 500; }
+.spike-toggle--active { color: var(--text-primary); }
+
 .market-filter {
   display: inline-flex; flex-wrap: wrap; gap: 2px;
   background: var(--neutral-tint); border-radius: var(--radius-md); padding: 3px;
@@ -317,6 +340,12 @@ select:focus-visible,
 /* text-secondary, not text-muted: 3.90:1 against --neutral-tint measured
    below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). */
 .badge--nohist { background: var(--neutral-tint); color: var(--text-secondary); }
+/* Plusdagar "16/18 · +1 035" chip: same quiet grey as "flat", mono digits. */
+.badge--plusdays {
+  font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums;
+  white-space: normal; max-width: 100%;
+}
+.plusdays-part { white-space: nowrap; }
 .trend {
   flex: 0 0 auto; width: 52px; display: flex; flex-direction: column;
   align-items: flex-start; gap: 2px;
@@ -476,11 +505,21 @@ section {
 
 /* -- Breakpoints ------------------------------------------------------------- */
 
+/* <700px: tighter ranking tabs so the three modes (incl. "Plusdagar ·
+   Månad") fit a 390px viewport on one line; .ranking-toggle wraps as a
+   last resort rather than clipping. */
+@media (max-width: 699px) {
+  .ranking-toggle .tab { padding: var(--sp-1) var(--sp-2); }
+}
+
 /* 700–899px: two-column control row. Data rows stay the same wrapping card
    shape as mobile (real column alignment needs the grid at 900px — forcing
    a single line here at this width just clips company names). */
 @media (min-width: 700px) {
   .controls { flex-direction: row; flex-wrap: wrap; }
+  /* Plusdagar's period line makes .ranking-group taller than the source
+     pill beside it -- keep the pill its own height instead of stretching. */
+  .controls > .source-switcher { align-self: flex-start; }
 }
 
 /* ≥900px: real column-aligned table via CSS grid. .row-body/.statcol unwrap

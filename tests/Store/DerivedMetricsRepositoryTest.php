@@ -1252,4 +1252,307 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame('SE0000108656', $top[0]['isin'], 'tied up_streak must break by isin ASC');
         self::assertSame(self::ISIN, $top[1]['isin']);
     }
+
+    // -- spec-plusdagar: topByPlusDays() / historySpansDays() ------------------
+
+    private const PD_D = '2026-10-01'; // Thu — the source's latest as_of_date
+
+    /**
+     * Every Mon–Fri calendar date in [$start, $end], ascending.
+     *
+     * @return list<string>
+     */
+    private static function weekdaysBetween(string $start, string $end): array
+    {
+        $out = [];
+        $d = new DateTimeImmutable($start);
+        $last = new DateTimeImmutable($end);
+        while ($d <= $last) {
+            if ((int) $d->format('N') <= 5) {
+                $out[] = $d->format('Y-m-d');
+            }
+            $d = $d->modify('+1 day');
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param array<string, int> $series as_of_date => owners
+     */
+    private function seedSeries(string $isin, array $series, string $source = NormalizedRow::SOURCE_AVANZA): void
+    {
+        foreach ($series as $date => $owners) {
+            $this->seedFor($isin, $date, $owners, $source);
+        }
+    }
+
+    /**
+     * Mon–Fri series 2026-08-25 .. PD_D, each day's owners = previous +
+     * $step, except dates in $overrides which take an explicit delta.
+     *
+     * @param array<string, int> $overrides date => delta for that day
+     *
+     * @return array<string, int>
+     */
+    private static function monthSeries(int $base, int $step, array $overrides = []): array
+    {
+        $out = [];
+        $v = $base;
+        foreach (self::weekdaysBetween('2026-08-25', self::PD_D) as $i => $date) {
+            if ($i > 0) {
+                $v += $overrides[$date] ?? $step;
+            }
+            $out[$date] = $v;
+        }
+
+        return $out;
+    }
+
+    /** @param list<array<string, mixed>> $rows */
+    private static function rowFor(array $rows, string $isin): ?array
+    {
+        foreach ($rows as $row) {
+            if ($row['isin'] === $isin) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    public function testTopByPlusDaysRanksAMonthOfGainsWithOneBadDayAndCountsTheDenominator(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Alpha AB');
+        $series = self::monthSeries(10000, 100, ['2026-09-15' => -50]);
+        $this->seedSeries('SE0000000101', $series);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+
+        $windowDays = count(array_filter(array_keys($series), static fn (string $d): bool => $d > '2026-09-01'));
+        self::assertCount(1, $rows);
+        self::assertSame('SE0000000101', $rows[0]['isin']);
+        self::assertSame($windowDays, $rows[0]['data_days']);
+        self::assertSame($windowDays - 1, $rows[0]['plus_days'], 'one down day costs exactly one plus day');
+        self::assertSame($series[self::PD_D] - $series['2026-09-01'], $rows[0]['new_owners'], 'baseline is the latest row on or before D − 30');
+        // renderRow()'s latest-metrics columns are still present.
+        self::assertSame('Alpha AB', $rows[0]['name']);
+        self::assertSame(self::PD_D, (string) $rows[0]['as_of_date']);
+        self::assertArrayHasKey('pct_30d', $rows[0]);
+        self::assertArrayHasKey('up_streak', $rows[0]);
+    }
+
+    public function testTopByPlusDaysCountsFlatDaysAsPlusDays(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Alpha AB');
+        // All flat except one +5 at the end -> net +5, every data day a plus day.
+        $series = self::monthSeries(500, 0, [self::PD_D => 5]);
+        $this->seedSeries('SE0000000101', $series);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+
+        self::assertCount(1, $rows);
+        self::assertSame($rows[0]['data_days'], $rows[0]['plus_days']);
+        self::assertSame(5, $rows[0]['new_owners']);
+    }
+
+    public function testTopByPlusDaysNeverRanksAFlatAllMonthOrNetNegativeInstrument(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Flat AB');
+        $this->insertInstrument('SE0000000102', 'Minus AB');
+        $this->insertInstrument('SE0000000103', 'Plus AB');
+        $this->seedSeries('SE0000000101', self::monthSeries(500, 0));
+        $this->seedSeries('SE0000000102', self::monthSeries(500, 0, ['2026-09-20' => 0, '2026-09-22' => -1]));
+        $this->seedSeries('SE0000000103', self::monthSeries(500, 1));
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+
+        self::assertSame(['SE0000000103'], array_column($rows, 'isin'));
+    }
+
+    public function testTopByPlusDaysReturnsEmptyWhenNothingHasNetNewOwners(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Minus AB');
+        $this->seedSeries('SE0000000101', self::monthSeries(5000, -3));
+
+        self::assertSame([], $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10));
+        self::assertSame([], $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, false, 10));
+    }
+
+    public function testTopByPlusDaysBreaksAPlusDaysTieByNewOwnersThenIsin(): void
+    {
+        $this->insertInstrument('SE0000000103', 'Small AB');
+        $this->insertInstrument('SE0000000102', 'Large B AB');
+        $this->insertInstrument('SE0000000101', 'Large A AB');
+        // Vecka: window (09-24, 10-01] -> Fri 25, Mon 28, Tue 29, Wed 30, Thu 1 = 5/5 for all.
+        $this->seedSeries('SE0000000103', self::monthSeries(100, 1));
+        $this->seedSeries('SE0000000102', self::monthSeries(100000, 50));
+        $this->seedSeries('SE0000000101', self::monthSeries(200000, 50));
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, false, 10);
+
+        self::assertSame(['SE0000000101', 'SE0000000102', 'SE0000000103'], array_column($rows, 'isin'));
+        foreach ($rows as $row) {
+            self::assertSame(5, $row['plus_days']);
+            self::assertSame(5, $row['data_days']);
+        }
+        self::assertSame(250, $rows[0]['new_owners']);
+        self::assertSame(5, $rows[2]['new_owners']);
+    }
+
+    public function testTopByPlusDaysRanksByRawCountNotShareAndTiesAcrossDifferentDenominators(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Daily AB');
+        $this->insertInstrument('SE0000000102', 'Weekday AB');
+        $this->insertInstrument('SE0000000103', 'Weekday Big AB');
+
+        // Daily AB stores every calendar day: Vecka window has 7 data days,
+        // 5 up and 2 down, net +10.
+        $this->seedSeries('SE0000000101', [
+            '2026-09-24' => 1000,
+            '2026-09-25' => 1010, '2026-09-26' => 1005, '2026-09-27' => 1006,
+            '2026-09-28' => 1001, '2026-09-29' => 1002, '2026-09-30' => 1003, '2026-10-01' => 1010,
+        ]);
+        // Weekday AB: 5/5, net +100 -> ties Daily AB on 5 plus days, wins on new owners.
+        $this->seedSeries('SE0000000102', [
+            '2026-09-24' => 1000, '2026-09-25' => 1020, '2026-09-28' => 1040,
+            '2026-09-29' => 1060, '2026-09-30' => 1080, '2026-10-01' => 1100,
+        ]);
+        // Weekday Big AB: 4/5 (one down day), net +5000 -> below both 5s.
+        $this->seedSeries('SE0000000103', [
+            '2026-09-24' => 1000, '2026-09-25' => 3000, '2026-09-28' => 2999,
+            '2026-09-29' => 4000, '2026-09-30' => 5000, '2026-10-01' => 6000,
+        ]);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, false, 10);
+
+        self::assertSame(['SE0000000102', 'SE0000000101', 'SE0000000103'], array_column($rows, 'isin'));
+        self::assertSame([5, 5, 4], array_column($rows, 'plus_days'));
+        self::assertSame([5, 7, 5], array_column($rows, 'data_days'));
+        self::assertSame([100, 10, 5000], array_column($rows, 'new_owners'));
+    }
+
+    public function testTopByPlusDaysRanksANewListingFromItsFirstRowInTheWindow(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Veteran AB');
+        $this->insertInstrument('SE0000000102', 'Dormy AB');
+        $this->seedSeries('SE0000000101', self::monthSeries(1000, 10));
+        // Listed 2026-09-24: 6 rows, the first has no predecessor -> 5/5.
+        $this->seedSeries('SE0000000102', [
+            '2026-09-24' => 0, '2026-09-25' => 1500, '2026-09-28' => 2600,
+            '2026-09-29' => 3300, '2026-09-30' => 4100, '2026-10-01' => 4602,
+        ]);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+
+        $dormy = self::rowFor($rows, 'SE0000000102');
+        self::assertNotNull($dormy, 'a new listing must be ranked');
+        self::assertSame(5, $dormy['plus_days']);
+        self::assertSame(5, $dormy['data_days']);
+        self::assertSame(4602, $dormy['new_owners'], 'no row before the window -> baseline is the first row in it');
+        self::assertSame('SE0000000101', $rows[0]['isin'], 'the veteran with more plus days ranks first');
+        self::assertSame('SE0000000102', $rows[1]['isin']);
+    }
+
+    public function testTopByPlusDaysDoesNotCountARowWhosePredecessorIsMoreThanFiveDaysBack(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Gappy AB');
+        $series = self::monthSeries(1000, 10);
+        // Drop Fri 09-11 .. Thu 09-17: Fri 09-18's predecessor is Thu 09-10, 8 days back.
+        foreach (array_keys($series) as $date) {
+            if ($date >= '2026-09-11' && $date <= '2026-09-17') {
+                unset($series[$date]);
+            }
+        }
+        $series['2026-09-18'] -= 100; // a down move across the gap — must not count either way
+        $this->seedSeries('SE0000000101', $series);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+
+        $windowRows = count(array_filter(array_keys($series), static fn (string $d): bool => $d > '2026-09-01'));
+        self::assertCount(1, $rows);
+        self::assertSame($windowRows - 1, $rows[0]['data_days'], 'the row after the 8-day gap is not a data day');
+        self::assertSame($windowRows - 1, $rows[0]['plus_days'], 'and is not in the numerator either');
+    }
+
+    public function testTopByPlusDaysSpikeToggleExcludesOnlyASpikingLatestRow(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Spiky AB');
+        $this->insertInstrument('SE0000000102', 'Young AB');
+
+        // Spiky AB: 29 calendar days of steady growth then a huge jump on D -> spike_score >= 2.
+        $start = new DateTimeImmutable('2026-09-02');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedFor('SE0000000101', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedFor('SE0000000101', self::PD_D, 1280 + 5000);
+        // Young AB: too few rows for a spike_score (NULL) -> never excluded.
+        $this->seedSeries('SE0000000102', ['2026-09-30' => 100, '2026-10-01' => 110]);
+
+        $spiky = $this->metrics->forIsinAndSource('SE0000000101', NormalizedRow::SOURCE_AVANZA);
+        self::assertGreaterThanOrEqual(DerivedMetricsRepository::SPIKE_THRESHOLD, (float) end($spiky)['spike_score']);
+
+        $included = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, false, 10);
+        $excluded = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, true, 10);
+
+        self::assertSame(['SE0000000101', 'SE0000000102'], array_column($included, 'isin'), 'spikes are included by default');
+        self::assertSame(['SE0000000102'], array_column($excluded, 'isin'), 'a NULL spike_score is never excluded');
+    }
+
+    public function testTopByPlusDaysExcludesInactiveInstrumentsAndNeverMixesSources(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Delisted AB', '2026-09-30');
+        $this->insertInstrument('SE0000000102', 'Nordnet Only AB');
+        $this->insertInstrument('SE0000000103', 'Avanza AB');
+        $this->seedSeries('SE0000000101', self::monthSeries(1000, 10));
+        $this->seedSeries('SE0000000102', self::monthSeries(1000, 10), NormalizedRow::SOURCE_NORDNET);
+        $this->seedSeries('SE0000000103', self::monthSeries(1000, 1));
+        // Nordnet rows for the Avanza instrument going down must not affect its Avanza ranking.
+        $this->seedSeries('SE0000000103', self::monthSeries(900, -1), NormalizedRow::SOURCE_NORDNET);
+
+        $avanza = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 10);
+        $nordnet = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_NORDNET, 30, false, 10);
+
+        self::assertSame(['SE0000000103'], array_column($avanza, 'isin'));
+        self::assertSame($avanza[0]['data_days'], $avanza[0]['plus_days']);
+        self::assertSame(['SE0000000102'], array_column($nordnet, 'isin'));
+    }
+
+    public function testTopByPlusDaysSkipsAnInstrumentWithNoRowInTheWindow(): void
+    {
+        $this->insertInstrument('SE0000000101', 'Stale AB');
+        $this->insertInstrument('SE0000000102', 'Fresh AB');
+        // Stale AB's last row is two weeks before D: nothing in the Vecka window.
+        $this->seedSeries('SE0000000101', ['2026-09-10' => 100, '2026-09-17' => 500]);
+        $this->seedSeries('SE0000000102', ['2026-09-30' => 100, '2026-10-01' => 110]);
+
+        $rows = $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 7, false, 10);
+
+        self::assertSame(['SE0000000102'], array_column($rows, 'isin'));
+    }
+
+    public function testTopByPlusDaysHonoursTheLimit(): void
+    {
+        foreach (['SE0000000101', 'SE0000000102', 'SE0000000103'] as $i => $isin) {
+            $this->insertInstrument($isin, "Bolag {$i}");
+            $this->seedSeries($isin, self::monthSeries(1000, $i + 1));
+        }
+
+        self::assertCount(2, $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 2));
+    }
+
+    public function testHistorySpansDaysComparesTheSourcesEarliestRowAgainstItsLatestMinusN(): void
+    {
+        self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 7), 'no rows at all');
+
+        $this->insertInstrument('SE0000000101', 'Alpha AB');
+        $this->seedSeries('SE0000000101', self::monthSeries(1000, 1)); // 2026-08-25 .. 2026-10-01 = 37 days
+
+        self::assertTrue($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 7));
+        self::assertTrue($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 30));
+        self::assertTrue($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 37));
+        self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 38));
+        self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 90));
+        self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_NORDNET, 7), 'per source');
+    }
 }
