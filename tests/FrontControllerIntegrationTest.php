@@ -873,9 +873,11 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertLessThan(strpos($body, 'Alpha AB'), strpos($body, 'Beta AB'), 'Vecka: Beta leads on pct_7d');
 
         self::assertStringContainsString('class="tab tab--active" href="/?ranking=steady&amp;period=vecka" aria-current="true">Vecka</a>', $this->periodRowHtmlFor($body));
-        // Switching steady -> plus keeps the period; Flest ägare drops it.
+        // Switching steady -> plus keeps the period, and so does Flest
+        // ägare (spec-topplista-market-filter — it ignores the period but
+        // carries it so it survives the round trip).
         self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka">Plusdagar</a>', $body);
-        self::assertStringContainsString('class="tab" href="/">Flest ägare</a>', $body);
+        self::assertStringContainsString('class="tab" href="/?period=vecka">Flest ägare</a>', $body);
         // The period survives a source switch.
         self::assertStringContainsString(
             'href="/?source=nordnet&amp;ranking=steady&amp;period=vecka">Nordnet</a>',
@@ -1031,9 +1033,10 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus&amp;period=vecka" aria-current="true">Vecka</a>', $this->periodRowHtmlFor($body));
         self::assertStringContainsString('5/5 · +15', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
         // spec-stadig-tillvaxt-period: the period is shared with Stadig
-        // tillväxt (kept on switch); Flest ägare drops it.
+        // tillväxt (kept on switch); spec-topplista-market-filter — Flest
+        // ägare carries it too.
         self::assertStringContainsString('href="/?ranking=steady&amp;period=vecka">Stadig tillväxt</a>', $body);
-        self::assertStringContainsString('href="/">Flest ägare</a>', $body);
+        self::assertStringContainsString('href="/?period=vecka">Flest ägare</a>', $body);
     }
 
     public function testRootRankingPlusShowsShortHistoryEmptyStateFor3ManAndAr(): void
@@ -1155,10 +1158,305 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         self::assertSame(200, $status);
         self::assertStringContainsString('class="tab" href="/?ranking=plus">Plusdagar</a>', $body);
-        self::assertStringNotContainsString('period-row', $body);
-        self::assertStringNotContainsString('aria-label="Period"', $body);
+        // spec-topplista-market-filter — Flest ägare shows the period row,
+        // but greyed out (covered in detail by the market-filter tests).
+        self::assertStringContainsString('class="period-row period-row--muted"', $body);
         self::assertStringNotContainsString('Dölj spikar', $body);
         self::assertStringNotContainsString('badge--plusdays', $body);
+    }
+
+    // -- spec-topplista-market-filter: /?market= ------------------------------
+
+    /**
+     * Seeds one extra active instrument per market on top of
+     * seedMatchedUniverse()'s four, so a market holds two instruments.
+     */
+    private function seedSecondPerMarket(): void
+    {
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO instrument (isin, name, list, avanza_orderbook_id, nordnet_instrument_id, first_seen)
+             VALUES (?, ?, ?, ?, ?, '2026-01-01')"
+        );
+        foreach ([
+            ['SE0000002001', 'Alpha Två AB', 'LC', '2001'],
+            ['SE0000002002', 'Beta Två AB', 'MC', '2002'],
+            ['SE0000002003', 'Gamma Två AB', 'SC', '2003'],
+            ['SE0000002004', 'Delta Två AB', 'First North', '2004'],
+        ] as [$isin, $name, $list, $obId]) {
+            $stmt->execute([$isin, $name, $list, $obId, 'nx-' . $obId]);
+        }
+    }
+
+    /** @return list<string> the isins of the rendered Topplista rows, in order */
+    private function rowIsins(string $body): array
+    {
+        preg_match_all('#<a class="row-body" href="/stock/([A-Z0-9]+)">#', $body, $m);
+
+        return $m[1];
+    }
+
+    public function testRootMarketNarrowsTheTopTenWithinTheMarket(): void
+    {
+        $this->seedMatchedUniverse();
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO instrument (isin, name, list, avanza_orderbook_id, nordnet_instrument_id, first_seen)
+             VALUES (?, ?, 'SC', ?, ?, '2026-01-01')"
+        );
+        // 12 SC instruments (plus Gamma) -> more than 10 SC qualifiers.
+        for ($i = 1; $i <= 12; $i++) {
+            $isin = sprintf('SE00000030%02d', $i);
+            $stmt->execute([$isin, sprintf('Sc %02d AB', $i), (string) (3000 + $i), 'nx-' . (3000 + $i)]);
+            $this->seedOwnerCount($isin, '2026-10-01', 100 + $i);
+        }
+        $this->seedOwnerCount('SE0000001003', '2026-10-01', 50);
+        // LC/MC/First North with far more owners: would fill the Alla top 10.
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 90000);
+        $this->seedOwnerCount('SE0000001002', '2026-10-01', 80000);
+        $this->seedOwnerCount('SE0000001004', '2026-10-01', 70000);
+
+        [$status, $body] = $this->endpoint->get('/?market=SC', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        $isins = $this->rowIsins($body);
+        self::assertCount(10, $isins);
+        $expected = [];
+        for ($i = 12; $i >= 3; $i--) {
+            $expected[] = sprintf('SE00000030%02d', $i);
+        }
+        self::assertSame($expected, $isins, 'the best 10 SC by owner count, not a post-filtered Alla top 10');
+        self::assertStringContainsString('class="tab tab--active" href="/?market=SC" aria-current="true">SC</a>', $this->marketRowHtmlFor($body));
+    }
+
+    public function testRootMarketNarrowsEachRankingModeInItsOwnOrder(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedSecondPerMarket();
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO instrument (isin, name, list, avanza_orderbook_id, nordnet_instrument_id, first_seen)
+             VALUES ('SE0000003002', 'Beta Tre AB', 'MC', '3002', 'nx-3002', '2026-01-01')"
+        );
+        $stmt->execute();
+        // LC: Alpha (+5000/day) would top every mode under Alla.
+        $this->seedPlusMonth('SE0000001001', 100000, 5000);
+        // MC, one order per mode:
+        //  Beta: most owners, lowest %, one down day (one plus day short).
+        //  Beta Två: fewest owners, highest %.
+        //  Beta Tre: middle owners/%, most new owners.
+        $this->seedPlusMonth('SE0000001002', 50000, 10, ['2026-09-15' => -5]);
+        $this->seedPlusMonth('SE0000002002', 1000, 5);
+        $this->seedPlusMonth('SE0000003002', 2000, 8);
+
+        $beta = 'SE0000001002';
+        $betaTva = 'SE0000002002';
+        $betaTre = 'SE0000003002';
+        foreach ([
+            '/?market=MC' => [$beta, $betaTre, $betaTva],
+            '/?ranking=steady&market=MC' => [$betaTva, $betaTre, $beta],
+            '/?ranking=plus&market=MC' => [$betaTre, $betaTva, $beta],
+            // Alla source mode ranks on Avanza, narrowed to MC too.
+            '/?source=alla&market=MC' => [$beta, $betaTre, $betaTva],
+        ] as $path => $expected) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path . "\n" . $body);
+            self::assertSame($expected, $this->rowIsins($body), $path);
+        }
+
+        [, $alla] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+        self::assertSame('SE0000001001', $this->rowIsins($alla)[0], 'Alla market still includes LC');
+    }
+
+    public function testRootPeriodAndMarketRowLinksCarryEveryOtherChoice(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=vecka&spikes=exclude&market=LC', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString(
+            'href="/?ranking=plus&amp;period=3man&amp;spikes=exclude&amp;market=LC">3 mån</a>',
+            $this->periodRowHtmlFor($body),
+        );
+        self::assertStringContainsString(
+            'href="/?ranking=plus&amp;period=vecka&amp;spikes=exclude&amp;market=MC">MC</a>',
+            $this->marketRowHtmlFor($body),
+        );
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&period=3man&market=SC', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString(
+            'href="/?ranking=steady&amp;period=vecka&amp;market=SC">Vecka</a>',
+            $this->periodRowHtmlFor($body),
+        );
+        self::assertStringContainsString(
+            'href="/?ranking=steady&amp;period=3man&amp;market=MC">MC</a>',
+            $this->marketRowHtmlFor($body),
+        );
+        self::assertStringContainsString(
+            'href="/?ranking=steady&amp;period=3man">Alla</a>',
+            $this->marketRowHtmlFor($body),
+        );
+    }
+
+    public function testRootWithoutMarketShowsAllaActiveAndTheUnnarrowedTopTen(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+        $this->seedOwnerCount('SE0000001002', '2026-10-01', 300);
+        $this->seedOwnerCount('SE0000001003', '2026-10-01', 200);
+        $this->seedOwnerCount('SE0000001004', '2026-10-01', 100);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['SE0000001001', 'SE0000001002', 'SE0000001003', 'SE0000001004'], $this->rowIsins($body));
+        $marketRow = $this->marketRowHtmlFor($body);
+        self::assertStringContainsString('class="range-picker" role="tablist" aria-label="Marknad"', $marketRow);
+        self::assertStringContainsString('class="tab tab--active" href="/" aria-current="true">Alla</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?market=LC">LC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?market=MC">MC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?market=SC">SC</a>', $marketRow);
+        self::assertStringContainsString('class="tab" href="/?market=First+North">First North</a>', $marketRow);
+        self::assertStringNotContainsString('market=', $this->sourceSwitcherHtmlFor($body), 'Alla is omitted from links');
+        self::assertStringContainsString('<a href="/list">Visa fullständig lista</a>', $body);
+    }
+
+    public function testRootGarbageMarketFallsBackToAlla(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+        $this->seedOwnerCount('SE0000001002', '2026-10-01', 300);
+
+        foreach (['/?market=XX', '/?market[]=LC', '/?market=lc', "/?market=LC'%20OR%201=1"] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            self::assertSame(['SE0000001001', 'SE0000001002'], $this->rowIsins($body), $path);
+            self::assertStringContainsString('class="tab tab--active" href="/" aria-current="true">Alla</a>', $this->marketRowHtmlFor($body), $path);
+        }
+    }
+
+    public function testRootEmptyMarketShowsTheModesExistingEmptyState(): void
+    {
+        $this->seedMatchedUniverse();
+        // Only LC has data; First North has no qualifiers in any mode.
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=steady&market=First%20North', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&market=First%20North', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body);
+
+        [$status, $body] = $this->endpoint->get('/?market=First%20North', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier hittades.', $body);
+        self::assertSame([], $this->rowIsins($body));
+    }
+
+    public function testRootModeSwitchesCarryPeriodAndMarket(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedSecondPerMarket();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 500);
+        $this->seedOwnerCount('SE0000002001', '2026-10-01', 900);
+        $this->seedOwnerCount('SE0000001002', '2026-10-01', 9999);
+
+        [$status, $plusBody] = $this->endpoint->get('/?ranking=plus&period=vecka&market=LC', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab" href="/?period=vecka&amp;market=LC">Flest ägare</a>', $plusBody);
+
+        // Follow it: Flest ägare ranks LC by total owners.
+        [$status, $countBody] = $this->endpoint->get('/?period=vecka&market=LC', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertSame(['SE0000002001', 'SE0000001001'], $this->rowIsins($countBody));
+        self::assertStringContainsString('class="tab tab--active" href="/?period=vecka&amp;market=LC">Flest ägare</a>', $countBody);
+
+        // And back to a period mode: Stadig tillväxt keeps both.
+        self::assertStringContainsString('class="tab" href="/?ranking=steady&amp;period=vecka&amp;market=LC">Stadig tillväxt</a>', $countBody);
+        self::assertStringContainsString('class="tab" href="/?ranking=plus&amp;period=vecka&amp;market=LC">Plusdagar</a>', $countBody);
+        // The market row keeps the period; the spike toggle keeps the market.
+        self::assertStringContainsString('class="tab" href="/?period=vecka&amp;market=MC">MC</a>', $this->marketRowHtmlFor($countBody));
+        self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka&amp;spikes=exclude&amp;market=LC"', $plusBody);
+    }
+
+    public function testRootFlestAgarePeriodRowIsGreyedOutAndInert(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        $periodRow = $this->periodRowHtmlFor($body);
+        self::assertStringStartsWith('class="period-row period-row--muted"', $periodRow);
+        self::assertStringNotContainsString('<a ', $periodRow, 'segments are not links');
+        self::assertStringContainsString('<span class="tab tab--active" aria-current="true">Månad</span>', $periodRow);
+        self::assertStringContainsString('<span class="tab">Vecka</span>', $periodRow);
+        self::assertStringContainsString('<span class="period-note">Gäller inte Flest ägare</span>', $periodRow);
+
+        // The remembered period stays marked.
+        [, $body] = $this->endpoint->get('/?period=ar', $this->validCookie());
+        self::assertStringContainsString('<span class="tab tab--active" aria-current="true">År</span>', $this->periodRowHtmlFor($body));
+    }
+
+    public function testRootHeaderHasTheSameThreeRowsInEveryMode(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        foreach (['/', '/?ranking=steady', '/?ranking=plus'] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            $header = substr($body, (int) strpos($body, '<header'), (int) strpos($body, '</header>') - (int) strpos($body, '<header'));
+            $controls = strpos($header, '<div class="controls">');
+            $period = strpos($header, '<div class="period-row');
+            $market = strpos($header, '<div class="market-row"');
+            self::assertNotFalse($controls, $path);
+            self::assertNotFalse($period, $path);
+            self::assertNotFalse($market, $path);
+            self::assertLessThan($period, $controls, $path);
+            self::assertLessThan($market, $period, $path);
+            foreach ([[$controls, $period], [$period, $market]] as [$from, $to]) {
+                $between = substr($header, $from, $to - $from);
+                self::assertSame(substr_count($between, '<div'), substr_count($between, '</div>'), $path . ': rows are siblings');
+            }
+        }
+    }
+
+    public function testRootSourceSwitchKeepsMarketAndPeriod(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 400);
+
+        foreach ([
+            '/?period=vecka&market=SC' => ['/?source=alla&amp;period=vecka&amp;market=SC', '/?source=nordnet&amp;period=vecka&amp;market=SC'],
+            '/?ranking=steady&period=3man&market=MC' => ['/?source=alla&amp;ranking=steady&amp;period=3man&amp;market=MC', '/?source=nordnet&amp;ranking=steady&amp;period=3man&amp;market=MC'],
+            '/?source=nordnet&ranking=plus&market=LC' => ['/?source=alla&amp;ranking=plus&amp;market=LC', '/?ranking=plus&amp;market=LC'],
+        ] as $path => $hrefs) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            $switcher = $this->sourceSwitcherHtmlFor($body);
+            foreach ($hrefs as $href) {
+                self::assertStringContainsString('href="' . $href . '"', $switcher, $path);
+            }
+        }
+    }
+
+    public function testRootFullListLinkCarriesMarket(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedOwnerCount('SE0000001004', '2026-10-01', 400);
+
+        [$status, $body] = $this->endpoint->get('/?market=First%20North', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('<a href="/list?market=First+North">Visa fullständig lista</a>', $body);
+
+        [, $body] = $this->endpoint->get('/?source=nordnet&market=MC', $this->validCookie());
+        self::assertStringContainsString('<a href="/list?source=nordnet&amp;market=MC">Visa fullständig lista</a>', $body);
+
+        [, $body] = $this->endpoint->get('/?source=alla&market=LC', $this->validCookie());
+        self::assertStringContainsString('<a href="/list?market=LC">Visa fullständig lista</a>', $body);
     }
 
     // -- / period percentages (Vecka/Månad/3 mån/År line) --------------------
@@ -2040,15 +2338,30 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
 
     /**
      * spec-stadig-tillvaxt-period — slices out Topplista's period row
-     * (`.period-row` up to the end of the header).
+     * (`.period-row` up to the market row that follows it).
      */
     private function periodRowHtmlFor(string $body): string
     {
-        $start = strpos($body, 'class="period-row"');
+        $start = strpos($body, 'class="period-row');
         self::assertNotFalse($start, 'no period-row found in body');
 
+        $end = strpos($body, 'class="market-row"', $start);
+        self::assertNotFalse($end, 'period-row is not followed by the market row');
+
+        return substr($body, $start, $end - $start);
+    }
+
+    /**
+     * spec-topplista-market-filter — slices out Topplista's market row
+     * (`.market-row` up to the end of the header).
+     */
+    private function marketRowHtmlFor(string $body): string
+    {
+        $start = strpos($body, 'class="market-row"');
+        self::assertNotFalse($start, 'no market-row found in body');
+
         $end = strpos($body, '</header>', $start);
-        self::assertNotFalse($end, 'period-row is not inside the header');
+        self::assertNotFalse($end, 'market-row is not inside the header');
 
         return substr($body, $start, $end - $start);
     }

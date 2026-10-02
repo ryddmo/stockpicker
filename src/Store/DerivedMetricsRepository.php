@@ -82,13 +82,17 @@ final class DerivedMetricsRepository
      * ROW_NUMBER() over as_of_date desc, filtered to rn = 1) — never a
      * historical peak. "Active" means `instrument.last_seen IS NULL`. Joined
      * against `instrument` for `name`/`list`. Never merges sources (NFR6).
+     * A non-null `$market` narrows to `instrument.list = $market` *before*
+     * the limit (spec-topplista-market-filter), as do the other two rankings.
      *
      * @return list<array<string, mixed>>
      */
-    public function topByOwnerCount(string $source, int $limit): array
+    public function topByOwnerCount(string $source, int $limit, ?string $market = null): array
     {
+        $marketCondition = self::marketCondition($market);
+
         $stmt = $this->pdo->prepare(
-            <<<'SQL'
+            <<<SQL
             WITH latest AS (
                 SELECT
                     m.*,
@@ -106,11 +110,13 @@ final class DerivedMetricsRepository
             JOIN instrument i ON i.isin = latest.isin
             WHERE latest.rn = 1
               AND i.last_seen IS NULL
+              {$marketCondition}
             ORDER BY latest.number_of_owners DESC, latest.isin ASC
             LIMIT :lim
             SQL
         );
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
+        self::bindMarket($stmt, $market);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
@@ -137,9 +143,10 @@ final class DerivedMetricsRepository
      *
      * @throws \InvalidArgumentException when `$days` is not 7/30/90/365
      */
-    public function topByTrendQualityForPeriod(string $source, int $days, int $limit): array
+    public function topByTrendQualityForPeriod(string $source, int $days, int $limit, ?string $market = null): array
     {
         $col = self::periodPctColumn($days);
+        $marketCondition = self::marketCondition($market);
 
         $stmt = $this->pdo->prepare(
             <<<SQL
@@ -162,16 +169,36 @@ final class DerivedMetricsRepository
               AND i.last_seen IS NULL
               AND latest.up_streak >= 1
               AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)
+              {$marketCondition}
             ORDER BY latest.{$col} IS NULL, latest.{$col} DESC, latest.up_streak DESC, latest.isin ASC
             LIMIT :lim
             SQL
         );
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
         $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
+        self::bindMarket($stmt, $market);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
         return array_values($stmt->fetchAll());
+    }
+
+    /**
+     * spec-topplista-market-filter — the optional `i.list = :market`
+     * narrowing shared by the three Topplista rankings (same condition as
+     * searchAndFilter()'s market filter). Null/'' means no narrowing; the
+     * value itself is always bound, never interpolated.
+     */
+    private static function marketCondition(?string $market): string
+    {
+        return $market !== null && $market !== '' ? 'AND i.list = :market' : '';
+    }
+
+    private static function bindMarket(\PDOStatement $stmt, ?string $market): void
+    {
+        if ($market !== null && $market !== '') {
+            $stmt->bindValue(':market', $market, PDO::PARAM_STR);
+        }
     }
 
     /**
@@ -219,8 +246,9 @@ final class DerivedMetricsRepository
      *
      * @return list<array<string, mixed>>
      */
-    public function topByPlusDays(string $source, int $days, bool $excludeSpikes, int $limit): array
+    public function topByPlusDays(string $source, int $days, bool $excludeSpikes, int $limit, ?string $market = null): array
     {
+        $marketCondition = self::marketCondition($market);
         $spikeCondition = $excludeSpikes
             ? 'AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)'
             : '';
@@ -289,6 +317,7 @@ final class DerivedMetricsRepository
               AND agg.window_rows > 0
               AND agg.new_owners > 0
               {$spikeCondition}
+              {$marketCondition}
             ORDER BY agg.plus_days DESC, agg.new_owners DESC, agg.isin ASC
             LIMIT :lim
             SQL
@@ -300,6 +329,7 @@ final class DerivedMetricsRepository
         if ($excludeSpikes) {
             $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
         }
+        self::bindMarket($stmt, $market);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 

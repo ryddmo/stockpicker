@@ -241,3 +241,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
   summary: Between rsync and `phinx migrate` on deploy, Topplista selects `pct_30d` before the view has it.
   evidence: Another instance of the pre-existing deploy-order window deferred in spec-5-5.
+- source_spec: `_bmad-output/implementation-artifacts/spec-topplista-market-filter.md`
+  summary: The Topplista tab link (from Fullständig lista, Aktiedetalj, Bevakningslista) resets ranking, period and market to defaults.
+  evidence: tabBarHtml() in LeaderboardController/FullListController/StockDetailController builds the Topplista link from source only. That predates this change, and the market-filter intent only lists mode, source, period, market and full-list links as carrying state.

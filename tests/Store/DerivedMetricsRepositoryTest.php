@@ -1713,6 +1713,80 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertCount(2, $this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, false, 2));
     }
 
+    // -- spec-topplista-market-filter: optional $market on the three rankings --
+
+    /**
+     * LC's Alpha leads every ranking under no market (most owners, steepest
+     * growth, most new owners). MC holds three instruments whose relative
+     * order differs per mode:
+     *  - Beta: 50 000 owners, +10/day with one down day -> most owners,
+     *    lowest %, one plus day short.
+     *  - Gamma: 1 000 owners, +5/day -> fewest owners, highest %.
+     *  - Delta: 2 000 owners, +8/day -> middle owners/%, most new owners.
+     * Flest ägare: Beta, Delta, Gamma. Stadig tillväxt (pct_30d): Gamma,
+     * Delta, Beta. Plusdagar (plus days, then new owners): Delta, Gamma,
+     * Beta. Plus one delisted MC instrument that must stay excluded.
+     */
+    private function seedMarketFixture(): void
+    {
+        $this->insertInstrument('SE0000000201', 'Alpha AB', null, 'LC');
+        $this->insertInstrument('SE0000000202', 'Beta AB', null, 'MC');
+        $this->insertInstrument('SE0000000203', 'Gamma AB', null, 'MC');
+        $this->insertInstrument('SE0000000205', 'Delta AB', null, 'MC');
+        $this->insertInstrument('SE0000000204', 'Borta AB', '2026-09-01', 'MC');
+        $this->seedSeries('SE0000000201', self::monthSeries(100000, 5000));
+        $this->seedSeries('SE0000000202', self::monthSeries(50000, 10, ['2026-09-15' => -5]));
+        $this->seedSeries('SE0000000203', self::monthSeries(1000, 5));
+        $this->seedSeries('SE0000000205', self::monthSeries(2000, 8));
+        $this->seedSeries('SE0000000204', self::monthSeries(500000, 900));
+    }
+
+    public function testEveryTopplistaRankingNarrowsToTheMarketBeforeTheLimit(): void
+    {
+        $this->seedMarketFixture();
+        $src = NormalizedRow::SOURCE_AVANZA;
+        $beta = 'SE0000000202';
+        $gamma = 'SE0000000203';
+        $delta = 'SE0000000205';
+
+        $calls = [
+            'topByOwnerCount' => [
+                fn (?string $m, int $lim) => $this->metrics->topByOwnerCount($src, $lim, $m),
+                [$beta, $delta, $gamma],
+            ],
+            'topByTrendQualityForPeriod' => [
+                fn (?string $m, int $lim) => $this->metrics->topByTrendQualityForPeriod($src, 30, $lim, $m),
+                [$gamma, $delta, $beta],
+            ],
+            'topByPlusDays' => [
+                fn (?string $m, int $lim) => $this->metrics->topByPlusDays($src, 30, false, $lim, $m),
+                [$delta, $gamma, $beta],
+            ],
+        ];
+
+        foreach ($calls as $name => [$call, $mcOrder]) {
+            $all = array_column($call(null, 10), 'isin');
+            self::assertSame('SE0000000201', $all[0], "{$name}: null market is unchanged (LC's Alpha leads)");
+            self::assertSame(['SE0000000201', ...$mcOrder], $all, "{$name}: null market returns every active instrument");
+            $mc = $call('MC', 10);
+            self::assertSame($mcOrder, array_column($mc, 'isin'), "{$name}: MC only, in the mode's own order");
+            self::assertSame(['MC', 'MC', 'MC'], array_column($mc, 'list'), $name);
+            self::assertSame([$mcOrder[0]], array_column($call('MC', 1), 'isin'), "{$name}: narrowed before the limit, not post-filtered");
+            self::assertSame(['SE0000000201'], array_column($call('LC', 10), 'isin'), $name);
+            self::assertSame([], $call('First North', 10), "{$name}: a market with no qualifiers is empty");
+        }
+    }
+
+    public function testTopByPlusDaysMarketCombinesWithTheSpikeExclusion(): void
+    {
+        $this->seedMarketFixture();
+
+        self::assertSame(
+            ['SE0000000205', 'SE0000000203', 'SE0000000202'],
+            array_column($this->metrics->topByPlusDays(NormalizedRow::SOURCE_AVANZA, 30, true, 10, 'MC'), 'isin'),
+        );
+    }
+
     public function testHistorySpansDaysComparesTheSourcesEarliestRowAgainstItsLatestMinusN(): void
     {
         self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 7), 'no rows at all');

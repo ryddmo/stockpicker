@@ -40,7 +40,7 @@ final class FullListController
     private const SPARKLINE_WINDOW_DAYS = 30;
 
     /** @var list<string> the literal stored `instrument.list` values (Code Map) */
-    private const MARKETS = ['LC', 'MC', 'SC', 'First North'];
+    public const MARKETS = ['LC', 'MC', 'SC', 'First North'];
 
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
