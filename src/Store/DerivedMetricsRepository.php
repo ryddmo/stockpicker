@@ -169,6 +169,157 @@ final class DerivedMetricsRepository
     }
 
     /**
+     * spec-plusdagar — Topplista's "Plusdagar" ranking over a calendar
+     * window of `$days` days (Vecka 7 / Månad 30 / 3 mån 90 / År 365).
+     *
+     * D is `$source`'s latest `as_of_date` (over all its rows); the window
+     * is `(D − $days, D]`. Read-time only, straight off `owner_count_daily`
+     * (no view/table/migration):
+     *  - a window row is a *data day* when its previous stored row lies at
+     *    most 5 calendar days back (same tolerance as the view's delta_1d);
+     *    a data day whose delta is >= 0 is a *plus day* (flat days count).
+     *  - `new_owners` = owners on the instrument's latest row minus owners
+     *    on its latest row on or before D − `$days`, or — when no such row
+     *    exists (a new listing) — minus the first row inside the window.
+     *  - only instruments with at least one row in the window and
+     *    `new_owners > 0` qualify; only active instruments
+     *    (`last_seen IS NULL`).
+     *  - ordered by `plus_days` DESC (a raw count, never a share), then
+     *    `new_owners` DESC, then `isin` ASC.
+     *  - `$excludeSpikes` drops instruments whose *latest*
+     *    `owner_count_metrics.spike_score >= self::SPIKE_THRESHOLD`; a NULL
+     *    score is never excluded.
+     *
+     * Owner counts are CAST to SIGNED before any subtraction —
+     * `number_of_owners` is unsigned and a negative difference otherwise
+     * overflows (SQLSTATE 22003). Each row carries the same latest-metrics
+     * columns as topByOwnerCount() plus `plus_days`, `data_days` and
+     * `new_owners`. Never merges sources (NFR6).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function topByPlusDays(string $source, int $days, bool $excludeSpikes, int $limit): array
+    {
+        $spikeCondition = $excludeSpikes
+            ? 'AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)'
+            : '';
+
+        $stmt = $this->pdo->prepare(
+            <<<SQL
+            WITH bounds AS (
+                SELECT MAX(as_of_date) AS d, MAX(as_of_date) - INTERVAL :days DAY AS cutoff
+                FROM owner_count_daily
+                WHERE source = :source_bounds
+            ),
+            series AS (
+                SELECT
+                    o.isin,
+                    o.as_of_date,
+                    CAST(o.number_of_owners AS SIGNED) AS owners,
+                    LAG(o.as_of_date) OVER (PARTITION BY o.isin ORDER BY o.as_of_date) AS prev_date,
+                    CAST(LAG(o.number_of_owners) OVER (PARTITION BY o.isin ORDER BY o.as_of_date) AS SIGNED) AS prev_owners,
+                    o.as_of_date > b.cutoff AS in_win,
+                    ROW_NUMBER() OVER (PARTITION BY o.isin ORDER BY o.as_of_date DESC) AS rn_latest,
+                    ROW_NUMBER() OVER (PARTITION BY o.isin, o.as_of_date > b.cutoff ORDER BY o.as_of_date DESC) AS rn_grp_desc,
+                    ROW_NUMBER() OVER (PARTITION BY o.isin, o.as_of_date > b.cutoff ORDER BY o.as_of_date ASC) AS rn_grp_asc
+                FROM owner_count_daily o
+                CROSS JOIN bounds b
+                WHERE o.source = :source_series
+                  AND o.as_of_date <= b.d
+            ),
+            flagged AS (
+                SELECT
+                    s.*,
+                    (s.in_win = 1 AND s.prev_date IS NOT NULL AND DATEDIFF(s.as_of_date, s.prev_date) <= 5) AS is_data_day
+                FROM series s
+            ),
+            agg AS (
+                SELECT
+                    f.isin,
+                    SUM(f.in_win) AS window_rows,
+                    SUM(f.is_data_day) AS data_days,
+                    SUM(f.is_data_day = 1 AND f.owners - f.prev_owners >= 0) AS plus_days,
+                    MAX(CASE WHEN f.rn_latest = 1 THEN f.owners END)
+                        - COALESCE(
+                            MAX(CASE WHEN f.in_win = 0 AND f.rn_grp_desc = 1 THEN f.owners END),
+                            MAX(CASE WHEN f.in_win = 1 AND f.rn_grp_asc = 1 THEN f.owners END)
+                        ) AS new_owners
+                FROM flagged f
+                GROUP BY f.isin
+            ),
+            latest AS (
+                SELECT
+                    m.*,
+                    ROW_NUMBER() OVER (PARTITION BY m.isin ORDER BY m.as_of_date DESC) AS rn
+                FROM owner_count_metrics m
+                WHERE m.source = :source_metrics
+            )
+            SELECT
+                latest.isin, latest.source, latest.as_of_date, latest.number_of_owners,
+                latest.delta_1d, latest.pct_1d, latest.pct_7d, latest.pct_30d, latest.pct_90d, latest.pct_365d,
+                latest.sma_7, latest.sma_30, latest.sma_90,
+                latest.up_streak, latest.spike_score,
+                i.name, i.list,
+                agg.plus_days, agg.data_days, agg.new_owners
+            FROM agg
+            JOIN latest ON latest.isin = agg.isin AND latest.rn = 1
+            JOIN instrument i ON i.isin = agg.isin
+            WHERE i.last_seen IS NULL
+              AND agg.window_rows > 0
+              AND agg.new_owners > 0
+              {$spikeCondition}
+            ORDER BY agg.plus_days DESC, agg.new_owners DESC, agg.isin ASC
+            LIMIT :lim
+            SQL
+        );
+        $stmt->bindValue(':days', max(0, $days), PDO::PARAM_INT);
+        $stmt->bindValue(':source_bounds', $source, PDO::PARAM_STR);
+        $stmt->bindValue(':source_series', $source, PDO::PARAM_STR);
+        $stmt->bindValue(':source_metrics', $source, PDO::PARAM_STR);
+        if ($excludeSpikes) {
+            $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
+        }
+        $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+
+        return array_values(array_map(
+            static function (array $row): array {
+                $row['plus_days'] = (int) $row['plus_days'];
+                $row['data_days'] = (int) $row['data_days'];
+                $row['new_owners'] = (int) $row['new_owners'];
+
+                return $row;
+            },
+            $stmt->fetchAll(),
+        ));
+    }
+
+    /**
+     * spec-plusdagar — whether `$source`'s stored history spans at least
+     * `$days` calendar days: its earliest `as_of_date` lies on or before
+     * its latest `as_of_date` − `$days`. False when the source has no rows
+     * at all. Drives Plusdagar's "För lite historik för {period} ännu."
+     * empty state for 3 mån / År.
+     */
+    public function historySpansDays(string $source, int $days): bool
+    {
+        $stmt = $this->pdo->prepare(
+            <<<'SQL'
+            SELECT MIN(as_of_date) <= MAX(as_of_date) - INTERVAL :days DAY AS spans
+            FROM owner_count_daily
+            WHERE source = :source
+            SQL
+        );
+        $stmt->bindValue(':days', max(0, $days), PDO::PARAM_INT);
+        $stmt->bindValue(':source', $source, PDO::PARAM_STR);
+        $stmt->execute();
+
+        $spans = $stmt->fetchColumn();
+
+        return $spans !== null && $spans !== false && (int) $spans === 1;
+    }
+
+    /**
      * Story 4.2 — the Leaderboard row Sparkline's data: the last `$days`
      * `number_of_owners` values for one (isin, source), oldest first (fewer
      * than `$days` when less history exists — no padding/backfill, NFR7).

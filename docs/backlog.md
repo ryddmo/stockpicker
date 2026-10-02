@@ -281,3 +281,18 @@ independent of a review pass.
      recorded row is never modified" rule (AD-4). Options: exclude runs that
      are still referenced from pruning, or accept it and document it in
      `docs/deploy.md`.
+
+## 2026-10-02
+
+- **Alla mode's "Nordnet ingen data" overflows `.statcol` at 390px.** Noticed while
+  screenshotting spec-plusdagar: in Alla mode an isin without Nordnet data renders
+  "Nordnet ingen data" as one `white-space: nowrap` `.stat-line` in mono 14px, which
+  is wider than the 100px `.statcol` and runs past the card's right edge ("ingen dat").
+  Pre-existing (spec-5-4 / fix/alla-owner-count-wrap), not introduced by Plusdagar.
+  Options: smaller font for the "ingen data" text, or let that one line wrap.
+- **Plusdagar (spec-plusdagar) reads all of `owner_count_daily` per source on every
+  `/?ranking=plus` load** (LAG/ROW_NUMBER over the full series, plus the
+  `owner_count_metrics` "latest" CTE that Flest ägare/Stadig tillväxt already pay).
+  Fine at today's size; same linear-growth caveat as item 2 of 2026-09-28. A
+  `WHERE as_of_date > D − N − 6` pre-filter would bound the window work if it ever
+  matters (the baseline row on/before D − N would then need its own lookup).

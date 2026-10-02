@@ -811,6 +811,224 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Inga aktier med stadig tillväxt just nu.', $body);
     }
 
+    // -- spec-plusdagar: /?ranking=plus ------------------------------------------
+
+    /**
+     * Mon–Fri rows 2026-08-25 .. 2026-10-01 (D), owners +$step per day except
+     * where $overrides gives that date's own delta.
+     *
+     * @param array<string, int> $overrides
+     */
+    private function seedPlusMonth(string $isin, int $base, int $step, array $overrides = [], string $source = NormalizedRow::SOURCE_AVANZA): void
+    {
+        $date = new DateTimeImmutable('2026-08-25');
+        $end = new DateTimeImmutable('2026-10-01');
+        $v = $base;
+        $first = true;
+        while ($date <= $end) {
+            if ((int) $date->format('N') <= 5) {
+                $key = $date->format('Y-m-d');
+                if (!$first) {
+                    $v += $overrides[$key] ?? $step;
+                }
+                $first = false;
+                $this->seedOwnerCount($isin, $key, $v, $source);
+            }
+            $date = $date->modify('+1 day');
+        }
+    }
+
+    public function testRootRankingPlusDefaultsToManadAndOrdersByPlusDaysThenNewOwners(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha: every day up by 1 -> all plus days, small net.
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        // Beta: one bad day (as in "Stadig tillväxt" it would vanish) but huge net.
+        $this->seedPlusMonth('SE0000001002', 50000, 100, ['2026-09-30' => -40]);
+        // Gamma: flat all month -> net 0 -> never ranked.
+        $this->seedPlusMonth('SE0000001003', 2000, 0);
+        // Delta: net negative with mostly flat days -> never ranked.
+        $this->seedPlusMonth('SE0000001004', 2000, 0, ['2026-09-22' => -1]);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Plusdagar · Månad</a>', $body);
+        self::assertStringContainsString('class="period-link period-link--active" href="/?ranking=plus" aria-current="true">Månad</a>', $body);
+        self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka">Vecka</a>', $body);
+        self::assertStringContainsString('href="/?ranking=plus&amp;period=3man">3 mån</a>', $body);
+        self::assertStringContainsString('href="/?ranking=plus&amp;period=ar">År</a>', $body);
+        self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude"><span aria-hidden="true">☐</span> Dölj spikar</a>', $body);
+
+        self::assertStringContainsString('Alpha AB', $body);
+        self::assertStringContainsString('Beta AB', $body);
+        self::assertStringNotContainsString('Gamma AB', $body, 'net 0 must never rank');
+        self::assertStringNotContainsString('Delta AB', $body, 'net negative must never rank');
+        self::assertLessThan(strpos($body, 'Beta AB'), strpos($body, 'Alpha AB'), 'more plus days ranks first, regardless of new owners');
+
+        // Window (2026-09-01, 2026-10-01] holds 22 weekdays, all data days.
+        self::assertStringContainsString('22/22 · +22', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
+        self::assertStringContainsString('21/22 · +2 060', strip_tags($this->rowHtmlFor($body, 'SE0000001002')));
+        // Beta's bad day was 2026-09-30, not D: today's delta chip is positive.
+        self::assertStringContainsString('delta-chip--positive', $this->rowHtmlFor($body, 'SE0000001002'));
+    }
+
+    public function testRootRankingPlusListsAnInstrumentWithOneDownDayThatStadigTillvaxtDrops(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001002', 50000, 100, ['2026-10-01' => -40]);
+
+        [, $steadyBody] = $this->endpoint->get('/?ranking=steady', $this->validCookie());
+        [$status, $plusBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('Beta AB', $steadyBody);
+        self::assertStringContainsString('Beta AB', $plusBody);
+        self::assertStringContainsString('21/22 · +2 060', strip_tags($this->rowHtmlFor($plusBody, 'SE0000001002')));
+        self::assertStringContainsString('delta-chip--negative', $this->rowHtmlFor($plusBody, 'SE0000001002'), 'the bad day is visible');
+    }
+
+    public function testRootRankingPlusPeriodVeckaUsesTheSevenDayWindowAndKeepsPeriodInLinks(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 3);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=vecka&source=nordnet', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body, 'Nordnet has no data -> no qualifiers');
+        self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka">Avanza</a>', $body, 'period survives a source switch');
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=vecka', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('>Plusdagar · Vecka</a>', $body);
+        self::assertStringContainsString('5/5 · +15', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
+        // Leaving Plusdagar drops period/spikes from the other ranking links.
+        self::assertStringContainsString('href="/?ranking=steady">Stadig tillväxt</a>', $body);
+    }
+
+    public function testRootRankingPlusShowsShortHistoryEmptyStateFor3ManAndAr(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 3); // ~37 days of history
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=3man', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('För lite historik för 3 mån ännu.', $body);
+        self::assertStringNotContainsString('data-isin=', $body);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=ar', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringContainsString('För lite historik för ett år ännu.', $body);
+    }
+
+    public function testRootRankingPlusManadStillRanksWhenHistoryIsShorterThan30Days(): void
+    {
+        $this->seedMatchedUniverse();
+        // Only 2026-09-24 .. 2026-10-01 (8 days of history): no history gate for Månad.
+        foreach (['2026-09-24' => 100, '2026-09-25' => 110, '2026-09-28' => 120, '2026-09-29' => 130, '2026-09-30' => 140, '2026-10-01' => 150] as $date => $owners) {
+            $this->seedOwnerCount('SE0000001001', $date, $owners);
+        }
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('För lite historik', $body);
+        self::assertStringContainsString('5/5 · +50', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
+    }
+
+    public function testRootRankingPlusShowsNoQualifiersEmptyState(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, -2);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body);
+    }
+
+    public function testRootRankingPlusSpikeToggleHidesOnlyTheSpikingInstrument(): void
+    {
+        $this->seedMatchedUniverse();
+        // Alpha: 29 calendar days of growth, then a huge jump on D -> spike_score >= 2.
+        $start = new DateTimeImmutable('2026-09-02');
+        for ($i = 0; $i < 29; ++$i) {
+            $this->seedOwnerCount('SE0000001001', $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
+        }
+        $this->seedOwnerCount('SE0000001001', '2026-10-01', 1280 + 5000);
+        // Beta: too little history for a spike_score -> never hidden.
+        $this->seedOwnerCount('SE0000001002', '2026-09-30', 100);
+        $this->seedOwnerCount('SE0000001002', '2026-10-01', 110);
+
+        [, $defaultBody] = $this->endpoint->get('/?ranking=plus&period=vecka', $this->validCookie());
+        [$status, $hiddenBody] = $this->endpoint->get('/?ranking=plus&period=vecka&spikes=exclude', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('Alpha AB', $defaultBody, 'spikes are included by default');
+        self::assertStringContainsString('Beta AB', $defaultBody);
+        self::assertStringNotContainsString('Alpha AB', $hiddenBody);
+        self::assertStringContainsString('Beta AB', $hiddenBody);
+        self::assertStringContainsString('class="spike-toggle spike-toggle--active" href="/?ranking=plus&amp;period=vecka"><span aria-hidden="true">☑</span> Dölj spikar</a>', $hiddenBody);
+        self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude">Månad</a>', $hiddenBody, 'spike toggle survives a period switch');
+        self::assertStringContainsString(
+            'href="/?source=nordnet&amp;ranking=plus&amp;period=vecka&amp;spikes=exclude">Nordnet</a>',
+            $this->sourceSwitcherHtmlFor($hiddenBody),
+            'spike toggle survives a source switch',
+        );
+    }
+
+    public function testRootRankingPlusWithSourceAllaRanksOnAvanzaAndShowsNordnetAlongsideNeverSummed(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        $this->seedPlusMonth('SE0000001002', 2000, 2);
+        // Nordnet: Alpha booming, Beta falling -- must not affect the ranking.
+        $this->seedPlusMonth('SE0000001001', 500, -5, [], NormalizedRow::SOURCE_NORDNET);
+        $this->seedPlusMonth('SE0000001002', 700, 50, [], NormalizedRow::SOURCE_NORDNET);
+
+        [, $avanzaBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+        [$status, $allaBody] = $this->endpoint->get('/?source=alla&ranking=plus', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertLessThan(strpos($avanzaBody, 'Alpha AB'), strpos($avanzaBody, 'Beta AB'));
+        self::assertLessThan(strpos($allaBody, 'Alpha AB'), strpos($allaBody, 'Beta AB'), 'Alla ranks exactly like Avanza');
+        $alphaRow = $this->rowHtmlFor($allaBody, 'SE0000001001');
+        self::assertStringContainsString('22/22 · +22', strip_tags($alphaRow), 'the chip is Avanza-derived');
+        self::assertStringContainsString('<span class="stat-src">Avanza</span> 1 027</span>', $alphaRow);
+        self::assertStringContainsString('<span class="stat-src">Nordnet</span> 365</span>', $alphaRow);
+        self::assertStringNotContainsString('1 392', $alphaRow, 'never summed');
+    }
+
+    public function testRootRankingPlusWithGarbageParamsFallsBackToManadWithSpikesIncluded(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&period=xyz&spikes=7', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('>Plusdagar · Månad</a>', $body);
+        self::assertStringContainsString('<span aria-hidden="true">☐</span> Dölj spikar', $body);
+        self::assertStringContainsString('22/22 · +22', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
+
+        [$status] = $this->endpoint->get('/?ranking[]=plus&period[]=x&spikes[]=y', $this->validCookie());
+        self::assertSame(200, $status, 'array-shaped params never 500');
+    }
+
+    public function testRootOtherRankingModesShowNoPlusdagarControlsOrChip(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+
+        [$status, $body] = $this->endpoint->get('/', $this->validCookie());
+
+        self::assertSame(200, $status);
+        self::assertStringContainsString('class="tab" href="/?ranking=plus">Plusdagar</a>', $body);
+        self::assertStringNotContainsString('period-links', $body);
+        self::assertStringNotContainsString('Dölj spikar', $body);
+        self::assertStringNotContainsString('badge--plusdays', $body);
+    }
+
     // -- / period percentages (Vecka/Månad/3 mån/År line) --------------------
 
     public function testRootShowsAllFourPeriodPercentagesPopulatedWithMonToFriHistorySpanningAYear(): void
