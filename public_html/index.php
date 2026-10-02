@@ -89,18 +89,37 @@ try {
                 new WatchlistRepository($pdo),
             );
 
-            $source = $_GET['source'] ?? '';
-            $ranking = $_GET['ranking'] ?? '';
-            $period = $_GET['period'] ?? '';
-            $spikes = $_GET['spikes'] ?? '';
-            $market = $_GET['market'] ?? '';
-            $source = is_string($source) ? $source : '';
-            $ranking = is_string($ranking) ? $ranking : '';
-            $period = is_string($period) ? $period : '';
-            $spikes = is_string($spikes) ? $spikes : '';
-            $market = is_string($market) ? $market : '';
+            // spec-plusdagar-landing-cookie — which of the query string and
+            // the `topplista_view` cookie decides the view, and whether the
+            // cookie is rewritten, is the controller's resolveView() rule;
+            // this route only wires it.
+            $resolved = LeaderboardController::resolveView(
+                $_GET,
+                $_COOKIE[LeaderboardController::VIEW_COOKIE_NAME] ?? null,
+            );
+            $view = $resolved['view'];
 
-            render_html(200, $controller->render($source, $ranking, $period, $spikes, $market));
+            $html = $controller->render(
+                $view['source'],
+                $view['ranking'],
+                $view['period'],
+                $view['spikes'] ? LeaderboardController::SPIKES_EXCLUDE : '',
+                $view['market'] ?? '',
+            );
+
+            if ($resolved['write']) {
+                $isHttps = !empty($_SERVER['HTTPS'])
+                    || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null) === 'https';
+                setcookie(LeaderboardController::VIEW_COOKIE_NAME, LeaderboardController::serializeView($view), [
+                    'expires' => time() + LeaderboardController::VIEW_COOKIE_TTL_SECONDS,
+                    'path' => '/',
+                    'secure' => $isHttps,
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
+            }
+
+            render_html(200, $html);
             break;
 
         case '/list':

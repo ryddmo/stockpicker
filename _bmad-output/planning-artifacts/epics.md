@@ -658,7 +658,7 @@ So that jag kan göra min morgonkaffekoll på några sekunder.
 
 **Given** en giltig session
 **When** jag öppnar `/` (Topplista)
-**Then** visas topp 10 instrument för källan Avanza och rankningsläget Flest ägare (default)
+**Then** visas topp 10 instrument för källan Avanza och rankningsläget Plusdagar (default)
 **And** varje rad renderas som en Leaderboard row (rank, stjärna, namn, badge-rad, Sparkline, ägarantal + Delta chip) enligt `DESIGN.md`-tokens
 
 **Given** Topplistan

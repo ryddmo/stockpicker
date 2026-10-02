@@ -237,11 +237,21 @@ web. Web anropar aldrig Pipeline eller Adapter.
   den valda källan (källväxlaren); `StockDetailController` hämtar **båda** källors
   fullständiga serier på varje anrop oavsett växlarläge — växlaren styr där bara
   vilken linje som renderas som primär (DESIGN.md, Trend overlay), aldrig vilken
-  data som hämtas. Interaktionernas defaultvärden (källa=Avanza, rankningsläge=Most
-  Owners, intervall=Day, fullständig lista-sortering=antal ägare fallande) är
-  hårdkodade per-request-fallbacker i respektive kontrollklass, inte sparad
-  användarpreferens — det finns ingen preferenslagring och behövs ingen med en
-  ensam användare. Detta är UI-presentationsdefaults, inte drift-parametrar; AD-8:s
+  data som hämtas. Interaktionernas defaultvärden (källa=Avanza, Topplistans
+  rankningsläge=Plusdagar, intervall=Day, fullständig lista-sortering=antal ägare
+  fallande) är hårdkodade per-request-fallbacker i respektive kontrollklass, inte
+  sparad användarpreferens — det finns ingen server-side preferenslagring och behövs
+  ingen med en ensam användare. Ett dokumenterat undantag
+  (spec-plusdagar-landing-cookie): cookien `topplista_view` minns Topplistans
+  senaste vy (källa, rankningsläge, period, marknad, spikväxlare) som en personlig
+  UI-preferens i webbläsaren. Den läses och skrivs bara av `/`
+  (`LeaderboardController::resolveView()`): utan vy-parameter i query-strängen
+  visas den sparade vyn och cookien skrivs inte; med bara `source` visas den
+  sparade vyn med den källan och sparas; med någon annan vy-parameter vinner
+  URL:en (saknade parametrar får standardvärdet, aldrig cookiens) och sparas.
+  Värdena går genom samma normalisering som URL-parametrarna, och vyn lagras
+  aldrig server-side (ingen `settings`-rad, ingen DB). Detta är
+  UI-presentationsdefaults, inte drift-parametrar; AD-8:s
   `settings`-tabellkonvention gäller inte här (ingen operatör behöver justera dem
   utan deploy). Ett ofångat undantag i `src/Web/` (t.ex. `Store/` kastar) fångas av
   en enda delad felhanterare i front controller — samma mönster och samma

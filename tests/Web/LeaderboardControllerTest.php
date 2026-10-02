@@ -372,12 +372,138 @@ final class LeaderboardControllerTest extends TestCase
 
     // -- spec-plusdagar ---------------------------------------------------------
 
-    public function testNormalizeRankingRecognizesAllThreeModesAndFallsBackToCount(): void
+    public function testNormalizeRankingRecognizesAllThreeModesAndFallsBackToPlus(): void
     {
         self::assertSame(LeaderboardController::RANKING_PLUS, LeaderboardController::normalizeRanking('plus'));
         self::assertSame(LeaderboardController::RANKING_STEADY, LeaderboardController::normalizeRanking('steady'));
-        self::assertSame(LeaderboardController::RANKING_COUNT, LeaderboardController::normalizeRanking(''));
-        self::assertSame(LeaderboardController::RANKING_COUNT, LeaderboardController::normalizeRanking('xyz'));
+        self::assertSame(LeaderboardController::RANKING_COUNT, LeaderboardController::normalizeRanking('count'));
+        self::assertSame(LeaderboardController::RANKING_PLUS, LeaderboardController::normalizeRanking(''));
+        self::assertSame(LeaderboardController::RANKING_PLUS, LeaderboardController::normalizeRanking('xyz'));
+    }
+
+    // -- spec-plusdagar-landing-cookie: view normalize/serialize/parse --------
+
+    public function testNormalizeViewWithNoParamsIsPlusdagarManadAllaAvanza(): void
+    {
+        self::assertSame(
+            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => null],
+            LeaderboardController::normalizeView([]),
+        );
+    }
+
+    public function testNormalizeViewKeepsValidValuesAndDropsSpikesOutsidePlusdagar(): void
+    {
+        self::assertSame(
+            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'SC'],
+            LeaderboardController::normalizeView(['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => 'exclude', 'market' => 'SC']),
+        );
+        self::assertTrue(LeaderboardController::normalizeView(['ranking' => 'plus', 'spikes' => 'exclude'])['spikes']);
+        self::assertTrue(LeaderboardController::normalizeView(['spikes' => 'exclude'])['spikes'], 'Plusdagar is the default ranking');
+        self::assertFalse(LeaderboardController::normalizeView(['ranking' => 'count', 'spikes' => 'exclude'])['spikes']);
+    }
+
+    public function testNormalizeViewFallsBackPerParamForGarbageAndNonStringValues(): void
+    {
+        self::assertSame(
+            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => 'LC'],
+            LeaderboardController::normalizeView(['source' => ['nordnet'], 'ranking' => 'xx', 'period' => 7, 'spikes' => 'yes', 'market' => 'LC']),
+        );
+    }
+
+    public function testSerializeViewOmitsDefaultsButAlwaysCarriesRanking(): void
+    {
+        self::assertSame('ranking=plus', LeaderboardController::serializeView(LeaderboardController::normalizeView([])));
+        self::assertSame(
+            'ranking=count&market=LC',
+            LeaderboardController::serializeView(LeaderboardController::normalizeView(['ranking' => 'count', 'market' => 'LC'])),
+        );
+        self::assertSame(
+            'source=nordnet&ranking=plus&period=vecka&spikes=exclude&market=First+North',
+            LeaderboardController::serializeView(LeaderboardController::normalizeView(['source' => 'nordnet', 'period' => 'vecka', 'spikes' => 'exclude', 'market' => 'First North'])),
+        );
+    }
+
+    public function testViewCookieRoundTripsThroughSerializeAndParse(): void
+    {
+        foreach ([
+            [],
+            ['ranking' => 'count', 'market' => 'LC'],
+            ['source' => 'alla', 'ranking' => 'steady', 'period' => '3man', 'market' => 'MC'],
+            ['source' => 'nordnet', 'ranking' => 'plus', 'period' => 'ar', 'spikes' => 'exclude', 'market' => 'First North'],
+        ] as $raw) {
+            $view = LeaderboardController::normalizeView($raw);
+            self::assertSame($view, LeaderboardController::parseViewCookie(LeaderboardController::serializeView($view)));
+        }
+    }
+
+    public function testParseViewCookieFallsBackToDefaultsForMissingOrGarbageCookies(): void
+    {
+        $defaults = LeaderboardController::normalizeView([]);
+        self::assertSame($defaults, LeaderboardController::parseViewCookie(null));
+        self::assertSame($defaults, LeaderboardController::parseViewCookie(''));
+        self::assertSame($defaults, LeaderboardController::parseViewCookie(['ranking' => 'count']));
+        self::assertSame($defaults, LeaderboardController::parseViewCookie('%%%&ranking=xx&market=ZZ'));
+        self::assertSame($defaults, LeaderboardController::parseViewCookie('ranking[]=count&market[x]=LC'));
+        self::assertSame(
+            ['source' => 'avanza', 'ranking' => 'count', 'period' => 'manad', 'spikes' => false, 'market' => null],
+            LeaderboardController::parseViewCookie('ranking=count&spikes=exclude'),
+        );
+    }
+
+    public function testResolveViewWithNoViewParamRendersTheCookieWithoutWriting(): void
+    {
+        $cookie = 'ranking=steady&period=vecka&market=SC&source=nordnet';
+        $remembered = LeaderboardController::parseViewCookie($cookie);
+
+        foreach ([[], ['fbclid' => 'abc'], ['utm_source' => 'x', 'utm_medium' => 'y']] as $get) {
+            self::assertSame(['view' => $remembered, 'write' => false], LeaderboardController::resolveView($get, $cookie));
+        }
+        self::assertSame(
+            ['view' => LeaderboardController::normalizeView([]), 'write' => false],
+            LeaderboardController::resolveView(['fbclid' => 'abc'], null),
+        );
+    }
+
+    public function testResolveViewWithOnlySourceMergesItIntoTheCookieAndWrites(): void
+    {
+        $resolved = LeaderboardController::resolveView(
+            ['source' => 'nordnet', 'fbclid' => 'abc'],
+            'ranking=steady&period=vecka&market=LC',
+        );
+        self::assertTrue($resolved['write']);
+        self::assertSame(
+            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'LC'],
+            $resolved['view'],
+        );
+        self::assertSame('source=nordnet&ranking=steady&period=vecka&market=LC', LeaderboardController::serializeView($resolved['view']));
+
+        // No cookie: the defaults with that source.
+        self::assertSame(
+            ['view' => LeaderboardController::normalizeView(['source' => 'alla']), 'write' => true],
+            LeaderboardController::resolveView(['source' => 'alla'], null),
+        );
+
+        // A garbage / non-string source falls back to Avanza, keeping the rest.
+        $resolved = LeaderboardController::resolveView(['source' => ['x']], 'source=alla&ranking=count');
+        self::assertSame('avanza', $resolved['view']['source']);
+        self::assertSame('count', $resolved['view']['ranking']);
+    }
+
+    public function testResolveViewWithAnyOtherViewParamIsAuthoritative(): void
+    {
+        $cookie = 'source=nordnet&ranking=plus&period=vecka&spikes=exclude&market=SC';
+        foreach (['ranking' => 'steady', 'period' => 'ar', 'market' => 'LC', 'spikes' => 'exclude'] as $key => $value) {
+            $get = [$key => $value];
+            self::assertSame(
+                ['view' => LeaderboardController::normalizeView($get), 'write' => true],
+                LeaderboardController::resolveView($get, $cookie),
+                $key,
+            );
+        }
+        self::assertSame(
+            ['view' => LeaderboardController::normalizeView(['source' => 'alla', 'ranking' => 'count']), 'write' => true],
+            LeaderboardController::resolveView(['source' => 'alla', 'ranking' => 'count'], $cookie),
+        );
     }
 
     public function testNormalizePeriodRecognizesTheFourPeriodsAndFallsBackToManad(): void

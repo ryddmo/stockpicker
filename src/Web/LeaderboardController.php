@@ -21,10 +21,19 @@ use Stockpicker\Store\WatchlistRepository;
  * North), which narrows the top 10 *within* the market. In Plusdagar each
  * row carries a "{plus}/{data} · +{new}" chip.
  *
- * Source, ranking, period, market and the spike toggle are per-request
- * only (AD-14) — this controller never reads or writes `settings`, nor
- * any cookie; the front controller reads all five from query params and
- * passes them in; render() falls back to the default for any unknown value.
+ * Source, ranking, period, market and the spike toggle come from the
+ * query string and — spec-plusdagar-landing-cookie, a documented AD-14
+ * exception — from the `topplista_view` cookie, per resolveView(): with no
+ * view param the remembered view is rendered (cookie untouched); with only
+ * `source` the remembered view is rendered with that source; any other
+ * view param is authoritative (missing params take their defaults, never
+ * cookie values). The last two write the normalized view back to the
+ * cookie via the front controller; no cookie means the defaults
+ * (Plusdagar · Månad · Alla · Avanza). The cookie is a personal UI
+ * preference only, never server-side storage: this controller never reads
+ * or writes `settings`. resolveView()/normalizeView()/serializeView()/
+ * parseViewCookie() are the pure helpers the front controller wires;
+ * render() falls back to the default for any unknown value.
  *
  * No templating engine (repo convention) — plain heredoc + htmlspecialchars,
  * same as AuthController::renderLoginPage(). The badge/no-history/spike
@@ -35,6 +44,11 @@ use Stockpicker\Store\WatchlistRepository;
  */
 final class LeaderboardController
 {
+    /**
+     * Flest ägare — no longer the landing view (spec-plusdagar-landing-
+     * cookie): RANKING_PLUS is the default, and every header link carries
+     * `ranking` explicitly, so `?ranking=count` is how this mode is reached.
+     */
     public const RANKING_COUNT = 'count';
     public const RANKING_STEADY = 'steady';
     public const RANKING_PLUS = 'plus';
@@ -75,6 +89,17 @@ final class LeaderboardController
      */
     public const SOURCE_ALL = 'alla';
 
+    /**
+     * spec-plusdagar-landing-cookie — the cookie remembering the last
+     * Topplista view: its value is the URL-style query string of the
+     * normalized view (serializeView()), written only by `/`.
+     */
+    public const VIEW_COOKIE_NAME = 'topplista_view';
+    public const VIEW_COOKIE_TTL_SECONDS = 365 * 24 * 60 * 60;
+
+    /** The raw param keys that make up a Topplista view. */
+    private const VIEW_PARAMS = ['source', 'ranking', 'period', 'spikes', 'market'];
+
     private const TOP_N = 10;
     private const SPARKLINE_WINDOW_DAYS = 30;
 
@@ -87,7 +112,7 @@ final class LeaderboardController
     /**
      * Renders the full page for the given raw source, ranking, period,
      * spikes and market query values. Unrecognized values fall back to the
-     * defaults here (Avanza, Flest ägare, Månad, spikes included, Alla), so
+     * defaults here (Avanza, Plusdagar, Månad, spikes included, Alla), so
      * a garbage query string never 500s.
      */
     public function render(
@@ -155,16 +180,121 @@ final class LeaderboardController
     }
 
     /**
-     * 'steady' | 'plus' | anything else (including garbage) falls back to
-     * the 'count' default — a garbage query value never 500s.
+     * 'count' | 'steady' | anything else (including garbage) falls back to
+     * the 'plus' default (spec-plusdagar-landing-cookie: Plusdagar is the
+     * landing view) — a garbage query value never 500s.
      */
     public static function normalizeRanking(string $rankingMode): string
     {
         return match ($rankingMode) {
+            self::RANKING_COUNT => self::RANKING_COUNT,
             self::RANKING_STEADY => self::RANKING_STEADY,
-            self::RANKING_PLUS => self::RANKING_PLUS,
-            default => self::RANKING_COUNT,
+            default => self::RANKING_PLUS,
         };
+    }
+
+    /**
+     * spec-plusdagar-landing-cookie — normalizes a raw param array (`$_GET`
+     * or a parsed cookie; untrusted either way) into the canonical view.
+     * Non-string values (e.g. `ranking[]=x`) and unknown values fall back
+     * to that param's default; `spikes` survives only in Plusdagar, the
+     * same rule as the header URLs.
+     *
+     * @param array<mixed> $raw
+     *
+     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string}
+     */
+    public static function normalizeView(array $raw): array
+    {
+        $str = [];
+        foreach (self::VIEW_PARAMS as $key) {
+            $value = $raw[$key] ?? '';
+            $str[$key] = is_string($value) ? $value : '';
+        }
+
+        $ranking = self::normalizeRanking($str['ranking']);
+
+        return [
+            'source' => self::normalizeSource($str['source']),
+            'ranking' => $ranking,
+            'period' => self::normalizePeriod($str['period']),
+            'spikes' => $ranking === self::RANKING_PLUS && $str['spikes'] === self::SPIKES_EXCLUDE,
+            'market' => FullListController::normalizeMarket($str['market']),
+        ];
+    }
+
+    /**
+     * spec-plusdagar-landing-cookie — the three-way authority rule for `/`,
+     * given the raw query params (`$_GET`) and the raw `topplista_view`
+     * cookie (both untrusted):
+     *  - no view param at all (empty query, or only junk like `fbclid` /
+     *    `utm_*`): the remembered view (no cookie: the defaults); the
+     *    cookie is not written;
+     *  - `source` is the only view param (the Topplista tab on every page,
+     *    `/?source=nordnet|alla`): the remembered view with that source
+     *    replacing the stored one; the merged view is written;
+     *  - any of `ranking`/`period`/`market`/`spikes` present: authoritative
+     *    — missing params take their defaults (never cookie values) and
+     *    the normalized view is written.
+     *
+     * @param array<mixed> $get
+     *
+     * @return array{view: array{source: string, ranking: string, period: string, spikes: bool, market: ?string}, write: bool}
+     */
+    public static function resolveView(array $get, mixed $cookie): array
+    {
+        $present = array_values(array_filter(
+            self::VIEW_PARAMS,
+            static fn (string $key): bool => array_key_exists($key, $get),
+        ));
+
+        if ($present === []) {
+            return ['view' => self::parseViewCookie($cookie), 'write' => false];
+        }
+
+        if ($present === ['source']) {
+            $view = self::parseViewCookie($cookie);
+            $view['source'] = self::normalizeSource(is_string($get['source']) ? $get['source'] : '');
+
+            return ['view' => $view, 'write' => true];
+        }
+
+        return ['view' => self::normalizeView($get), 'write' => true];
+    }
+
+    /**
+     * spec-plusdagar-landing-cookie — the cookie value for a normalized
+     * view: the same query string url() emits (non-default params omitted,
+     * `ranking` always present), without the leading "/?".
+     *
+     * @param array{source: string, ranking: string, period: string, spikes: bool, market: ?string} $view
+     */
+    public static function serializeView(array $view): string
+    {
+        return http_build_query(self::viewParams(
+            $view['source'],
+            $view['ranking'],
+            $view['period'],
+            $view['spikes'],
+            $view['market'],
+        ));
+    }
+
+    /**
+     * spec-plusdagar-landing-cookie — parses a raw `topplista_view` cookie
+     * (untrusted: missing, non-string or garbage all mean the defaults for
+     * whatever is unusable) back through normalizeView().
+     *
+     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string}
+     */
+    public static function parseViewCookie(mixed $cookie): array
+    {
+        $raw = [];
+        if (is_string($cookie) && $cookie !== '') {
+            parse_str($cookie, $raw);
+        }
+
+        return self::normalizeView($raw);
     }
 
     /**
@@ -841,12 +971,12 @@ final class LeaderboardController
 
     /**
      * Builds the "/" URL for a given (source, ranking[, period, spikes,
-     * market]) combination, omitting a query param entirely when it is the
-     * default — so the default view's own links stay a plain "/" (never
-     * stored server-side either way, AD-14). `period` and `market` are
-     * carried in every mode (spec-topplista-market-filter — Flest ägare
-     * ignores the period but keeps it for the next mode switch); `spikes`
-     * only in Plusdagar.
+     * market]) combination. `ranking` is always emitted (spec-plusdagar-
+     * landing-cookie: a bare "/" means "the remembered view", so no header
+     * link may be bare); every other param is omitted when it is the
+     * default. `period` and `market` are carried in every mode
+     * (spec-topplista-market-filter — Flest ägare ignores the period but
+     * keeps it for the next mode switch); `spikes` only in Plusdagar.
      */
     private static function url(
         string $source,
@@ -855,17 +985,28 @@ final class LeaderboardController
         bool $excludeSpikes = false,
         ?string $market = null,
     ): string {
+        return '/?' . http_build_query(self::viewParams($source, $rankingMode, $period, $excludeSpikes, $market));
+    }
+
+    /**
+     * The query params shared by url() and serializeView().
+     *
+     * @return array<string, string>
+     */
+    private static function viewParams(
+        string $source,
+        string $rankingMode,
+        string $period,
+        bool $excludeSpikes,
+        ?string $market,
+    ): array {
         $params = [];
         if ($source === self::SOURCE_ALL) {
             $params['source'] = 'alla';
         } elseif ($source === NormalizedRow::SOURCE_NORDNET) {
             $params['source'] = 'nordnet';
         }
-        if ($rankingMode === self::RANKING_STEADY) {
-            $params['ranking'] = 'steady';
-        } elseif ($rankingMode === self::RANKING_PLUS) {
-            $params['ranking'] = 'plus';
-        }
+        $params['ranking'] = self::normalizeRanking($rankingMode);
         if ($period !== self::PERIOD_DEFAULT) {
             $params['period'] = $period;
         }
@@ -876,7 +1017,7 @@ final class LeaderboardController
             $params['market'] = $market;
         }
 
-        return $params === [] ? '/' : '/?' . http_build_query($params);
+        return $params;
     }
 
     /**

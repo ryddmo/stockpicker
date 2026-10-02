@@ -63,7 +63,14 @@ final class InfoControllerTest extends TestCase
         self::assertStringContainsString('periodraden nedtonad', $html);
         self::assertStringContainsString('Alla, LC, MC, SC eller First North', $html);
         self::assertStringContainsString('Topp tio räknas inom vald marknad', $html);
-        self::assertStringContainsString('ett nytt besök börjar på Månad och Alla', $html);
+        // spec-plusdagar-landing-cookie — Plusdagar is the landing view and
+        // the last view is remembered in a cookie.
+        self::assertStringContainsString('("Flest ägare") eller efter hur mycket', $html);
+        self::assertStringContainsString('Plusdagar är standardläget', $html);
+        self::assertStringContainsString('Topplista kommer ihåg din senaste vy', $html);
+        self::assertStringContainsString('i en kaka i webbläsaren, tills du gör ett annat val', $html);
+        self::assertStringContainsString('öppnas Plusdagar med Månad, Alla och Avanza', $html);
+        self::assertStringNotContainsString('Valen sparas inte', $html, 'no leftover "not remembered" copy');
         self::assertStringNotContainsString('sorteras med längst', $html, 'no leftover streak-length sort copy');
     }
 
