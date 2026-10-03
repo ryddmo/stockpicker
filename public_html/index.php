@@ -12,12 +12,15 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Stockpicker\Adapter\AvanzaAdapter;
 use Stockpicker\Adapter\AvanzaUniverseAdapter;
+use Stockpicker\Adapter\FiShortPositionAdapter;
+use Stockpicker\Adapter\GleifAdapter;
 use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Config;
 use Stockpicker\Error\AdapterError;
 use Stockpicker\Logging;
 use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
+use Stockpicker\Pipeline\ShortPositionSync;
 use Stockpicker\Pipeline\TopTenDigest;
 use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
@@ -27,6 +30,7 @@ use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+use Stockpicker\Store\ShortPositionRepository;
 use Stockpicker\Store\TradingHolidayRepository;
 use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
@@ -297,6 +301,11 @@ try {
                     $settings,
                     $runs,
                     $logger,
+                    null,
+                    null,
+                    // spec-short-interest-data — the LEI pass (GLEIF by ISIN),
+                    // after the Nordnet id pass, sharing its timebox.
+                    new GleifAdapter($http, $logger),
                 );
 
                 try {
@@ -352,7 +361,11 @@ try {
             // View-based design (Story 3.1): owner_count_metrics is a plain SQL view, so
             // there is nothing to materialize here. This deliberately never touches
             // Deriver — it only logs that the stage ran, then (spec-5-6) runs the
-            // isolated top-10 digest step below, which only *reads* DerivedMetricsRepository.
+            // isolated top-10 digest step below, which only *reads* DerivedMetricsRepository,
+            // and finally (spec-short-interest-data) the isolated, once-per-night FI
+            // short-position step: one external download (30 s timeout, one retry, so
+            // ≤ ~60 s worst case), well within the 180 s web-PHP budget, caught so it
+            // never affects the response or the digest.
             $gate = cron_gate($services['config']);
             if (isset($gate['response'])) {
                 send_json($gate['response']['status'], $gate['response']['body']);
@@ -422,6 +435,30 @@ try {
                     ))->run($runDate);
                 } catch (\Throwable $e) {
                     $logger->error('top-10 digest failed', [
+                        'exception' => $e::class,
+                        'message' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            if (!$alreadyDerivedToday) {
+                // spec-short-interest-data — isolated nightly snapshot of FI's
+                // aggregated short positions, after the digest. It records its
+                // own `shorts` ingest_run row and alarms on SchemaMismatch;
+                // any failure is caught and logged here and never changes the
+                // response below (a failed night leaves the previous snapshot
+                // current). STOCKPICKER_FI_URL is the test seam
+                // (FiShortPositionAdapter), unset in production.
+                try {
+                    (new ShortPositionSync(
+                        new FiShortPositionAdapter(new Client(['timeout' => 30, 'connect_timeout' => 10]), $logger),
+                        new ShortPositionRepository($pdo),
+                        $runRepository,
+                        $gate['settings'],
+                        $logger,
+                    ))->run($runDate);
+                } catch (\Throwable $e) {
+                    $logger->error('short-position sync failed', [
                         'exception' => $e::class,
                         'message' => $e->getMessage(),
                     ]);

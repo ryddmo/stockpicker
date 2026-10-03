@@ -43,8 +43,8 @@ Lagermappning:
 | Lager | Katalog | Ansvar |
 | --- | --- | --- |
 | Front controller | `public_html/` | Tar emot cron-anrop, autentiserar token, startar pipeline-steg. Ingen affärslogik. |
-| Pipeline | `src/Pipeline/` | Filtren: `UniverseSync`, `Enqueue`, `FetchRunner`, `Normalizer`, `Deriver`. |
-| Adapter | `src/Adapter/` | `SourceAdapter`-interface + `AvanzaAdapter`, `NordnetAdapter`; universumadaptern `AvanzaUniverseAdapter` (egen klass). |
+| Pipeline | `src/Pipeline/` | Filtren: `UniverseSync`, `Enqueue`, `FetchRunner`, `Normalizer`, `Deriver`; samt `ShortPositionSync` (nattlig FI-ögonblicksbild). |
+| Adapter | `src/Adapter/` | `SourceAdapter`-interface + `AvanzaAdapter`, `NordnetAdapter`; universumadaptern `AvanzaUniverseAdapter` (egen klass); blankningsadaptrarna `FiShortPositionAdapter` (port `ShortPositionSource`, FI:s aggregerade ODS) och `GleifAdapter` (port `LeiResolver`, ISIN → LEI). |
 | Store | `src/Store/` | PDO-repositories. Enda vägen till databasen. |
 | Web | `src/Web/` | Request/response-hantering för det människovända UI:t (topplista, fullständig lista, aktiedetalj, bevakningslista). Anropar bara `src/Store/`. Sidoordnat med `src/Pipeline/` (den nattliga batchkedjan) — inte ett substitut för den. |
 
@@ -99,6 +99,14 @@ web. Web anropar aldrig Pipeline eller Adapter.
   loggas tills nästa `UniverseSync`. `owner_count_daily` är källindelad —
   `AvanzaAdapter`-flödet skriver bara rader med `source = 'avanza'`, Nordnet bara sina.
   `Deriver` och allt härlett läser fakta, skriver dem aldrig.
+  (spec-short-interest-data) `instrument.lei` skrivs också bara av `UniverseSync`
+  (write-once, via `GleifAdapter`, i ett tidsboxat pass efter Nordnet-id-passet).
+  `short_position` skrivs bara av `ShortPositionSync` (en gång per natt i
+  `/cron/derive`), som en ögonblicksbild per `snapshot_date` (nyckel
+  `(snapshot_date, lei)`). Medveten nyans mot AD-4:s "ingen befintlig rad skrivs
+  över": en omkörning samma dygn *ersätter* det dygnets ögonblicksbild (radera +
+  skriv i en transaktion) — endast det dygnet, äldre ögonblicksbilder rörs aldrig; "aktuell" blankning = raderna i senaste ögonblicksbilden.
+  Instrument kopplas till FI-raderna enbart via LEI, aldrig via namn.
 
 ### AD-4 — Idempotent upsert på naturlig nyckel
 
@@ -314,8 +322,9 @@ stockpicker/
     assets/watchlist.js # enda JS-filen i systemet (AD-12) — fetch() mot
                         # /watchlist/toggle, ingen bundling, synkas som statisk fil
   src/
-    Adapter/           # SourceAdapter, AvanzaAdapter, NordnetAdapter, AvanzaUniverseAdapter
-    Pipeline/          # UniverseSync, Enqueue, FetchRunner, Normalizer, Deriver
+    Adapter/           # SourceAdapter, AvanzaAdapter, NordnetAdapter, AvanzaUniverseAdapter,
+                        # FiShortPositionAdapter, GleifAdapter
+    Pipeline/          # UniverseSync, Enqueue, FetchRunner, Normalizer, Deriver, ShortPositionSync
     Web/               # AuthController, LeaderboardController, FullListController,
                         # WatchlistController, StockDetailController — anropar bara Store/
     Store/             # InstrumentRepository, OwnerCountRepository, QueueRepository,
@@ -483,6 +492,7 @@ URL-cronens exekveringstidsgräns och minsta intervall.
 | K16 Fullständig lista med filter/sök | `FullListController` (`src/Web/`) | AD-14 |
 | K17 Bevakningslista (watchlist) | `WatchlistController` (`src/Web/`), `WatchlistRepository` (`src/Store/`) | AD-15 |
 | K18 Aktiedetalj med härledda mått | `StockDetailController` (`src/Web/`), `owner_count_metrics` | AD-14, AD-3 |
+| K19 Blankningsdata (FI-register + LEI) | `FiShortPositionAdapter`, `GleifAdapter`, `ShortPositionSync`, `UniverseSync`, `ShortPositionRepository` | AD-1, AD-3, AD-4 |
 
 ## Deferred
 

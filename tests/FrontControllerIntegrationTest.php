@@ -94,6 +94,17 @@ final class FrontControllerIntegrationTest extends StoreTestCase
             4,
             (int) $this->pdo->query("SELECT instrument_count FROM ingest_run WHERE run_type = 'universe_sync'")->fetchColumn(),
         );
+
+        // spec-short-interest-data — GleifAdapter is wired into UniverseSync:
+        // the LEI pass ran against the pinned dead GLEIF host.
+        $bySource = json_decode(
+            (string) $this->pdo->query("SELECT by_source FROM ingest_run WHERE run_type = 'universe_sync'")->fetchColumn(),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        self::assertArrayHasKey('gleif', $bySource);
+        self::assertSame(4, $bySource['gleif']['transient'], 'each seeded instrument tried GLEIF once and failed transiently');
     }
 
     public function testRefillReturnsUniverseSyncFailedWhenTheListingIsUnreachable(): void
@@ -364,6 +375,44 @@ final class FrontControllerIntegrationTest extends StoreTestCase
 
         $spiedLines = array_filter(explode("\n", trim($this->endpoint->digestSpyContents())), static fn (string $l): bool => $l !== '');
         self::assertCount(1, $spiedLines, 'exactly one digest send across both hits, not two');
+    }
+
+    // -- /cron/derive: ShortPositionSync (spec-short-interest-data) ------------
+
+    public function testDeriveShortsStepFailureNeverChangesTheResponseOrDigestAndRunsOncePerNight(): void
+    {
+        // EndpointFixture pins STOCKPICKER_FI_URL to an unresolvable host, so
+        // the FI download fails Transient -- the step must record a failed
+        // `shorts` run, write nothing, and leave derive + digest untouched.
+        $this->endpoint->stop();
+        $this->endpoint = new EndpointFixture();
+        $this->endpoint->enableDigestSpy();
+        $this->startEndpoint();
+
+        $this->seedMatchedUniverse();
+        $this->setRunAfter('00:00');
+        $this->allowAllWeekdays();
+
+        $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
+        $previousTradingDay = $this->previousWeekday(new DateTimeImmutable($runDate));
+        $this->seedOwnerCount('SE0000001001', $previousTradingDay, 3000);
+        $this->seedOwnerCount('SE0000001002', $previousTradingDay, 2000);
+        $this->seedOwnerCount('SE0000001001', $runDate, 3000);
+        $this->seedOwnerCount('SE0000001002', $runDate, 3500);
+
+        [$status, $body] = $this->endpoint->get('/cron/derive?token=test-token');
+        $json = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        $this->endpoint->get('/cron/derive?token=test-token');
+
+        self::assertSame(200, $status, $body);
+        self::assertSame(['status' => 'ok', 'run_date' => $runDate, 'instrument_count' => 4], $json);
+        self::assertNotSame('', trim($this->endpoint->digestSpyContents()), 'the digest still went out');
+
+        $shorts = $this->pdo->query("SELECT status, alarm FROM ingest_run WHERE run_type = 'shorts'")->fetchAll();
+        self::assertCount(1, $shorts, 'one shorts run per night, inside the already-derived guard');
+        self::assertSame('failed', $shorts[0]['status']);
+        self::assertSame(0, (int) $shorts[0]['alarm']);
+        self::assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM short_position')->fetchColumn());
     }
 
     public function testDeriveSendsNoDigestWhenDigestIsNotEnabled(): void

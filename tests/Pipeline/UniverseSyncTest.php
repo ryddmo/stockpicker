@@ -6,6 +6,7 @@ namespace Stockpicker\Tests\Pipeline;
 
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
+use Stockpicker\Adapter\LeiResolver;
 use Stockpicker\Adapter\UniverseEntry;
 use Stockpicker\Adapter\UniverseLister;
 use Stockpicker\Error\NotFound;
@@ -51,7 +52,7 @@ final class UniverseSyncTest extends StoreTestCase
         $this->sentMails = [];
     }
 
-    private function sync(): UniverseSync
+    private function sync(?LeiResolver $lei = null): UniverseSync
     {
         $logger = new Logger('test');
         $logger->pushHandler($this->logHandler);
@@ -71,6 +72,7 @@ final class UniverseSyncTest extends StoreTestCase
 
                 return true;
             },
+            $lei,
         );
     }
 
@@ -138,7 +140,7 @@ final class UniverseSyncTest extends StoreTestCase
         ));
         self::assertCount(1, $complete);
         self::assertSame(
-            ['run_date', 'added', 'removed', 'changed', 'reactivated', 'ids_resolved', 'ids_failed', 'deferred', 'active_after'],
+            ['run_date', 'added', 'removed', 'changed', 'reactivated', 'ids_resolved', 'ids_failed', 'leis_resolved', 'leis_failed', 'deferred', 'active_after'],
             array_keys($complete[0]->context),
         );
         self::assertSame(self::RUN_DATE, $complete[0]->context['run_date']);
@@ -461,6 +463,104 @@ final class UniverseSyncTest extends StoreTestCase
         self::assertCount(1, $this->runsLogged());
     }
 
+    // --- spec-short-interest-data: the LEI pass -----------------------------
+
+    public function testLeiPassResolvesAndCachesTheLeiForActiveRowsMissingOne(): void
+    {
+        $this->seed('SE0000000001', 'Alpha A', UniverseEntry::LIST_LC, avanzaId: '1001', nordnetId: 'NX-1');
+        $this->seed('SE0000000002', 'Alpha B', UniverseEntry::LIST_LC, avanzaId: '1002', nordnetId: 'NX-2');
+        $this->seed('SE0000000003', 'Gone AB', UniverseEntry::LIST_LC, nordnetId: 'NX-3', lastSeen: '2026-01-02');
+        $this->universe->entries = [
+            new UniverseEntry('1001', 'Alpha A', UniverseEntry::LIST_LC),
+            new UniverseEntry('1002', 'Alpha B', UniverseEntry::LIST_LC),
+        ];
+        $lei = new FakeLeiResolver();
+        $lei->byIsin = ['SE0000000001' => '54930044O54BK617EP80', 'SE0000000002' => '54930044O54BK617EP80'];
+
+        $counts = $this->sync($lei)->run(self::RUN_DATE);
+
+        self::assertSame('54930044O54BK617EP80', $this->instruments->get('SE0000000001')->lei);
+        self::assertSame('54930044O54BK617EP80', $this->instruments->get('SE0000000002')->lei, 'share classes share the LEI');
+        self::assertSame(['SE0000000001', 'SE0000000002'], $lei->calls, 'inactive rows are not looked up');
+        self::assertSame(2, $counts['leis_resolved']);
+        self::assertSame(['ok' => 2, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0], $this->runsLogged()[0]->bySource['gleif']);
+
+        // Write-once: a later run makes no GLEIF call for rows that have a LEI.
+        $lei->calls = [];
+        $this->sync($lei)->run('2026-09-11');
+        self::assertSame([], $lei->calls);
+    }
+
+    public function testNoLeiAtGleifLeavesItNullTalliedNotAlarmedAndRetriedNextRun(): void
+    {
+        $this->seed('SE0000000001', 'Alpha AB', UniverseEntry::LIST_LC, avanzaId: '1001', nordnetId: 'NX-1');
+        $this->universe->entries = [new UniverseEntry('1001', 'Alpha AB', UniverseEntry::LIST_LC)];
+        (new SettingsRepository($this->pdo))->set('alarm.email', 'alarm@example.com');
+        $lei = new FakeLeiResolver();
+
+        $counts = $this->sync($lei)->run(self::RUN_DATE);
+
+        self::assertNull($this->instruments->get('SE0000000001')->lei);
+        self::assertSame(1, $counts['leis_failed']);
+        $run = $this->runsLogged()[0];
+        self::assertSame(1, $run->bySource['gleif']['not_found']);
+        self::assertFalse($run->alarm);
+        self::assertSame([], $this->sentMails);
+
+        $lei->byIsin = ['SE0000000001' => '54930044O54BK617EP80'];
+        $this->sync($lei)->run('2026-09-11');
+        self::assertSame('54930044O54BK617EP80', $this->instruments->get('SE0000000001')->lei);
+    }
+
+    public function testLeiSchemaMismatchIsAlarmed(): void
+    {
+        $this->seed('SE0000000001', 'Alpha AB', UniverseEntry::LIST_LC, avanzaId: '1001', nordnetId: 'NX-1');
+        $this->universe->entries = [new UniverseEntry('1001', 'Alpha AB', UniverseEntry::LIST_LC)];
+        (new SettingsRepository($this->pdo))->set('alarm.email', 'alarm@example.com');
+        $lei = new FakeLeiResolver();
+        $lei->byIsin = ['SE0000000001' => new SchemaMismatch('data[0].id missing')];
+
+        $this->sync($lei)->run(self::RUN_DATE);
+
+        self::assertTrue($this->runsLogged()[0]->alarm);
+        self::assertCount(1, $this->sentMails);
+    }
+
+    public function testTimeboxSpentDefersTheLeiPassToTheNextRun(): void
+    {
+        $this->seed('SE0000000001', 'Alpha AB', UniverseEntry::LIST_LC, avanzaId: '1001', nordnetId: 'NX-1');
+        $this->universe->entries = [new UniverseEntry('1001', 'Alpha AB', UniverseEntry::LIST_LC)];
+        $lei = new FakeLeiResolver();
+        $lei->byIsin = ['SE0000000001' => '54930044O54BK617EP80'];
+
+        $counts = $this->sync($lei)->run(self::RUN_DATE, 0.0);
+
+        self::assertSame([], $lei->calls);
+        self::assertNull($this->instruments->get('SE0000000001')->lei);
+        self::assertSame(1, $counts['deferred']);
+
+        $this->sync($lei)->run('2026-09-11');
+        self::assertSame('54930044O54BK617EP80', $this->instruments->get('SE0000000001')->lei);
+    }
+
+    public function testLeiCallsAreThrottledByRateGleif(): void
+    {
+        (new SettingsRepository($this->pdo))->set('rate.gleif', '1');
+        $this->seed('SE0000000001', 'A', UniverseEntry::LIST_LC, avanzaId: '1001', nordnetId: 'NX-1');
+        $this->seed('SE0000000002', 'B', UniverseEntry::LIST_LC, avanzaId: '1002', nordnetId: 'NX-2');
+        $this->universe->entries = [
+            new UniverseEntry('1001', 'A', UniverseEntry::LIST_LC),
+            new UniverseEntry('1002', 'B', UniverseEntry::LIST_LC),
+        ];
+        $lei = new FakeLeiResolver();
+
+        $this->sync($lei)->run(self::RUN_DATE);
+
+        self::assertCount(2, $lei->calls);
+        self::assertCount(1, $this->waits, 'only the second GLEIF call waits');
+        self::assertGreaterThan(0.9, $this->waits[0]);
+    }
+
     public function testThrottleSpacesConsecutiveCallsToTheSameSource(): void
     {
         (new SettingsRepository($this->pdo))->set('rate.avanza', '1');
@@ -506,6 +606,27 @@ final class FakeUniverseLister implements UniverseLister
         $this->resolveIsinCalls[] = $orderbookId;
 
         $result = $this->isinByObId[$orderbookId] ?? new NotFound("no isin queued for {$orderbookId}");
+        if ($result instanceof \Throwable) {
+            throw $result;
+        }
+
+        return $result;
+    }
+}
+
+final class FakeLeiResolver implements LeiResolver
+{
+    /** @var array<string, string|\Throwable> isin => LEI or a throwable; unlisted → NotFound */
+    public array $byIsin = [];
+
+    /** @var list<string> */
+    public array $calls = [];
+
+    public function resolveLei(string $isin): string
+    {
+        $this->calls[] = $isin;
+
+        $result = $this->byIsin[$isin] ?? new NotFound("no LEI for {$isin}");
         if ($result instanceof \Throwable) {
             throw $result;
         }

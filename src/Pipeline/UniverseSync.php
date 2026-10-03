@@ -7,6 +7,7 @@ namespace Stockpicker\Pipeline;
 use DateTimeImmutable;
 use DateTimeZone;
 use Psr\Log\LoggerInterface;
+use Stockpicker\Adapter\LeiResolver;
 use Stockpicker\Adapter\SourceAdapter;
 use Stockpicker\Adapter\UniverseLister;
 use Stockpicker\Error\AdapterError;
@@ -28,8 +29,9 @@ use Stockpicker\Store\SettingsRepository;
  * list/name changes, reactivations, and orderbookId rotation for a stable ISIN.
  * The listing carries no ISIN, so each not-yet-known `orderbookId` costs one
  * `resolveIsin()` call; the still-missing Nordnet ids are then resolved in a
- * second pass. Both HTTP passes are wall-clock-timeboxed in the cron path and
- * resumed on later runs.
+ * second pass, and (spec-short-interest-data) the still-missing issuer LEIs
+ * via GLEIF in a third. All HTTP passes share one wall-clock timebox in the
+ * cron path and are resumed on later runs.
  *
  * Every abort path writes **nothing** — no `instrument` row, no `ingest_run`
  * row — and the caller then skips `Enqueue`:
@@ -47,6 +49,7 @@ final class UniverseSync
         'universe.max_delist' => 25,
         'rate.avanza' => 0.5,
         'rate.nordnet' => 0.5,
+        'rate.gleif' => 1,
     ];
 
     /** @var callable(float): void */
@@ -56,10 +59,11 @@ final class UniverseSync
     private $sendMail;
 
     /** @var array<string, float|null> per-source instant of the last outgoing call */
-    private array $lastCallAt = ['avanza' => null, 'nordnet' => null];
+    private array $lastCallAt = ['avanza' => null, 'nordnet' => null, 'gleif' => null];
 
     /**
      * @param (callable(float): void)|null $sleep injected throttle; default is a real sleep
+     * @param LeiResolver|null $lei the GLEIF LEI lookup (spec-short-interest-data); null skips the LEI pass
      */
     public function __construct(
         private readonly UniverseLister $universe,
@@ -70,6 +74,7 @@ final class UniverseSync
         private readonly LoggerInterface $logger,
         ?callable $sleep = null,
         ?callable $sendMail = null,
+        private readonly ?LeiResolver $lei = null,
     ) {
         $this->sleep = $sleep ?? static function (float $seconds): void {
             if ($seconds > 0) {
@@ -85,7 +90,7 @@ final class UniverseSync
      * @param string     $runDate        Stockholm `Y-m-d`, supplied by the caller (never recomputed)
      * @param float|null $timeboxSeconds wall-clock budget for the two HTTP passes; null = unbounded (`bin/universe-sync.php`)
      *
-     * @return array{added: int, removed: int, changed: int, reactivated: int, ids_resolved: int, ids_failed: int, deferred: int, active_after: int}
+     * @return array{added: int, removed: int, changed: int, reactivated: int, ids_resolved: int, ids_failed: int, leis_resolved: int, leis_failed: int, deferred: int, active_after: int}
      *
      * @throws AdapterError listing fetch failed, or the mass-delist guard tripped
      */
@@ -115,7 +120,7 @@ final class UniverseSync
         }
     }
 
-    /** @return array{added: int, removed: int, changed: int, reactivated: int, ids_resolved: int, ids_failed: int, deferred: int, active_after: int} */
+    /** @return array{added: int, removed: int, changed: int, reactivated: int, ids_resolved: int, ids_failed: int, leis_resolved: int, leis_failed: int, deferred: int, active_after: int} */
     private function runSync(string $runDate, ?float $timeboxSeconds, DateTimeImmutable $started, int $runId): array
     {
 
@@ -175,6 +180,7 @@ final class UniverseSync
         $rate = [
             'avanza' => (float) $this->numericSetting('rate.avanza'),
             'nordnet' => (float) $this->numericSetting('rate.nordnet'),
+            'gleif' => (float) $this->numericSetting('rate.gleif'),
         ];
         $deadline = $timeboxSeconds === null ? null : microtime(true) + $timeboxSeconds;
 
@@ -183,11 +189,16 @@ final class UniverseSync
         $reactivated = 0;
         $idsResolved = 0;
         $idsFailed = 0;
+        $leisResolved = 0;
+        $leisFailed = 0;
         $deferred = 0;
         $bySource = [
             'avanza' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
             'nordnet' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0],
         ];
+        if ($this->lei !== null) {
+            $bySource['gleif'] = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+        }
 
         /** @var array<string, true> ISINs already reconciled in this run (dedupe) */
         $seenIsin = [];
@@ -326,6 +337,41 @@ final class UniverseSync
             }
         }
 
+        // 5b. spec-short-interest-data — timeboxed, throttled LEI pass over
+        //     every active row still missing its issuer LEI, sharing the same
+        //     deadline. A NotFound (no GLEIF record) is tallied, not alarmed,
+        //     and retried next night; share classes resolve to the same LEI.
+        if ($this->lei !== null) {
+            foreach ($this->instruments->allActive() as $isin => $inst) {
+                if ($inst->lei !== null) {
+                    continue;
+                }
+                if ($deadline !== null && microtime(true) >= $deadline) {
+                    ++$deferred;
+
+                    continue;
+                }
+
+                try {
+                    $this->throttle('gleif', $rate['gleif']);
+                    $lei = $this->lei->resolveLei($isin);
+                    $this->instruments->cacheLei($isin, $lei);
+                    ++$bySource['gleif']['ok'];
+                    ++$leisResolved;
+                } catch (AdapterError $e) {
+                    ++$bySource['gleif'][$e instanceof SchemaMismatch ? 'schema_mismatch' : ($e instanceof NotFound ? 'not_found' : 'transient')];
+                    if (!$e instanceof NotFound) {
+                        $this->logger->warning('universe sync: could not resolve LEI', [
+                            'isin' => $isin,
+                            'error' => $e::class,
+                            'message' => $e->getMessage(),
+                        ]);
+                    }
+                    ++$leisFailed;
+                }
+            }
+        }
+
         // 6. Delistings (pure SQL), then the churn line and the run-log row.
         $removed = 0;
         foreach ($delist as $isin) {
@@ -343,6 +389,8 @@ final class UniverseSync
             'reactivated' => $reactivated,
             'ids_resolved' => $idsResolved,
             'ids_failed' => $idsFailed,
+            'leis_resolved' => $leisResolved,
+            'leis_failed' => $leisFailed,
             'deferred' => $deferred,
             'active_after' => $activeAfter,
         ]);
@@ -355,7 +403,7 @@ final class UniverseSync
             $removed,
             $bySource,
         );
-        if (($bySource['avanza']['schema_mismatch'] + $bySource['nordnet']['schema_mismatch']) > 0) {
+        if (array_sum(array_column($bySource, 'schema_mismatch')) > 0) {
             $this->sendAlarm($runDate, $runId, true);
         }
 
@@ -366,6 +414,8 @@ final class UniverseSync
             'reactivated' => $reactivated,
             'ids_resolved' => $idsResolved,
             'ids_failed' => $idsFailed,
+            'leis_resolved' => $leisResolved,
+            'leis_failed' => $leisFailed,
             'deferred' => $deferred,
             'active_after' => $activeAfter,
         ];

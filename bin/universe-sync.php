@@ -7,7 +7,9 @@ declare(strict_types=1);
  *
  * The recommended first-run bootstrap: it passes **no** wall-clock budget, so it
  * resolves every not-yet-known orderbookId's ISIN and every missing Nordnet id
- * in one pass (~45–50 min serial for the full ~740-name universe). The hourly
+ * in one pass (~45–50 min serial for the full ~740-name universe), plus every
+ * missing issuer LEI via GLEIF (spec-short-interest-data; ~12–13 min more at
+ * `rate.gleif` = 1 req/s on a cold table). The hourly
  * `/cron/refill` path is timeboxed and converges over subsequent runs; this
  * script is the one that finishes it in a single sitting.
  *
@@ -18,6 +20,7 @@ declare(strict_types=1);
 
 use GuzzleHttp\Client;
 use Stockpicker\Adapter\AvanzaUniverseAdapter;
+use Stockpicker\Adapter\GleifAdapter;
 use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
@@ -39,6 +42,9 @@ try {
         new SettingsRepository($pdo),
         new RunRepository($pdo),
         $logger,
+        null,
+        null,
+        new GleifAdapter($http, $logger),
     );
 
     $runDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Stockholm')))->format('Y-m-d');
@@ -46,7 +52,7 @@ try {
 
     printf(
         "universe sync %s: %d added, %d removed, %d changed, %d reactivated, "
-        . "%d ids resolved, %d ids failed, %d deferred, %d active\n",
+        . "%d ids resolved, %d ids failed, %d LEIs resolved, %d LEIs failed, %d deferred, %d active\n",
         $runDate,
         $counts['added'],
         $counts['removed'],
@@ -54,6 +60,8 @@ try {
         $counts['reactivated'],
         $counts['ids_resolved'],
         $counts['ids_failed'],
+        $counts['leis_resolved'],
+        $counts['leis_failed'],
         $counts['deferred'],
         $counts['active_after'],
     );
