@@ -21,6 +21,15 @@ use Stockpicker\Adapter\ShortPosition;
  */
 final class ShortPositionRepository
 {
+    /**
+     * spec-short-interest-badge-ui — the single threshold for the
+     * "Blankad X %" badge and the Topplista "Dölj blankade" filter, compared
+     * against the raw stored `position_pct` (>= qualifies). Shared by
+     * DerivedMetricsRepository's exclusion SQL and
+     * LeaderboardController::isShorted(), so the two can never drift apart.
+     */
+    public const BADGE_THRESHOLD_PCT = 5.0;
+
     public function __construct(private readonly PDO $pdo)
     {
     }

@@ -1442,7 +1442,8 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status);
         $periodRow = $this->periodRowHtmlFor($body);
         self::assertStringStartsWith('class="period-row period-row--muted"', $periodRow);
-        self::assertStringNotContainsString('<a ', $periodRow, 'segments are not links');
+        self::assertSame(1, preg_match('~<div class="range-picker".*?</div>~s', $periodRow, $picker));
+        self::assertStringNotContainsString('<a ', $picker[0], 'segments are not links');
         self::assertStringContainsString('<span class="tab tab--active" aria-current="true">Månad</span>', $periodRow);
         self::assertStringContainsString('<span class="tab">Vecka</span>', $periodRow);
         self::assertStringContainsString('<span class="period-note">Gäller inte Flest ägare</span>', $periodRow);
@@ -2567,6 +2568,8 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('☆', $body);
         self::assertStringContainsString('★', $body);
         self::assertStringContainsString('Delta-chip', $body);
+        self::assertStringContainsString('<span class="badge badge--nohist badge--short">Blankad 15,8 %</span>', $body);
+        self::assertStringContainsString('"Dölj blankade"', $body);
         self::assertStringContainsString(
             'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar.',
             $body,
@@ -2599,6 +2602,224 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         [$status, $infoBody] = $this->endpoint->get('/info?source=nordnet', $this->validCookie());
         self::assertSame(200, $status);
         self::assertStringContainsString('class="tab tab--active" href="/?source=nordnet">Topplista</a>', $infoBody);
+    }
+
+    // -- spec-short-interest-badge-ui: "Blankad X %" + "Dölj blankade" ---------
+
+    private function setLei(string $isin, ?string $lei): void
+    {
+        $this->pdo->prepare('UPDATE instrument SET lei = :lei WHERE isin = :isin')
+            ->execute(['lei' => $lei, 'isin' => $isin]);
+    }
+
+    private function insertShortPosition(string $snapshotDate, string $lei, string $pct, string $positionDate): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO short_position (snapshot_date, lei, issuer_name, position_pct, position_date, fetched_at)
+             VALUES (:snapshot_date, :lei, :name, :pct, :position_date, :fetched_at)'
+        )->execute([
+            'snapshot_date' => $snapshotDate,
+            'lei' => $lei,
+            'name' => 'Emittent ' . $lei,
+            'pct' => $pct,
+            'position_date' => $positionDate,
+            'fetched_at' => $snapshotDate . ' 20:00:00',
+        ]);
+    }
+
+    /**
+     * All four matched instruments grow every weekday (so each qualifies in
+     * all three modes). Beta is 15.82 % shorted in the latest snapshot,
+     * Gamma 4.99 % (below), Alpha only in an older snapshot (stale), and
+     * Delta has no LEI.
+     */
+    private function seedShortFixture(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        $this->seedPlusMonth('SE0000001002', 50000, 100);
+        $this->seedPlusMonth('SE0000001003', 2000, 2);
+        $this->seedPlusMonth('SE0000001004', 3000, 3);
+        $this->setLei('SE0000001001', 'LEIALPHA000000000001');
+        $this->setLei('SE0000001002', 'LEIBETA0000000000001');
+        $this->setLei('SE0000001003', 'LEIGAMMA000000000001');
+        $this->insertShortPosition('2026-10-01', 'LEIALPHA000000000001', '20.00', '2026-09-30');
+        $this->insertShortPosition('2026-10-02', 'LEIBETA0000000000001', '15.82', '2026-10-02');
+        $this->insertShortPosition('2026-10-02', 'LEIGAMMA000000000001', '4.99', '2026-10-01');
+    }
+
+    public function testShortBadgeShowsLastInTheBadgeRowOnEveryTopplistaModeAndSource(): void
+    {
+        $this->seedShortFixture();
+
+        foreach (['/?ranking=plus', '/?ranking=steady', '/?ranking=count', '/?source=alla&ranking=plus', '/?source=alla&ranking=count'] as $path) {
+            [$status, $body] = $this->endpoint->get($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            self::assertSame(1, substr_count($body, 'badge--short'), "{$path}: only Beta is badged");
+            self::assertStringContainsString(
+                'class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">Blankad 15,8 %</span></span>',
+                $this->rowHtmlFor($body, 'SE0000001002'),
+                "{$path}: badge last in Beta's badge row",
+            );
+            foreach (['SE0000001001', 'SE0000001003', 'SE0000001004'] as $isin) {
+                self::assertStringNotContainsString('Blankad', $this->rowHtmlFor($body, $isin), "{$path}: {$isin} stale / below / no LEI");
+            }
+        }
+    }
+
+    public function testShortBadgeShowsOnFullListWatchlistAndAktiedetaljWithFisDate(): void
+    {
+        $this->seedShortFixture();
+        $cookie = $this->validCookie();
+
+        [$status, $listBody] = $this->endpoint->get('/list', $cookie);
+        self::assertSame(200, $status);
+        self::assertSame(1, substr_count($listBody, 'badge--short'));
+        self::assertStringContainsString('>Blankad 15,8 %</span>', $this->rowHtmlFor($listBody, 'SE0000001002'));
+
+        $this->endpoint->postJson('/watchlist/toggle', ['isin' => 'SE0000001002'], $cookie);
+        [$status, $watchBody] = $this->endpoint->get('/watchlist', $cookie);
+        self::assertSame(200, $status);
+        self::assertStringContainsString('>Blankad 15,8 %</span>', $this->rowHtmlFor($watchBody, 'SE0000001002'));
+
+        foreach (['', '?source=nordnet'] as $query) {
+            [$status, $stockBody] = $this->endpoint->get('/stock/SE0000001002' . $query, $cookie);
+            self::assertSame(200, $status);
+            self::assertStringContainsString('>Blankad 15,8 % (FI 2 okt)</span>', $stockBody, "same in every source{$query}");
+        }
+
+        [, $gammaBody] = $this->endpoint->get('/stock/SE0000001003', $cookie);
+        self::assertStringNotContainsString('Blankad', $gammaBody, '4.99 % is below the threshold');
+        [, $alphaBody] = $this->endpoint->get('/stock/SE0000001001', $cookie);
+        self::assertStringNotContainsString('Blankad', $alphaBody, 'an older snapshot never counts');
+    }
+
+    public function testRootDoljBlankadeHidesShortedRowsCarriesShortsInEveryHeaderLinkAndWritesTheCookie(): void
+    {
+        $this->seedShortFixture();
+
+        [, $offBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+        $offRow = $this->periodRowHtmlFor($offBody);
+        self::assertStringContainsString('<a class="spike-toggle short-toggle" href="/?ranking=plus&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj blankade</a>', $offRow);
+        self::assertLessThan(strpos($offRow, 'Dölj blankade'), strpos($offRow, 'Dölj spikar'), 'right of "Dölj spikar"');
+        self::assertContains('SE0000001002', $this->rowIsins($offBody));
+
+        [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?ranking=plus&shorts=exclude', $this->validCookie());
+
+        self::assertSame(200, $status, $body);
+        self::assertNotContains('SE0000001002', $this->rowIsins($body), 'the shorted instrument is hidden');
+        self::assertContains('SE0000001001', $this->rowIsins($body), 'stale-only is never hidden');
+        self::assertContains('SE0000001003', $this->rowIsins($body), 'below the threshold is never hidden');
+        self::assertContains('SE0000001004', $this->rowIsins($body), 'no LEI is never hidden');
+        self::assertStringContainsString(
+            '<a class="spike-toggle short-toggle spike-toggle--active" href="/?ranking=plus"><span aria-hidden="true">☑</span> Dölj blankade</a>',
+            $body,
+            'the toggle drops its own param',
+        );
+
+        self::assertSame(1, preg_match('~<header class="page-header">(.*?)</header>~s', $body, $m));
+        preg_match_all('~<a ([^>]*)href="([^"]*)"~', $m[1], $links, PREG_SET_ORDER);
+        self::assertGreaterThan(10, count($links));
+        foreach ($links as [, $attrs, $href]) {
+            if (str_contains($attrs, 'short-toggle')) {
+                self::assertStringNotContainsString('shorts=', $href);
+                continue;
+            }
+            self::assertStringContainsString('shorts=exclude', $href, $href);
+        }
+        self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj spikar</a>', $body);
+
+        self::assertSame('ranking=plus&shorts=exclude', $this->viewSetCookieValue($headers));
+
+        // A following bare `/` with that cookie renders with the toggle on.
+        [$status, $bareBody, $bareHeaders] = $this->endpoint->getWithHeaders('/', $this->viewCookie('ranking=plus&shorts=exclude'));
+        self::assertSame(200, $status);
+        self::assertStringContainsString('☑</span> Dölj blankade', $bareBody);
+        self::assertNotContains('SE0000001002', $this->rowIsins($bareBody));
+        self::assertNull($this->viewSetCookie($bareHeaders));
+    }
+
+    public function testRootDoljBlankadeIsALiveLinkInFlestAgaresMutedPeriodRowAndRememberedFromTheCookie(): void
+    {
+        $this->seedShortFixture();
+
+        [$status, $body] = $this->endpoint->get('/?ranking=count', $this->validCookie());
+        self::assertSame(200, $status);
+        $periodRow = $this->periodRowHtmlFor($body);
+        self::assertStringStartsWith('class="period-row period-row--muted"', $periodRow);
+        self::assertStringContainsString(
+            '<span class="period-extras"><span class="period-note">Gäller inte Flest ägare</span><a class="spike-toggle short-toggle" href="/?ranking=count&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj blankade</a></span>',
+            $periodRow,
+        );
+
+        [$status, $body] = $this->endpoint->get('/', $this->viewCookie('ranking=count&shorts=exclude'));
+        self::assertSame(200, $status);
+        self::assertSame(['Topplista', 'Avanza', 'Flest ägare', 'Månad', 'Alla'], $this->activeLabels($body));
+        self::assertStringContainsString('href="/?ranking=count"><span aria-hidden="true">☑</span> Dölj blankade</a>', $body);
+        self::assertNotContains('SE0000001002', $this->rowIsins($body));
+
+        [, $steadyBody] = $this->endpoint->get('/?ranking=steady&shorts=exclude', $this->validCookie());
+        self::assertNotContains('SE0000001002', $this->rowIsins($steadyBody), 'Stadig tillväxt hides it too');
+        self::assertStringContainsString('☑</span> Dölj blankade', $steadyBody);
+    }
+
+    public function testRootDoljBlankadeFiltersBeforeTheTopTenIsCut(): void
+    {
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO instrument (isin, name, list, avanza_orderbook_id, first_seen) VALUES (?, ?, 'LC', ?, '2026-01-01')"
+        );
+        for ($i = 1; $i <= 11; $i++) {
+            $isin = sprintf('SE00000040%02d', $i);
+            $stmt->execute([$isin, sprintf('Bolag %02d AB', $i), (string) (4000 + $i)]);
+            // Every day up; a bigger step means more new owners -> a higher rank.
+            $this->seedPlusMonth($isin, 1000, 12 - $i);
+        }
+        $this->setLei('SE0000004001', 'LEITOP00000000000001');
+        $this->insertShortPosition('2026-10-02', 'LEITOP00000000000001', '7.50', '2026-10-02');
+
+        [, $offBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
+        $off = $this->rowIsins($offBody);
+        self::assertCount(10, $off);
+        self::assertSame('SE0000004001', $off[0]);
+        self::assertNotContains('SE0000004011', $off);
+
+        [, $onBody] = $this->endpoint->get('/?ranking=plus&shorts=exclude', $this->validCookie());
+        $on = $this->rowIsins($onBody);
+        self::assertCount(10, $on, 'still ten rows');
+        self::assertNotContains('SE0000004001', $on);
+        self::assertSame('SE0000004011', $on[9], '#11 moves up');
+    }
+
+    public function testRootDoljBlankadeEdgeCasesNoSnapshotHidesNothingGarbageIsOffAndAllHiddenShowsTheEmptyState(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        $this->seedPlusMonth('SE0000001002', 50000, 100);
+        $this->setLei('SE0000001002', 'LEIBETA0000000000001');
+
+        // No snapshot yet: no badges; the toggle renders but hides nothing.
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&shorts=exclude', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('badge--short', $body);
+        self::assertStringContainsString('☑</span> Dölj blankade', $body);
+        self::assertSame(['SE0000001002', 'SE0000001001'], $this->rowIsins($body));
+
+        $this->insertShortPosition('2026-10-02', 'LEIBETA0000000000001', '15.82', '2026-10-02');
+
+        // Garbage values are off, never a 500.
+        foreach (['/?ranking=plus&shorts=yes', '/?ranking=plus&shorts[]=x'] as $path) {
+            [$status, $body, $headers] = $this->endpoint->getWithHeaders($path, $this->validCookie());
+            self::assertSame(200, $status, $path);
+            self::assertStringContainsString('☐</span> Dölj blankade', $body, $path);
+            self::assertContains('SE0000001002', $this->rowIsins($body), $path);
+            self::assertSame('ranking=plus', $this->viewSetCookieValue($headers), $path);
+        }
+
+        // Every qualifier shorted: the mode's existing empty state.
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&market=MC&shorts=exclude', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertSame([], $this->rowIsins($body));
+        self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body);
     }
 
     private function seedOwnerCount(

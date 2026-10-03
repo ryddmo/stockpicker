@@ -6,6 +6,7 @@ namespace Stockpicker\Web;
 
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
+use Stockpicker\Store\ShortPositionRepository;
 
 /**
  * Story 4.5 — renders the authenticated `/watchlist` Bevakningslista page:
@@ -33,6 +34,7 @@ final class WatchlistController
 
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
+        private readonly ShortPositionRepository $shorts,
     ) {
     }
 
@@ -53,6 +55,8 @@ final class WatchlistController
         } else {
             $isins = array_column($rows, 'isin');
             $seriesByIsin = $this->metrics->recentSeriesForIsins($isins, $source, self::SPARKLINE_WINDOW_DAYS);
+            // spec-short-interest-badge-ui — one lookup per render, never per row.
+            $shortPositions = $this->shorts->currentForIsins(array_map('strval', $isins));
 
             $bodyHtml = '';
             foreach ($rows as $row) {
@@ -62,7 +66,7 @@ final class WatchlistController
                 // isin FROM watchlist)`) — no second query needed, and none of
                 // the non-atomic-read race a separate starredIsins() lookup
                 // would introduce against a concurrent /watchlist/toggle.
-                $bodyHtml .= $this->renderRow($row, $seriesByIsin[$isin] ?? [], true);
+                $bodyHtml .= $this->renderRow($row, $seriesByIsin[$isin] ?? [], true, $shortPositions[$isin]['pct'] ?? null);
             }
         }
 
@@ -101,7 +105,7 @@ final class WatchlistController
      * @param array<string, mixed> $row one searchAndFilter() row
      * @param list<array{as_of_date: string, number_of_owners: int}> $series
      */
-    private function renderRow(array $row, array $series, bool $starred): string
+    private function renderRow(array $row, array $series, bool $starred, ?float $shortPct): string
     {
         $isin = (string) $row['isin'];
         $name = (string) $row['name'];
@@ -112,7 +116,8 @@ final class WatchlistController
         $spikeScore = $row['spike_score'] !== null ? (float) $row['spike_score'] : null;
         $muted = LeaderboardController::isSparklineMuted($row['sma_7']);
 
-        $badgesHtml = LeaderboardController::streakBadgeHtml($upStreak) . LeaderboardController::spikeBadgeHtml($spikeScore);
+        $badgesHtml = LeaderboardController::streakBadgeHtml($upStreak) . LeaderboardController::spikeBadgeHtml($spikeScore)
+            . LeaderboardController::shortBadgeHtml($shortPct);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
         $deltaChipHtml = LeaderboardController::deltaChipHtml($delta, $pct);
 
