@@ -41,11 +41,11 @@ final class GleifAdapterTest extends AdapterTestCase
         $this->adapter()->resolveLei('SE0000000001');
     }
 
-    public function testHttp404IsNotFound(): void
+    public function testHttp404IsASchemaMismatchNotNotFound(): void
     {
         $this->queue([new Response(404)]);
 
-        $this->expectException(NotFound::class);
+        $this->expectException(SchemaMismatch::class);
         $this->adapter()->resolveLei('SE0000000001');
     }
 

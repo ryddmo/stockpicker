@@ -361,7 +361,11 @@ try {
             // View-based design (Story 3.1): owner_count_metrics is a plain SQL view, so
             // there is nothing to materialize here. This deliberately never touches
             // Deriver — it only logs that the stage ran, then (spec-5-6) runs the
-            // isolated top-10 digest step below, which only *reads* DerivedMetricsRepository.
+            // isolated top-10 digest step below, which only *reads* DerivedMetricsRepository,
+            // and finally (spec-short-interest-data) the isolated, once-per-night FI
+            // short-position step: one external download (30 s timeout, one retry, so
+            // ≤ ~60 s worst case), well within the 180 s web-PHP budget, caught so it
+            // never affects the response or the digest.
             $gate = cron_gate($services['config']);
             if (isset($gate['response'])) {
                 send_json($gate['response']['status'], $gate['response']['body']);

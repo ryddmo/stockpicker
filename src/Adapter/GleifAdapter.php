@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Stockpicker\Adapter;
 
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\ResponseException;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Error\NotFound;
 use Stockpicker\Error\SchemaMismatch;
@@ -17,9 +16,10 @@ use Stockpicker\Error\SchemaMismatch;
  *   GET https://api.gleif.org/api/v1/lei-records?filter[isin]=<ISIN>
  *   → { data: [ { type: "lei-records", id: "<LEI>", attributes: {…} } ], … }
  *
- * Empty `data` (verified 2026-10-03: HTTP 200 with `"data":[]`) or a 404 →
- * NotFound; a missing `data` list or an id that is not a 20-character LEI →
- * SchemaMismatch. A listing-type call, so it keeps the one-shot retry
+ * Empty `data` (verified 2026-10-03: "no match" is HTTP 200 with
+ * `"data":[]`) → NotFound. A 404 on this collection endpoint means the API
+ * moved, so it stays a SchemaMismatch (alarmed, never silently retried), as
+ * does a missing `data` list or an id that is not a 20-character LEI. A listing-type call, so it keeps the one-shot retry
  * (Story 2.4). Throttled by the caller (UniverseSync, `rate.gleif`).
  */
 final class GleifAdapter implements LeiResolver
@@ -52,27 +52,18 @@ final class GleifAdapter implements LeiResolver
 
     public function resolveLei(string $isin): string
     {
-        try {
-            $body = $this->withOneRetry(fn (): array => $this->requestJson(
-                $this->http,
-                'GET',
-                $this->baseUri . self::LEI_RECORDS_PATH,
-                [
-                    'query' => ['filter[isin]' => $isin],
-                    'headers' => [
-                        'User-Agent' => self::USER_AGENT,
-                        'Accept' => 'application/vnd.api+json',
-                    ],
+        $body = $this->withOneRetry(fn (): array => $this->requestJson(
+            $this->http,
+            'GET',
+            $this->baseUri . self::LEI_RECORDS_PATH,
+            [
+                'query' => ['filter[isin]' => $isin],
+                'headers' => [
+                    'User-Agent' => self::USER_AGENT,
+                    'Accept' => 'application/vnd.api+json',
                 ],
-            ));
-        } catch (SchemaMismatch $e) {
-            $previous = $e->getPrevious();
-            if ($previous instanceof ResponseException && $previous->getResponse()->getStatusCode() === 404) {
-                throw new NotFound(sprintf('gleif lei-records (isin %s): not found', $isin), 0, $previous);
-            }
-
-            throw $e;
-        }
+            ],
+        ));
 
         $data = $body['data'] ?? null;
         if (!is_array($data) || !array_is_list($data)) {

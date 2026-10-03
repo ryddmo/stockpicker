@@ -102,8 +102,10 @@ web. Web anropar aldrig Pipeline eller Adapter.
   (spec-short-interest-data) `instrument.lei` skrivs också bara av `UniverseSync`
   (write-once, via `GleifAdapter`, i ett tidsboxat pass efter Nordnet-id-passet).
   `short_position` skrivs bara av `ShortPositionSync` (en gång per natt i
-  `/cron/derive`), som en ögonblicksbild per `snapshot_date` (upsert på
-  `(snapshot_date, lei)`); "aktuell" blankning = raderna i senaste ögonblicksbilden.
+  `/cron/derive`), som en ögonblicksbild per `snapshot_date` (nyckel
+  `(snapshot_date, lei)`). Medveten nyans mot AD-4:s "ingen befintlig rad skrivs
+  över": en omkörning samma dygn *ersätter* det dygnets ögonblicksbild (radera +
+  skriv i en transaktion) — endast det dygnet, äldre ögonblicksbilder rörs aldrig; "aktuell" blankning = raderna i senaste ögonblicksbilden.
   Instrument kopplas till FI-raderna enbart via LEI, aldrig via namn.
 
 ### AD-4 — Idempotent upsert på naturlig nyckel

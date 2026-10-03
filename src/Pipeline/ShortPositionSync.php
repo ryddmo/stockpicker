@@ -9,6 +9,7 @@ use DateTimeZone;
 use Psr\Log\LoggerInterface;
 use Stockpicker\Adapter\ShortPositionSource;
 use Stockpicker\Error\AdapterError;
+use Stockpicker\Error\NotFound;
 use Stockpicker\Error\SchemaMismatch;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
@@ -54,7 +55,7 @@ final class ShortPositionSync
     /**
      * @param string $runDate Stockholm `Y-m-d` — the snapshot date
      *
-     * @return array{status: string, rows: int}
+     * @return array{status: string, rows: int} status: ok | schema_mismatch | not_found | transient
      */
     public function run(string $runDate): array
     {
@@ -78,7 +79,11 @@ final class ShortPositionSync
                 0,
                 0,
                 1,
-                ['fi' => $mismatch ? ['schema_mismatch' => 1] : ['transient' => 1]],
+                ['fi' => self::tally(match (true) {
+                    $mismatch => 'schema_mismatch',
+                    $e instanceof NotFound => 'not_found',
+                    default => 'transient',
+                })],
                 $mismatch ? 'completed' : 'failed',
                 $mismatch,
             );
@@ -86,7 +91,7 @@ final class ShortPositionSync
                 $this->sendAlarm($runDate, $runId);
             }
 
-            return ['status' => $mismatch ? 'schema_mismatch' : 'transient', 'rows' => 0];
+            return ['status' => $mismatch ? 'schema_mismatch' : ($e instanceof NotFound ? 'not_found' : 'transient'), 'rows' => 0];
         } catch (\Throwable $e) {
             $this->runs->finish($runId, new DateTimeImmutable('now', new DateTimeZone('UTC')), 0, 0, 1, [], 'failed');
 
@@ -99,11 +104,24 @@ final class ShortPositionSync
             $written,
             $written,
             0,
-            ['fi' => ['ok' => $written]],
+            ['fi' => self::tally('ok', $written)],
         );
         $this->logger->info('short-position sync complete', ['run_date' => $runDate, 'rows' => $written]);
 
         return ['status' => 'ok', 'rows' => $written];
+    }
+
+    /**
+     * The same four-key by_source shape as the other runs.
+     *
+     * @return array{ok: int, not_found: int, schema_mismatch: int, transient: int}
+     */
+    private static function tally(string $outcome, int $count = 1): array
+    {
+        $tally = ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0];
+        $tally[$outcome] = $count;
+
+        return $tally;
     }
 
     private function sendAlarm(string $runDate, int $runId): void

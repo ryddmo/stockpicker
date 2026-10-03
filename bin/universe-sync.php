@@ -8,8 +8,8 @@ declare(strict_types=1);
  * The recommended first-run bootstrap: it passes **no** wall-clock budget, so it
  * resolves every not-yet-known orderbookId's ISIN and every missing Nordnet id
  * in one pass (~45–50 min serial for the full ~740-name universe), plus every
- * missing issuer LEI via GLEIF (spec-short-interest-data; ~6 min more at
- * `rate.gleif` = 2 req/s on a cold table). The hourly
+ * missing issuer LEI via GLEIF (spec-short-interest-data; ~12–13 min more at
+ * `rate.gleif` = 1 req/s on a cold table). The hourly
  * `/cron/refill` path is timeboxed and converges over subsequent runs; this
  * script is the one that finishes it in a single sitting.
  *

@@ -166,7 +166,7 @@ never touched.
    ~/stockpicker.ryddmo.se/
      public_html/     ← stockpicker.ryddmo.se docroot (front controller + .htaccess only)
      src/
-     db/migrations/   ← five migrations, see "Database migrations" below
+     db/migrations/   ← twelve migrations, see "Database migrations" below
      bin/
      phinx.php
      bootstrap.php
@@ -234,14 +234,16 @@ one sitting, run the un-timeboxed bootstrap once over SSH after the first
 
 ```sh
 cd ~/stockpicker.ryddmo.se
-php bin/universe-sync.php   # full reconcile, NO timebox — resolves every ISIN + Nordnet id in one pass
+php bin/universe-sync.php   # full reconcile, NO timebox — resolves every ISIN + Nordnet id + issuer LEI in one pass
 ```
 
 Expect **~45–50 min** for the full universe (~740 names, each costing one
 `market-guide` call for its ISIN plus a Nordnet id lookup, strictly serial and
-spaced by `settings.rate.avanza` / `settings.rate.nordnet`). It prints the churn
-counts (`added / removed / changed / reactivated / ids resolved / ids failed /
-deferred / active`) and writes one `run_type='universe_sync'` `ingest_run` row.
+spaced by `settings.rate.avanza` / `settings.rate.nordnet`), plus **~12–13 min**
+for the GLEIF LEI pass on a cold table (one call per active instrument missing
+`instrument.lei`, spaced by `settings.rate.gleif`, default 1 req/s). It prints the
+churn counts (`added / removed / changed / reactivated / ids resolved / ids failed /
+LEIs resolved / LEIs failed / deferred / active`) and writes one `run_type='universe_sync'` `ingest_run` row.
 Idempotent and safe to re-run; check progress with `php bin/show-runs.php` and
 `php bin/list-universe.php` (a read-only spot-check of the live listing).
 
@@ -340,7 +342,7 @@ first deploy hit _"must return an array, got int"_ from a malformed `config.php`
 any DDL ran, but a later schema change could fail after a partial apply) the schema is
 left half-migrated and must be reconciled by hand against the table above.
 
-The five migrations in `db/migrations/`, in order:
+The twelve migrations in `db/migrations/`, in order:
 
 | Migration                                       | Creates                                                                                                                                                                 |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -349,6 +351,12 @@ The five migrations in `db/migrations/`, in order:
 | `20260909140100_widen_nordnet_instrument_id`    | widens `instrument.nordnet_instrument_id` to `VARCHAR(64)` (36-char nnx UUID)                                                                                           |
 | `20260909150000_create_work_queue`              | `work_queue` — `pending → claimed → done \| failed`, unique `(isin, run_date)`, FK to `instrument`                                                                      |
 | `20260909160000_create_ingest_run`              | `ingest_run` — one appended summary row per pipeline run; append-only, no FK                                                                                            |
+| `20260911100000_enrich_ingest_run`              | Story 2.6 — `ingest_run` lifecycle columns (`status`, `alarm`, `schema_mismatch_count`, `by_source`, nullable `finished_at`) and the owner-fact run linkage |
+| `20260911170000_create_owner_count_metrics_view` | Story 3.1 — the `owner_count_metrics` SQL view (derived metrics over `owner_count_daily`; nothing materialized) |
+| `20260913120000_create_watchlist`               | Story 4.2 — `watchlist` table (a row's existence = starred; AD-15) |
+| `20260914000000_extend_owner_count_metrics_view_multi_period_pct` | spec-5-5 — adds `pct_7d`, `pct_90d`, `pct_365d` to the view |
+| `20260915120000_create_trading_holiday`         | `trading_holiday` — weekday Nasdaq Stockholm closures the cron gate skips |
+| `20260929120000_calendar_period_metrics_view`   | spec-calendar-period-metrics — the view's period metrics become calendar periods |
 | `20261003120000_create_short_position`          | spec-short-interest-data: `instrument.lei` (nullable, write-once, set by `UniverseSync` via GLEIF) and `short_position` — FI's aggregated short positions as nightly snapshots, PK `(snapshot_date, lei)` |
 
 `owner_count_daily` and `ingest_run` are append-only (NFR7) and are never rolled back.
@@ -359,7 +367,7 @@ The five migrations in `db/migrations/`, in order:
 | -------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `universe.resolve_timebox` | `45` (seconds)   | wall-clock budget shared by `UniverseSync`'s HTTP passes (ISIN, Nordnet id, then GLEIF LEI) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed.                                                                                                             |
 | `universe.max_delist`      | `25`             | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
-| `rate.gleif`               | `2` (req/s)      | spec-short-interest-data. Spacing of `UniverseSync`'s GLEIF LEI lookups (ISIN → issuer LEI, one call per active instrument still missing `instrument.lei`). A cold table (~745 names) fills over several `/cron/refill` runs, each capped by `universe.resolve_timebox`; `bin/universe-sync.php` fills it in one sitting. A NotFound (no GLEIF record) leaves `lei` NULL and is retried next run, without an alarm. |
+| `rate.gleif`               | `1` (req/s)      | spec-short-interest-data. Kept under GLEIF's ~60 req/min limit. Spacing of `UniverseSync`'s GLEIF LEI lookups (ISIN → issuer LEI, one call per active instrument still missing `instrument.lei`). A cold table (~745 names) fills over several `/cron/refill` runs, each capped by `universe.resolve_timebox`; `bin/universe-sync.php` fills it in one sitting. A NotFound (no GLEIF record) leaves `lei` NULL and is retried next run, without an alarm. |
 | `retry.max_attempts`       | `3`              | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry.                                                                                                                                                                              |
 | `retry.backoff_base`       | `1.0` (seconds)  | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`.                                    |
 | `retry.backoff_max`        | `20.0` (seconds) | ceiling for a single backoff sleep.                                                                                                                                                                                                                                                                                                                |

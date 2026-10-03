@@ -81,6 +81,7 @@ final class ShortPositionSyncTest extends StoreTestCase
         self::assertSame('completed', $runs[0]->status);
         self::assertFalse($runs[0]->alarm);
         self::assertSame(1, $runs[0]->okCount);
+        self::assertSame(['fi' => ['ok' => 1, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 0]], $runs[0]->bySource);
         self::assertSame([], $this->sentMails);
     }
 
@@ -106,6 +107,7 @@ final class ShortPositionSyncTest extends StoreTestCase
         self::assertSame('alarmed', $runs[0]->status);
         self::assertTrue($runs[0]->alarm);
         self::assertSame(1, $runs[0]->schemaMismatchCount);
+        self::assertSame(['fi' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 1, 'transient' => 0]], $runs[0]->bySource);
         self::assertCount(1, $this->sentMails);
         self::assertSame('alarm@example.com', $this->sentMails[0]['to']);
     }
@@ -126,6 +128,20 @@ final class ShortPositionSyncTest extends StoreTestCase
         $runs = $this->shortsRuns();
         self::assertSame('failed', $runs[0]->status);
         self::assertFalse($runs[0]->alarm);
+        self::assertSame(['fi' => ['ok' => 0, 'not_found' => 0, 'schema_mismatch' => 0, 'transient' => 1]], $runs[0]->bySource);
+        self::assertSame([], $this->sentMails);
+    }
+
+    public function testNotFoundIsTalliedAsNotFoundAndFailsTheRunWithoutAlarm(): void
+    {
+        $this->source->error = new \Stockpicker\Error\NotFound('file gone');
+
+        self::assertSame(['status' => 'not_found', 'rows' => 0], $this->sync()->run(self::RUN_DATE));
+
+        $run = $this->shortsRuns()[0];
+        self::assertSame('failed', $run->status);
+        self::assertFalse($run->alarm);
+        self::assertSame(['fi' => ['ok' => 0, 'not_found' => 1, 'schema_mismatch' => 0, 'transient' => 0]], $run->bySource);
         self::assertSame([], $this->sentMails);
     }
 

@@ -13,7 +13,10 @@ use Phinx\Migration\AbstractMigration;
  *    until resolved. Share classes of one issuer share one LEI.
  *  - `short_position`: one row per (snapshot_date, lei) — `snapshot_date` is
  *    the Stockholm run date of the nightly FI fetch. Written only by
- *    ShortPositionSync (AD-3), upserted (AD-4). The "current" position is
+ *    ShortPositionSync (AD-3). Deliberately replace-per-snapshot_date — a
+ *    documented nuance to AD-4's "no existing row overwritten": a same-day
+ *    re-run replaces that day's snapshot only (delete + insert in one
+ *    transaction); older snapshots are never touched. The "current" position is
  *    the rows of MAX(snapshot_date) only: FI's file lists only issuers that
  *    currently have a reported position, so an issuer missing from the
  *    latest snapshot has none — an older row never counts.

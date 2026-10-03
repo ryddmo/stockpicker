@@ -49,7 +49,7 @@ final class UniverseSync
         'universe.max_delist' => 25,
         'rate.avanza' => 0.5,
         'rate.nordnet' => 0.5,
-        'rate.gleif' => 2,
+        'rate.gleif' => 1,
     ];
 
     /** @var callable(float): void */

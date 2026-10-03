@@ -5,7 +5,7 @@ created: '2026-10-03'
 status: 'done'
 baseline_revision: '3eefdb4808946b94659c85783e88fc1e01cf2824'
 review_loop_iteration: 0
-followup_review_recommended: true
+followup_review_recommended: false
 context: []
 warnings: []
 deferred:
@@ -15,6 +15,20 @@ deferred:
       AGENTS.md's "One writer per table" and "Layout" sections predate this change, so future agents could add a second writer or an adapter outside the conventions.
     location: >-
       AGENTS.md
+    severity: low
+  - summary: >-
+      FI step may fail on Loopia web-PHP if tempnam()/sys_get_temp_dir() is blocked (open_basedir), surfacing as a nightly FI-format alarm.
+    evidence: |-
+      Unverified: the adapters were exercised only under CLI PHP. Settle it by running the shorts step once under web-PHP after deploy and checking show-runs (or tempnam under the web SAPI).
+    location: >-
+      src/Adapter/FiShortPositionAdapter.php (extractContentXml)
+    severity: medium (unverified)
+  - summary: >-
+      bin/universe-sync.php GLEIF wiring and LEI summary output have no test.
+    evidence: |-
+      No test runs the script; a script test needs dead hosts for Avanza, Nordnet and GLEIF. The /cron/refill wiring is covered by FrontControllerIntegrationTest.
+    location: >-
+      bin/universe-sync.php
     severity: low
 ---
 
@@ -154,6 +168,36 @@ deferred:
   - `[false]` `[reject]` (intent R1) "Nightly" means trading-day nights — R1b is the stated guard; cron_gate defines nights
   - `[low]` `[reject]` (verification-gap other) The refill test spends seconds on dead-host GLEIF retries — test speed only
 
+### 2026-10-03 — Review pass (follow-up)
+- verdicts: 26 findings — high 0, medium 1, low 22, false 2, maybe-false 1 (11 carried)
+- findings:
+  - `[medium]` `[patch]` (blind) GLEIF HTTP 404 on a collection endpoint maps to NotFound, hiding an API move as silent per-instrument misses — → 404 becomes SchemaMismatch (alarmed); test updated
+  - `[low]` `[patch]` (blind) `rate.gleif` default 2 req/s may exceed GLEIF's ~60/min limit — → default lowered to 1 req/s; docs updated
+  - `[low]` `[patch]` (blind) ShortPositionSync records any non-SchemaMismatch AdapterError as transient, and its by_source shape differs from other runs — → tally the actual error type in the four-key shape
+  - `[low]` `[patch]` (blind) Spine/migration call the write an "upsert" although the day's snapshot is replaced (an AD-4 nuance) — → docs state the documented replace-per-day exception
+  - `[low]` `[patch]` (blind) deploy.md bootstrap section omits the LEI pass and its output/time; the migration table is stale — → docs updated
+  - `[low]` `[patch]` (blind) The `/cron/derive` header comment omits the FI download and its runtime budget — → comment updated
+  - `[maybe-false]` `[defer]` (edge) `tempnam()`/open_basedir on Loopia web-PHP could fail and read as a nightly FI-format alarm — would be medium if true; settle by running the FI step once under web-PHP after deploy (or `php -r tempnam` under the web SAPI)
+  - `[low]` `[defer]` (verification-gap) bin/universe-sync.php GLEIF wiring and LEI summary untested — a script test needs dead hosts for three sources; the /cron/refill wiring is covered
+  - `[low]` `[reject]` (blind) The route's catch(\Throwable) around the shorts step is never exercised — the sync rethrow is tested; the route catch is a simple shell
+  - `[low]` `[reject]` (blind) The FI alarm mail has no route test seam; the integration test assumes the CI PHP has zip/xml/dom — CI's setup-php includes them; the alarm path is tested at sync level
+  - `[false]` `[reject]` (blind) A missing extension is reported as a SchemaMismatch-class alarm — exactly what the intent specifies
+  - `[low]` `[reject]` (blind) The same-night idempotence test only checks the count; fetched_at moves — fetched_at is meant to record the latest fetch
+  - `[low]` `[reject]` (blind) No LEI mod-97 checksum validation — a garbled LEI would just fail to join; a new rule
+  - `[low]` `[reject]` (edge) GLEIF down/429: no circuit breaker in the LEI pass — bounded by the timebox; converges on later runs
+  - `[low]` `[reject]` (edge) A derive hit killed mid-download leaves a shorts run "running" — worst case ~60 s, within the 180 s budget
+  - `[low]` `[reject]` carried (edge) GLEIF multiple records → data[0] cached for good — carried from pass 1
+  - `[low]` `[reject]` carried (edge) A repeating GLEIF SchemaMismatch alarms every refill — carried from pass 1
+  - `[low]` `[reject]` carried (edge, verification-gap other) LEI lookups for instruments delisted in the same run — carried from pass 1
+  - `[low]` `[reject]` carried (edge) The deferred counter mixes passes — carried from pass 1
+  - `[low]` `[reject]` carried (edge) A footer row rejects the whole file — carried from pass 1
+  - `[low]` `[reject]` carried (edge) A failed FI download isn't retried the same night — carried from pass 1
+  - `[low]` `[reject]` carried (edge) Stale snapshot unmarked — carried from pass 1
+  - `[low]` `[reject]` carried (edge) Body/content.xml size cap — carried from pass 1
+  - `[false]` `[reject]` carried (edge claim, intent R4) currentForIsins doesn't filter on active — carried from pass 1
+  - `[low]` `[defer]` carried (blind) AGENTS.md not updated — carried from pass 1 (already in frontmatter `deferred`)
+  - `[low]` `[reject]` carried (intent) Most matrix rows proven with fakes, not via routes — carried from pass 1
+
 ## Design Notes
 
 - **Why snapshots:** FI's aggregate file lists only issuers that currently have a reported position, so "current" must mean "in the latest snapshot", not "latest row per LEI". Otherwise a de-shorted company keeps its old figure forever.
@@ -206,3 +250,13 @@ Status: done
 - A wrong GLEIF LEI would stay cached for good (write-once).
 - Web-PHP extensions are confirmed only on the Loopia CLI; the web check is listed in deploy.md.
 - `phinx migrate -e production` must be run after deploy.
+
+### Follow-up pass (2026-10-03)
+
+- **Patched (6):**
+  - 1 medium: a GLEIF 404 now surfaces as SchemaMismatch instead of a silent NotFound.
+  - 5 low: `rate.gleif` default → 1 req/s; the FI run's by_source in the four-key shape with the real error type; the spine/migration describe replace-per-day; the deploy.md bootstrap section and migration list (twelve); the derive route comment.
+- **Deferred (2 new):** the tempnam/open_basedir risk on Loopia web-PHP (medium, unverified — check after deploy with `show-runs`), and the bin/universe-sync.php wiring test.
+- **Rejected:** 9 new low/false findings; 11 carried from pass 1.
+- **Follow-up review recommended: false.** Patched counts this pass: high 0, medium 1, low 5; a follow-up pass recommends another only for a patched high.
+- **Verification:** `composer test` → 721 tests OK, 0 skipped.
