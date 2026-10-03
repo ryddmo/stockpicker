@@ -12,12 +12,15 @@ use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Stockpicker\Adapter\AvanzaAdapter;
 use Stockpicker\Adapter\AvanzaUniverseAdapter;
+use Stockpicker\Adapter\FiShortPositionAdapter;
+use Stockpicker\Adapter\GleifAdapter;
 use Stockpicker\Adapter\NordnetAdapter;
 use Stockpicker\Config;
 use Stockpicker\Error\AdapterError;
 use Stockpicker\Logging;
 use Stockpicker\Pipeline\Enqueue;
 use Stockpicker\Pipeline\FetchRunner;
+use Stockpicker\Pipeline\ShortPositionSync;
 use Stockpicker\Pipeline\TopTenDigest;
 use Stockpicker\Pipeline\UniverseSync;
 use Stockpicker\Store\Database;
@@ -27,6 +30,7 @@ use Stockpicker\Store\OwnerCountRepository;
 use Stockpicker\Store\QueueRepository;
 use Stockpicker\Store\RunRepository;
 use Stockpicker\Store\SettingsRepository;
+use Stockpicker\Store\ShortPositionRepository;
 use Stockpicker\Store\TradingHolidayRepository;
 use Stockpicker\Store\WatchlistRepository;
 use Stockpicker\Web\AuthController;
@@ -297,6 +301,11 @@ try {
                     $settings,
                     $runs,
                     $logger,
+                    null,
+                    null,
+                    // spec-short-interest-data — the LEI pass (GLEIF by ISIN),
+                    // after the Nordnet id pass, sharing its timebox.
+                    new GleifAdapter($http, $logger),
                 );
 
                 try {
@@ -422,6 +431,30 @@ try {
                     ))->run($runDate);
                 } catch (\Throwable $e) {
                     $logger->error('top-10 digest failed', [
+                        'exception' => $e::class,
+                        'message' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            if (!$alreadyDerivedToday) {
+                // spec-short-interest-data — isolated nightly snapshot of FI's
+                // aggregated short positions, after the digest. It records its
+                // own `shorts` ingest_run row and alarms on SchemaMismatch;
+                // any failure is caught and logged here and never changes the
+                // response below (a failed night leaves the previous snapshot
+                // current). STOCKPICKER_FI_URL is the test seam
+                // (FiShortPositionAdapter), unset in production.
+                try {
+                    (new ShortPositionSync(
+                        new FiShortPositionAdapter(new Client(['timeout' => 30, 'connect_timeout' => 10]), $logger),
+                        new ShortPositionRepository($pdo),
+                        $runRepository,
+                        $gate['settings'],
+                        $logger,
+                    ))->run($runDate);
+                } catch (\Throwable $e) {
+                    $logger->error('short-position sync failed', [
                         'exception' => $e::class,
                         'message' => $e->getMessage(),
                     ]);

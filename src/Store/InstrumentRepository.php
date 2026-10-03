@@ -189,4 +189,18 @@ final class InstrumentRepository
         );
         $stmt->execute(['id' => $id, 'isin' => $isin]);
     }
+
+    /**
+     * spec-short-interest-data — write-once cache of the issuer's LEI
+     * (resolved via GLEIF by ISIN), same shape as cacheNordnetId(): set
+     * only while the column is NULL, never overwrite. Written only by
+     * UniverseSync's LEI pass (AD-3).
+     */
+    public function cacheLei(string $isin, string $lei): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE instrument SET lei = :lei WHERE isin = :isin AND lei IS NULL'
+        );
+        $stmt->execute(['lei' => $lei, 'isin' => $isin]);
+    }
 }

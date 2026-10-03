@@ -31,7 +31,10 @@ Each `/cron/work` slice also fails stale `claimed` rows left by a killed slice o
 earlier day; the response exposes that count as `stale_failed`.
 
 Run inspection is available over SSH with `php bin/show-runs.php`; use
-`php bin/show-runs.php --alarms` to list recent schema-mismatch alarms. Configure
+`php bin/show-runs.php --alarms` to list recent schema-mismatch alarms. Besides
+`universe_sync`, `enqueue`, `fetch` and `derive`, each night's `/cron/derive`
+(first hit only) writes one `shorts` run — the FI short-position snapshot
+(`completed`, `failed` when FI is unreachable, `alarmed` on a format change). Configure
 the optional `alarm.email` setting to receive the same alarms via PHP `mail()`.
 
 `work_queue` (`done`/`failed` rows) and `ingest_run` grow forever otherwise —
@@ -53,7 +56,7 @@ never touched.
 | `rsync`                      | 3.4.4, `/usr/local/bin/rsync`                                                                                           |
 | `composer` + `composer.phar` | present, `/usr/local/bin/`                                                                                              |
 | `php`                        | 8.5.9 CLI, `/usr/local/bin/php`, `memory_limit` 1024M                                                                   |
-| PHP extensions               | `pdo_mysql`, `curl`, `mbstring`, `json` loaded                                                                          |
+| PHP extensions               | `pdo_mysql`, `curl`, `mbstring`, `json` loaded; **web-PHP** also needs `zip`, `xmlreader` and `dom` for the FI short-position file (without them every night records an alarmed `shorts` run) |
 | Home layout                  | one folder per domain (e.g. `ryddmo.se/`), **no shared `public_html/`** — a subdomain gets `~/<subdomain>/public_html/` |
 | MariaDB                      | database + user created in Kundzon (`ryddmo_se` on `mysql684.loopia.se`, MariaDB 10.11.19)                              |
 
@@ -346,6 +349,7 @@ The five migrations in `db/migrations/`, in order:
 | `20260909140100_widen_nordnet_instrument_id`    | widens `instrument.nordnet_instrument_id` to `VARCHAR(64)` (36-char nnx UUID)                                                                                           |
 | `20260909150000_create_work_queue`              | `work_queue` — `pending → claimed → done \| failed`, unique `(isin, run_date)`, FK to `instrument`                                                                      |
 | `20260909160000_create_ingest_run`              | `ingest_run` — one appended summary row per pipeline run; append-only, no FK                                                                                            |
+| `20261003120000_create_short_position`          | spec-short-interest-data: `instrument.lei` (nullable, write-once, set by `UniverseSync` via GLEIF) and `short_position` — FI's aggregated short positions as nightly snapshots, PK `(snapshot_date, lei)` |
 
 `owner_count_daily` and `ingest_run` are append-only (NFR7) and are never rolled back.
 
@@ -353,8 +357,9 @@ The five migrations in `db/migrations/`, in order:
 
 | Key                        | Default          | Effect                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `universe.resolve_timebox` | `45` (seconds)   | wall-clock budget for `UniverseSync`'s two HTTP passes (ISIN + Nordnet id) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed.                                                                                                             |
+| `universe.resolve_timebox` | `45` (seconds)   | wall-clock budget shared by `UniverseSync`'s HTTP passes (ISIN, Nordnet id, then GLEIF LEI) inside `/cron/refill`. Delistings and list/name changes are pure SQL and always apply in full. `bin/universe-sync.php` ignores this — it runs un-timeboxed.                                                                                                             |
 | `universe.max_delist`      | `25`             | `UniverseSync` aborts with zero writes (and `/cron/refill` returns `universe_sync_failed`) if a run would delist more than this many active instruments — a guardrail against a truncated listing mass-delisting the universe. Raise it for one run, via `UPDATE settings`, when a real index review delists more than 25 names, then set it back. |
+| `rate.gleif`               | `2` (req/s)      | spec-short-interest-data. Spacing of `UniverseSync`'s GLEIF LEI lookups (ISIN → issuer LEI, one call per active instrument still missing `instrument.lei`). A cold table (~745 names) fills over several `/cron/refill` runs, each capped by `universe.resolve_timebox`; `bin/universe-sync.php` fills it in one sitting. A NotFound (no GLEIF record) leaves `lei` NULL and is retried next run, without an alarm. |
 | `retry.max_attempts`       | `3`              | Story 2.4. Total `fetch()` attempts per source per job before `FetchRunner` gives up and leaves the job `pending` for the next `/cron/work` pass. `1` disables retry.                                                                                                                                                                              |
 | `retry.backoff_base`       | `1.0` (seconds)  | base of the exponential backoff between fetch retries: attempt `n` sleeps `backoff_base * 2^(n-1)` s, clamped to `retry.backoff_max`, via the same injected sleep as the per-source spacing. Every backoff sleep is gated by the slice time-box — a retry is skipped when `elapsed + next backoff >= time-box`.                                    |
 | `retry.backoff_max`        | `20.0` (seconds) | ceiling for a single backoff sleep.                                                                                                                                                                                                                                                                                                                |

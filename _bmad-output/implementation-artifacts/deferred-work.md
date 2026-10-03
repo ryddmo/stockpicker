@@ -244,3 +244,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-topplista-market-filter.md`
   summary: The Topplista tab link (from Fullständig lista, Aktiedetalj, Bevakningslista) resets ranking, period and market to defaults.
   evidence: tabBarHtml() in LeaderboardController/FullListController/StockDetailController builds the Topplista link from source only. That predates this change, and the market-filter intent only lists mode, source, period, market and full-list links as carrying state.
+- source_spec: `_bmad-output/implementation-artifacts/spec-short-interest-data.md`
+  summary: The UI half of the short-interest feature, still to build: a "Blankad X %" badge (≥ 5 %) on Topplista (all modes), Fullständig lista, Bevakningslista and Aktiedetalj ("Blankad 15,8 % (FI 2 okt)"), and a "Dölj blankade" toggle in all three Topplista modes (period row, remembered in the topplista_view cookie as `shorts=exclude`).
+  evidence: Split from the original spec on 2026-10-03 at Stefan's request ("data first"). The decisions are in the UX memlog (2026-10-03). It depends on short_position + instrument.lei from spec-short-interest-data.

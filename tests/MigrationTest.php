@@ -66,6 +66,7 @@ final class MigrationTest extends TestCase
         self::assertTrue($this->tableExists('ingest_run'));
         self::assertTrue($this->tableExists('watchlist'));
         self::assertTrue($this->tableExists('trading_holiday'));
+        self::assertTrue($this->tableExists('short_position'));
 
         // Story 1.6 widened this column to hold the 36-char nnx UUID.
         self::assertSame('varchar(64)', $this->columnType('instrument', 'nordnet_instrument_id'));
@@ -197,6 +198,19 @@ final class MigrationTest extends TestCase
         self::assertTrue((bool) $this->pdo->query(
             "SELECT 1 FROM trading_holiday WHERE holiday_date = '2026-06-19'"
         )->fetchColumn());
+
+        // spec-short-interest-data — instrument.lei (nullable, write-once
+        // cache) and the short_position snapshot table keyed on
+        // (snapshot_date, lei), with an index on lei for the join.
+        self::assertSame('varchar(20)', $this->columnType('instrument', 'lei'));
+        self::assertSame(['snapshot_date', 'lei'], $this->primaryKey('short_position'));
+        self::assertSame('date', $this->columnType('short_position', 'snapshot_date'));
+        self::assertSame('varchar(20)', $this->columnType('short_position', 'lei'));
+        self::assertSame('varchar(255)', $this->columnType('short_position', 'issuer_name'));
+        self::assertSame('decimal(6,2)', $this->columnType('short_position', 'position_pct'));
+        self::assertSame('date', $this->columnType('short_position', 'position_date'));
+        self::assertStringContainsString('datetime', $this->columnType('short_position', 'fetched_at'));
+        self::assertSame(['lei'], $this->indexColumns('short_position', 'ix_short_position_lei'));
     }
 
     public function testRollbackDropsEverything(): void
@@ -214,6 +228,7 @@ final class MigrationTest extends TestCase
         self::assertFalse($this->tableExists('owner_count_metrics'));
         self::assertFalse($this->tableExists('watchlist'));
         self::assertFalse($this->tableExists('trading_holiday'));
+        self::assertFalse($this->tableExists('short_position'));
     }
 
     /**
@@ -290,7 +305,7 @@ final class MigrationTest extends TestCase
         $this->pdo->exec('DROP VIEW IF EXISTS `owner_count_metrics`');
         // watchlist and owner_count_daily next — both reference instrument
         // (owner_count_daily also references ingest_run). Story 4.2.
-        foreach (['watchlist', 'owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'trading_holiday', 'phinxlog'] as $table) {
+        foreach (['watchlist', 'owner_count_daily', 'work_queue', 'ingest_run', 'instrument', 'settings', 'trading_holiday', 'short_position', 'phinxlog'] as $table) {
             $this->pdo->exec("DROP TABLE IF EXISTS `$table`");
         }
     }

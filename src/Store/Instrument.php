@@ -7,7 +7,8 @@ namespace Stockpicker\Store;
 /**
  * One row of the `instrument` dimension table. ISIN is the natural key; the
  * Avanza/Nordnet ids are cached attributes resolved once (Story 1.3), null
- * until then. Dates are ISO-8601 calendar dates (Y-m-d).
+ * until then; so is the issuer's LEI (spec-short-interest-data, resolved
+ * via GLEIF). Dates are ISO-8601 calendar dates (Y-m-d).
  */
 final readonly class Instrument
 {
@@ -19,6 +20,7 @@ final readonly class Instrument
         public ?string $nordnetInstrumentId,
         public string $firstSeen,
         public ?string $lastSeen,
+        public ?string $lei = null,
     ) {
     }
 
@@ -35,6 +37,7 @@ final readonly class Instrument
             $row['nordnet_instrument_id'] !== null ? (string) $row['nordnet_instrument_id'] : null,
             (string) $row['first_seen'],
             $row['last_seen'] !== null ? (string) $row['last_seen'] : null,
+            isset($row['lei']) ? (string) $row['lei'] : null,
         );
     }
 }

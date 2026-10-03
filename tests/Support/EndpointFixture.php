@@ -9,6 +9,10 @@ final class EndpointFixture
     /** A guaranteed-unresolvable host (RFC 2606) — the hermetic default. */
     private const DEAD_UNIVERSE_BASE_URI = 'http://universe.stockpicker.invalid';
 
+    /** spec-short-interest-data — GLEIF and FI pinned to unresolvable hosts too. */
+    private const DEAD_GLEIF_BASE_URI = 'http://gleif.stockpicker.invalid';
+    private const DEAD_FI_URL = 'http://fi.stockpicker.invalid/BlankningsRegister/GetBlankningsregisterAggregat';
+
     /**
      * Fixed test credentials for the session/login config keys Story 4.2's
      * authenticated routes need (AuthController). Callers that only exercise
@@ -131,6 +135,8 @@ final class EndpointFixture
         [$this->server, $this->base] = $this->spawnServer($this->root . '/public_html', null, array_filter([
             'STOCKPICKER_AVANZA_UNIVERSE_BASE_URI' => $this->universeBase ?? self::DEAD_UNIVERSE_BASE_URI,
             'STOCKPICKER_DIGEST_SPY_FILE' => $this->digestSpyFile,
+            'STOCKPICKER_GLEIF_BASE_URI' => self::DEAD_GLEIF_BASE_URI,
+            'STOCKPICKER_FI_URL' => self::DEAD_FI_URL,
         ], static fn (?string $v): bool => $v !== null));
     }
 

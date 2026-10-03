@@ -79,6 +79,7 @@ abstract class StoreTestCase extends TestCase
         $this->pdo->exec('DROP TABLE IF EXISTS instrument');
         $this->pdo->exec('DROP TABLE IF EXISTS settings');
         $this->pdo->exec('DROP TABLE IF EXISTS trading_holiday');
+        $this->pdo->exec('DROP TABLE IF EXISTS short_position');
     }
 
     private function createSchema(): void
@@ -92,6 +93,7 @@ abstract class StoreTestCase extends TestCase
                 list VARCHAR(20) NOT NULL,
                 avanza_orderbook_id VARCHAR(32) NULL,
                 nordnet_instrument_id VARCHAR(64) NULL,
+                lei VARCHAR(20) NULL,
                 first_seen DATE NOT NULL,
                 last_seen DATE NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
@@ -101,6 +103,22 @@ abstract class StoreTestCase extends TestCase
             'CREATE TABLE settings (
                 `key` VARCHAR(64) NOT NULL PRIMARY KEY,
                 `value` VARCHAR(255) NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        // spec-short-interest-data — mirrors
+        // db/migrations/20261003120000_create_short_position.php (also the
+        // `instrument.lei` column above). Keep this in step with the migration.
+        $this->pdo->exec(
+            'CREATE TABLE short_position (
+                snapshot_date DATE NOT NULL,
+                lei VARCHAR(20) NOT NULL,
+                issuer_name VARCHAR(255) NOT NULL,
+                position_pct DECIMAL(6,2) NOT NULL,
+                position_date DATE NOT NULL,
+                fetched_at DATETIME NOT NULL,
+                PRIMARY KEY (snapshot_date, lei),
+                KEY ix_short_position_lei (lei)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 

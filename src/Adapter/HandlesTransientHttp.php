@@ -31,6 +31,28 @@ trait HandlesTransientHttp
      */
     private function requestJson(ClientInterface $http, string $method, string $uri, array $options = []): array
     {
+        $data = json_decode($this->requestBody($http, $method, $uri, $options), true);
+
+        if (!is_array($data)) {
+            throw new SchemaMismatch(sprintf('%s %s: response body is not JSON', $method, $uri));
+        }
+
+        return $data;
+    }
+
+    /**
+     * The raw response body, for a non-JSON (e.g. binary ODS) download —
+     * spec-short-interest-data. Same status → typed-error mapping as
+     * requestJson(), which is built on it.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @throws RateLimited    HTTP 429 (a Transient subtype)
+     * @throws Transient      connection error, timeout, or HTTP 5xx
+     * @throws SchemaMismatch any other non-2xx
+     */
+    private function requestBody(ClientInterface $http, string $method, string $uri, array $options = []): string
+    {
         try {
             $response = $http->request($method, $uri, $options);
         } catch (ConnectException $e) {
@@ -59,13 +81,7 @@ trait HandlesTransientHttp
             throw new SchemaMismatch(sprintf('%s %s: unexpected HTTP %d', $method, $uri, $status), 0, $e);
         }
 
-        $data = json_decode((string) $response->getBody(), true);
-
-        if (!is_array($data)) {
-            throw new SchemaMismatch(sprintf('%s %s: response body is not JSON', $method, $uri));
-        }
-
-        return $data;
+        return (string) $response->getBody();
     }
 
     /**
