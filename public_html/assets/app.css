@@ -222,9 +222,11 @@ select:focus-visible,
    spec-topplista-market-filter): Topplista header rows 2 and 3, rendered
    in every mode. Each its own full-width line under .controls, left-aligned
    with the source switcher: the shared .range-picker pill (same look and
-   32px tap targets as Aktiedetalj's Range picker); in Plusdagar the
-   checkbox-styled "Dölj spikar" link sits right of the period pill. Wraps
-   (segments within the pill, then the pill's neighbour below it) on a
+   32px tap targets as Aktiedetalj's Range picker); right of the period
+   pill sits one .period-extras wrapper holding Flest ägare's note,
+   Plusdagar's checkbox-styled "Dölj spikar" and, in every mode,
+   "Dölj blankade". Wraps (segments within the pill, then the extras
+   under each other) on a
    narrow viewport rather than scrolling. The negative top margin collapses
    with the previous block's sp-4 bottom margin to an sp-2 gap. -- */
 .period-row, .market-row {
@@ -247,12 +249,19 @@ select:focus-visible,
 .period-row--muted .range-picker .tab--active {
   background: transparent; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border);
 }
-/* The period pill's right-hand neighbour (Flest ägare's note, Plusdagar's
-   "Dölj spikar"): flex-basis 0 + min-width 0 so it never wraps onto a line
-   of its own (that would push the market row lower than in the other
-   modes); on a narrow viewport its text breaks within its own box, beside
-   the pill, instead. */
-.period-note, .period-row .spike-toggle { flex: 1 1 0; min-width: 0; line-height: 1.25; }
+/* The period pill's right-hand neighbours (Flest ägare's note, Plusdagar's
+   "Dölj spikar", and "Dölj blankade" in every mode — `.spike-toggle
+   .short-toggle`, never greyed by the muted rules above, which target only
+   `.range-picker .tab`) share one .period-extras wrapper: flex-basis 0 +
+   min-width 0 so it never wraps onto a line of its own (that would push the
+   market row lower than in the other modes). Inside it the items never
+   break mid-label: side by side when wide, stacked under each other beside
+   the pill when narrow. */
+.period-extras {
+  flex: 1 1 0; min-width: 0; line-height: 1.25;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sp-2);
+}
+.period-extras .period-note, .period-extras .spike-toggle { white-space: nowrap; }
 .period-note { font-size: 12px; color: var(--text-muted); }
 
 .market-filter {
@@ -354,7 +363,9 @@ select:focus-visible,
 .badge--streak { background: var(--accent-tint); color: var(--accent); }
 .badge--spike { background: var(--spike-tint); color: var(--spike); }
 /* text-secondary, not text-muted: 3.90:1 against --neutral-tint measured
-   below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). */
+   below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). Also
+   used by "Blankad 15,8 %" (`badge--nohist badge--short`, no rule of its
+   own): short interest is context to weigh, not a verdict — no colour. */
 .badge--nohist { background: var(--neutral-tint); color: var(--text-secondary); }
 /* Plusdagar "16/18 · +1 035" chip: same quiet grey as "flat", mono digits. */
 .badge--plusdays {

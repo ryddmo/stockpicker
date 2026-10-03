@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Stockpicker\Tests\Web;
 
 use PHPUnit\Framework\TestCase;
+use Stockpicker\Store\ShortPositionRepository;
 use Stockpicker\Web\LeaderboardController;
 
 /**
@@ -386,7 +387,7 @@ final class LeaderboardControllerTest extends TestCase
     public function testNormalizeViewWithNoParamsIsPlusdagarManadAllaAvanza(): void
     {
         self::assertSame(
-            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => null],
+            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => null, 'shorts' => false],
             LeaderboardController::normalizeView([]),
         );
     }
@@ -394,7 +395,7 @@ final class LeaderboardControllerTest extends TestCase
     public function testNormalizeViewKeepsValidValuesAndDropsSpikesOutsidePlusdagar(): void
     {
         self::assertSame(
-            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'SC'],
+            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'SC', 'shorts' => false],
             LeaderboardController::normalizeView(['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => 'exclude', 'market' => 'SC']),
         );
         self::assertTrue(LeaderboardController::normalizeView(['ranking' => 'plus', 'spikes' => 'exclude'])['spikes']);
@@ -405,7 +406,7 @@ final class LeaderboardControllerTest extends TestCase
     public function testNormalizeViewFallsBackPerParamForGarbageAndNonStringValues(): void
     {
         self::assertSame(
-            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => 'LC'],
+            ['source' => 'avanza', 'ranking' => 'plus', 'period' => 'manad', 'spikes' => false, 'market' => 'LC', 'shorts' => false],
             LeaderboardController::normalizeView(['source' => ['nordnet'], 'ranking' => 'xx', 'period' => 7, 'spikes' => 'yes', 'market' => 'LC']),
         );
     }
@@ -445,7 +446,7 @@ final class LeaderboardControllerTest extends TestCase
         self::assertSame($defaults, LeaderboardController::parseViewCookie('%%%&ranking=xx&market=ZZ'));
         self::assertSame($defaults, LeaderboardController::parseViewCookie('ranking[]=count&market[x]=LC'));
         self::assertSame(
-            ['source' => 'avanza', 'ranking' => 'count', 'period' => 'manad', 'spikes' => false, 'market' => null],
+            ['source' => 'avanza', 'ranking' => 'count', 'period' => 'manad', 'spikes' => false, 'market' => null, 'shorts' => false],
             LeaderboardController::parseViewCookie('ranking=count&spikes=exclude'),
         );
     }
@@ -472,7 +473,7 @@ final class LeaderboardControllerTest extends TestCase
         );
         self::assertTrue($resolved['write']);
         self::assertSame(
-            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'LC'],
+            ['source' => 'nordnet', 'ranking' => 'steady', 'period' => 'vecka', 'spikes' => false, 'market' => 'LC', 'shorts' => false],
             $resolved['view'],
         );
         self::assertSame('source=nordnet&ranking=steady&period=vecka&market=LC', LeaderboardController::serializeView($resolved['view']));
@@ -572,5 +573,89 @@ final class LeaderboardControllerTest extends TestCase
 
         self::assertSame('5/5 · +4 602', strip_tags($html));
         self::assertStringContainsString('<span class="plusdays-part">5/5 ·</span> <span class="plusdays-part">+4 602</span>', $html, 'breaks only after the separator');
+    }
+
+    // -- spec-short-interest-badge-ui ------------------------------------------
+
+    public function testShortThresholdIsFivePercentShared(): void
+    {
+        self::assertSame(5.0, ShortPositionRepository::BADGE_THRESHOLD_PCT);
+        self::assertTrue(LeaderboardController::isShorted(5.0), 'exactly 5 qualifies');
+        self::assertTrue(LeaderboardController::isShorted(15.82));
+        self::assertFalse(LeaderboardController::isShorted(4.99));
+        self::assertFalse(LeaderboardController::isShorted(null));
+    }
+
+    public function testShortBadgeHtmlFormatsOneDecimalWithDecimalCommaInTheQuietGreyBadge(): void
+    {
+        $html = LeaderboardController::shortBadgeHtml(15.82);
+
+        self::assertSame('Blankad 15,8 %', strip_tags($html));
+        self::assertStringContainsString('class="badge badge--nohist badge--short"', $html);
+        self::assertSame('Blankad 5,0 %', strip_tags(LeaderboardController::shortBadgeHtml(5.0)));
+    }
+
+    public function testShortBadgeHtmlIsEmptyBelowThresholdOrWithoutAPosition(): void
+    {
+        self::assertSame('', LeaderboardController::shortBadgeHtml(4.99));
+        self::assertSame('', LeaderboardController::shortBadgeHtml(null));
+        self::assertSame('', LeaderboardController::shortBadgeWithDateHtml(4.99, '2026-10-02'));
+        self::assertSame('', LeaderboardController::shortBadgeWithDateHtml(null, null));
+    }
+
+    public function testShortBadgeWithDateHtmlAppendsFisOwnDateInSwedish(): void
+    {
+        self::assertSame('Blankad 15,8 % (FI 2 okt)', strip_tags(LeaderboardController::shortBadgeWithDateHtml(15.82, '2026-10-02')));
+        self::assertStringContainsString('badge--short', LeaderboardController::shortBadgeWithDateHtml(15.82, '2026-10-02'));
+        self::assertSame('Blankad 6,0 %', strip_tags(LeaderboardController::shortBadgeWithDateHtml(6.0, 'garbage')), 'no garbage date');
+    }
+
+    public function testSwedishShortDateUsesUnpaddedDayAndLowercaseMonthAbbreviation(): void
+    {
+        $expected = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+        foreach ($expected as $i => $month) {
+            self::assertSame('9 ' . $month, LeaderboardController::swedishShortDate(sprintf('2026-%02d-09', $i + 1)));
+        }
+        self::assertSame('31 dec', LeaderboardController::swedishShortDate('2026-12-31'));
+        self::assertNull(LeaderboardController::swedishShortDate('2026-02-30'));
+        self::assertNull(LeaderboardController::swedishShortDate(''));
+    }
+
+    public function testNormalizeViewTreatsShortsAsAViewParamInEveryModeAndGarbageAsOff(): void
+    {
+        foreach (['plus', 'steady', 'count'] as $ranking) {
+            self::assertTrue(LeaderboardController::normalizeView(['ranking' => $ranking, 'shorts' => 'exclude'])['shorts'], $ranking);
+        }
+        self::assertFalse(LeaderboardController::normalizeView(['shorts' => 'yes'])['shorts']);
+        self::assertFalse(LeaderboardController::normalizeView(['shorts' => ['x']])['shorts']);
+        self::assertFalse(LeaderboardController::normalizeView([])['shorts']);
+    }
+
+    public function testSerializeViewEmitsShortsAfterSpikesOnlyWhenOn(): void
+    {
+        self::assertSame(
+            'ranking=plus&spikes=exclude&shorts=exclude&market=LC',
+            LeaderboardController::serializeView(LeaderboardController::normalizeView(['spikes' => 'exclude', 'shorts' => 'exclude', 'market' => 'LC'])),
+        );
+        self::assertSame(
+            'ranking=count&shorts=exclude',
+            LeaderboardController::serializeView(LeaderboardController::normalizeView(['ranking' => 'count', 'shorts' => 'exclude'])),
+        );
+        self::assertSame('ranking=count', LeaderboardController::serializeView(LeaderboardController::normalizeView(['ranking' => 'count'])));
+    }
+
+    public function testShortsCookieRoundTripsAndShortsInQueryIsAuthoritative(): void
+    {
+        $view = LeaderboardController::parseViewCookie('ranking=count&shorts=exclude');
+        self::assertSame('count', $view['ranking']);
+        self::assertTrue($view['shorts']);
+        self::assertSame($view, LeaderboardController::parseViewCookie(LeaderboardController::serializeView($view)));
+
+        // Bare `/` with that cookie: the remembered view, toggle on.
+        self::assertSame(['view' => $view, 'write' => false], LeaderboardController::resolveView([], 'ranking=count&shorts=exclude'));
+
+        // `shorts` alone in the query is authoritative (cookie ignored).
+        $resolved = LeaderboardController::resolveView(['shorts' => 'exclude'], 'ranking=count&market=LC');
+        self::assertSame(['view' => LeaderboardController::normalizeView(['shorts' => 'exclude']), 'write' => true], $resolved);
     }
 }

@@ -7,6 +7,7 @@ namespace Stockpicker\Web;
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
 use Stockpicker\Store\Instrument;
+use Stockpicker\Store\ShortPositionRepository;
 use Stockpicker\Store\WatchlistRepository;
 
 /**
@@ -45,6 +46,7 @@ final class StockDetailController
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
         private readonly WatchlistRepository $watchlist,
+        private readonly ShortPositionRepository $shorts,
     ) {
     }
 
@@ -77,6 +79,10 @@ final class StockDetailController
             : null;
 
         $badgesHtml = LeaderboardController::streakBadgeHtml($upStreak) . LeaderboardController::spikeBadgeHtml($spikeScore);
+        // spec-short-interest-badge-ui — per issuer, so the same in every
+        // Source mode; dated with FI's own position_date.
+        $short = $this->shorts->currentForIsins([$instrument->isin])[$instrument->isin] ?? null;
+        $badgesHtml .= LeaderboardController::shortBadgeWithDateHtml($short['pct'] ?? null, $short['position_date'] ?? null);
 
         if (self::isInsufficientHistory($primarySeries, $range)) {
             $chartHtml = '<p class="empty-state">' . self::e(self::insufficientHistoryMessage($primarySeries, $range)) . '</p>';

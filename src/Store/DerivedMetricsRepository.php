@@ -33,8 +33,15 @@ final class DerivedMetricsRepository
     public const SORT_COUNT = 'count';
     public const SORT_PCT = 'pct';
 
-    public function __construct(private readonly PDO $pdo)
-    {
+    /**
+     * @param \DateTimeImmutable|null $now the clock for the short-position
+     *     staleness cutoff (ShortPositionRepository::freshSince()); tests pin
+     *     it, null means the real current time
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly ?\DateTimeImmutable $now = null,
+    ) {
     }
 
     /**
@@ -87,9 +94,10 @@ final class DerivedMetricsRepository
      *
      * @return list<array<string, mixed>>
      */
-    public function topByOwnerCount(string $source, int $limit, ?string $market = null): array
+    public function topByOwnerCount(string $source, int $limit, ?string $market = null, bool $excludeShorted = false): array
     {
         $marketCondition = self::marketCondition($market);
+        $shortCondition = self::shortedCondition($excludeShorted);
 
         $stmt = $this->pdo->prepare(
             <<<SQL
@@ -111,12 +119,14 @@ final class DerivedMetricsRepository
             WHERE latest.rn = 1
               AND i.last_seen IS NULL
               {$marketCondition}
+              {$shortCondition}
             ORDER BY latest.number_of_owners DESC, latest.isin ASC
             LIMIT :lim
             SQL
         );
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
         self::bindMarket($stmt, $market);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
@@ -143,10 +153,11 @@ final class DerivedMetricsRepository
      *
      * @throws \InvalidArgumentException when `$days` is not 7/30/90/365
      */
-    public function topByTrendQualityForPeriod(string $source, int $days, int $limit, ?string $market = null): array
+    public function topByTrendQualityForPeriod(string $source, int $days, int $limit, ?string $market = null, bool $excludeShorted = false): array
     {
         $col = self::periodPctColumn($days);
         $marketCondition = self::marketCondition($market);
+        $shortCondition = self::shortedCondition($excludeShorted);
 
         $stmt = $this->pdo->prepare(
             <<<SQL
@@ -170,6 +181,7 @@ final class DerivedMetricsRepository
               AND latest.up_streak >= 1
               AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)
               {$marketCondition}
+              {$shortCondition}
             ORDER BY latest.{$col} IS NULL, latest.{$col} DESC, latest.up_streak DESC, latest.isin ASC
             LIMIT :lim
             SQL
@@ -177,6 +189,7 @@ final class DerivedMetricsRepository
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
         $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
         self::bindMarket($stmt, $market);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
@@ -198,6 +211,37 @@ final class DerivedMetricsRepository
     {
         if ($market !== null && $market !== '') {
             $stmt->bindValue(':market', $market, PDO::PARAM_STR);
+        }
+    }
+
+    /**
+     * spec-short-interest-badge-ui — "Dölj blankade": drops instruments whose
+     * issuer (matched by LEI only) is in the *latest* FI snapshot at or above
+     * ShortPositionRepository::BADGE_THRESHOLD_PCT. Applied before LIMIT, so
+     * the top N refills. A NULL `i.lei`, an issuer absent from the latest
+     * snapshot, a stale latest snapshot (ShortPositionRepository::
+     * MAX_SNAPSHOT_AGE_DAYS) or an empty `short_position` table never
+     * matches — the row is kept. Same "current" semantics as
+     * ShortPositionRepository::currentForIsins().
+     */
+    private static function shortedCondition(bool $excludeShorted): string
+    {
+        return $excludeShorted
+            ? 'AND NOT EXISTS (
+                  SELECT 1 FROM short_position sp
+                  WHERE sp.lei = i.lei
+                    AND sp.snapshot_date = (SELECT MAX(snapshot_date) FROM short_position)
+                    AND sp.snapshot_date >= :short_fresh_since
+                    AND sp.position_pct >= :short_threshold
+              )'
+            : '';
+    }
+
+    private function bindShorted(\PDOStatement $stmt, bool $excludeShorted): void
+    {
+        if ($excludeShorted) {
+            $stmt->bindValue(':short_fresh_since', ShortPositionRepository::freshSince($this->now), PDO::PARAM_STR);
+            $stmt->bindValue(':short_threshold', (string) ShortPositionRepository::BADGE_THRESHOLD_PCT, PDO::PARAM_STR);
         }
     }
 
@@ -246,9 +290,10 @@ final class DerivedMetricsRepository
      *
      * @return list<array<string, mixed>>
      */
-    public function topByPlusDays(string $source, int $days, bool $excludeSpikes, int $limit, ?string $market = null): array
+    public function topByPlusDays(string $source, int $days, bool $excludeSpikes, int $limit, ?string $market = null, bool $excludeShorted = false): array
     {
         $marketCondition = self::marketCondition($market);
+        $shortCondition = self::shortedCondition($excludeShorted);
         $spikeCondition = $excludeSpikes
             ? 'AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)'
             : '';
@@ -318,6 +363,7 @@ final class DerivedMetricsRepository
               AND agg.new_owners > 0
               {$spikeCondition}
               {$marketCondition}
+              {$shortCondition}
             ORDER BY agg.plus_days DESC, agg.new_owners DESC, agg.isin ASC
             LIMIT :lim
             SQL
@@ -330,6 +376,7 @@ final class DerivedMetricsRepository
             $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
         }
         self::bindMarket($stmt, $market);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 

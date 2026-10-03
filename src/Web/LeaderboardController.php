@@ -6,6 +6,7 @@ namespace Stockpicker\Web;
 
 use Stockpicker\Adapter\NormalizedRow;
 use Stockpicker\Store\DerivedMetricsRepository;
+use Stockpicker\Store\ShortPositionRepository;
 use Stockpicker\Store\WatchlistRepository;
 
 /**
@@ -19,9 +20,12 @@ use Stockpicker\Store\WatchlistRepository;
  * out and inert in Flest ägare, with "Dölj spikar" to its right in
  * Plusdagar only); row 3 the market filter (Alla | LC | MC | SC | First
  * North), which narrows the top 10 *within* the market. In Plusdagar each
- * row carries a "{plus}/{data} · +{new}" chip.
+ * row carries a "{plus}/{data} · +{new}" chip. spec-short-interest-badge-ui
+ * — every row carries a "Blankad X %" badge when its issuer is shorted at or
+ * above ShortPositionRepository::BADGE_THRESHOLD_PCT, and the period row
+ * ends with a "Dölj blankade" toggle in every mode (`?shorts=exclude`).
  *
- * Source, ranking, period, market and the spike toggle come from the
+ * Source, ranking, period, market and the spike and short toggles come from the
  * query string and — spec-plusdagar-landing-cookie, a documented AD-14
  * exception — from the `topplista_view` cookie, per resolveView(): with no
  * view param the remembered view is rendered (cookie untouched); with only
@@ -79,6 +83,17 @@ final class LeaderboardController
     public const SPIKES_EXCLUDE = 'exclude';
 
     /**
+     * spec-short-interest-badge-ui — `?shorts=exclude` ("Dölj blankade")
+     * hides instruments whose issuer is at or above
+     * ShortPositionRepository::BADGE_THRESHOLD_PCT in the latest FI
+     * snapshot. A view param in every mode (unlike `spikes`).
+     */
+    public const SHORTS_EXCLUDE = 'exclude';
+
+    /** Lowercase Swedish month abbreviations for the Aktiedetalj "(FI 2 okt)" date. */
+    private const SWEDISH_MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+
+    /**
      * spec-5-4 — Topplista's third Source-switcher mode: a Web-layer-only
      * display concept (deliberately not added to NormalizedRow, which
      * represents real adapter data sources, not a display mode). In "Alla"
@@ -98,7 +113,7 @@ final class LeaderboardController
     public const VIEW_COOKIE_TTL_SECONDS = 365 * 24 * 60 * 60;
 
     /** The raw param keys that make up a Topplista view. */
-    private const VIEW_PARAMS = ['source', 'ranking', 'period', 'spikes', 'market'];
+    private const VIEW_PARAMS = ['source', 'ranking', 'period', 'spikes', 'market', 'shorts'];
 
     private const TOP_N = 10;
     private const SPARKLINE_WINDOW_DAYS = 30;
@@ -106,6 +121,7 @@ final class LeaderboardController
     public function __construct(
         private readonly DerivedMetricsRepository $metrics,
         private readonly WatchlistRepository $watchlist,
+        private readonly ShortPositionRepository $shorts,
     ) {
     }
 
@@ -121,8 +137,10 @@ final class LeaderboardController
         string $period = '',
         string $spikes = '',
         string $market = '',
+        string $shorts = '',
     ): string {
         $source = self::normalizeSource($source);
+        $excludeShorted = $shorts === self::SHORTS_EXCLUDE;
         $rankingMode = self::normalizeRanking($rankingMode);
         $period = self::normalizePeriod($period);
         $excludeSpikes = $spikes === self::SPIKES_EXCLUDE;
@@ -141,7 +159,7 @@ final class LeaderboardController
                 && !$this->metrics->historySpansDays($rankingSource, $days);
             $rows = $insufficientHistory
                 ? []
-                : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N, $market);
+                : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N, $market, $excludeShorted);
         } elseif ($rankingMode === self::RANKING_STEADY) {
             // spec-stadig-tillvaxt-period — sorted by the period's % growth;
             // every period is history-gated (the % needs a row N days back).
@@ -151,9 +169,9 @@ final class LeaderboardController
             $insufficientHistory = !$this->metrics->historySpansDays($rankingSource, $days);
             $rows = $insufficientHistory
                 ? []
-                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N, $market);
+                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N, $market, $excludeShorted);
         } else {
-            $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N, $market);
+            $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N, $market, $excludeShorted);
         }
 
         $starred = array_flip($this->watchlist->starredIsins());
@@ -164,6 +182,11 @@ final class LeaderboardController
             $nordnetOwners = $this->metrics->latestOwnerCountForIsins($isins, NormalizedRow::SOURCE_NORDNET);
         }
 
+        // spec-short-interest-badge-ui — one lookup per render, never per row.
+        $shortPositions = $rows === []
+            ? []
+            : $this->shorts->currentForIsins(array_map(static fn (array $row): string => (string) $row['isin'], $rows));
+
         if ($rows === []) {
             $bodyHtml = '<p class="empty-state">'
                 . self::e(self::emptyStateCopy($rankingMode, $period, $insufficientHistory)) . '</p>';
@@ -172,11 +195,19 @@ final class LeaderboardController
             foreach ($rows as $i => $row) {
                 $isin = (string) $row['isin'];
                 $rowNordnetOwners = $source === self::SOURCE_ALL ? ($nordnetOwners[$isin] ?? null) : null;
-                $bodyHtml .= $this->renderRow($row, $source, $rankingMode, $i + 1, isset($starred[$isin]), $rowNordnetOwners);
+                $bodyHtml .= $this->renderRow(
+                    $row,
+                    $source,
+                    $rankingMode,
+                    $i + 1,
+                    isset($starred[$isin]),
+                    $rowNordnetOwners,
+                    $shortPositions[$isin]['pct'] ?? null,
+                );
             }
         }
 
-        return self::pageHtml($source, $rankingMode, $period, $excludeSpikes, $market, $bodyHtml, $rows !== []);
+        return self::pageHtml($source, $rankingMode, $period, $excludeSpikes, $market, $bodyHtml, $rows !== [], $excludeShorted);
     }
 
     /**
@@ -202,7 +233,7 @@ final class LeaderboardController
      *
      * @param array<mixed> $raw
      *
-     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string}
+     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string, shorts: bool}
      */
     public static function normalizeView(array $raw): array
     {
@@ -220,6 +251,7 @@ final class LeaderboardController
             'period' => self::normalizePeriod($str['period']),
             'spikes' => $ranking === self::RANKING_PLUS && $str['spikes'] === self::SPIKES_EXCLUDE,
             'market' => FullListController::normalizeMarket($str['market']),
+            'shorts' => $str['shorts'] === self::SHORTS_EXCLUDE,
         ];
     }
 
@@ -233,13 +265,13 @@ final class LeaderboardController
      *  - `source` is the only view param (the Topplista tab on every page,
      *    `/?source=nordnet|alla`): the remembered view with that source
      *    replacing the stored one; the merged view is written;
-     *  - any of `ranking`/`period`/`market`/`spikes` present: authoritative
+     *  - any of `ranking`/`period`/`market`/`spikes`/`shorts` present: authoritative
      *    — missing params take their defaults (never cookie values) and
      *    the normalized view is written.
      *
      * @param array<mixed> $get
      *
-     * @return array{view: array{source: string, ranking: string, period: string, spikes: bool, market: ?string}, write: bool}
+     * @return array{view: array{source: string, ranking: string, period: string, spikes: bool, market: ?string, shorts: bool}, write: bool}
      */
     public static function resolveView(array $get, mixed $cookie): array
     {
@@ -267,7 +299,7 @@ final class LeaderboardController
      * view: the same query string url() emits (non-default params omitted,
      * `ranking` always present), without the leading "/?".
      *
-     * @param array{source: string, ranking: string, period: string, spikes: bool, market: ?string} $view
+     * @param array{source: string, ranking: string, period: string, spikes: bool, market: ?string, shorts: bool} $view
      */
     public static function serializeView(array $view): string
     {
@@ -277,6 +309,7 @@ final class LeaderboardController
             $view['period'],
             $view['spikes'],
             $view['market'],
+            $view['shorts'],
         ));
     }
 
@@ -285,7 +318,7 @@ final class LeaderboardController
      * (untrusted: missing, non-string or garbage all mean the defaults for
      * whatever is unusable) back through normalizeView().
      *
-     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string}
+     * @return array{source: string, ranking: string, period: string, spikes: bool, market: ?string, shorts: bool}
      */
     public static function parseViewCookie(mixed $cookie): array
     {
@@ -449,6 +482,72 @@ final class LeaderboardController
     }
 
     /**
+     * spec-short-interest-badge-ui — the badge/filter condition: a current
+     * (latest-snapshot) position at or above
+     * ShortPositionRepository::BADGE_THRESHOLD_PCT. Null (no LEI, or issuer
+     * absent from the latest snapshot) never qualifies.
+     */
+    public static function isShorted(?float $pct): bool
+    {
+        return $pct !== null && $pct >= ShortPositionRepository::BADGE_THRESHOLD_PCT;
+    }
+
+    /** "15,8 %" — one decimal, decimal comma, a normal space before `%`. */
+    private static function shortPctText(float $pct): string
+    {
+        return number_format($pct, 1, ',', '') . ' %';
+    }
+
+    /**
+     * spec-short-interest-badge-ui — the "Blankad 15,8 %" badge, last in
+     * every row's badge row. Quiet grey (`badge--nohist`): context to
+     * weigh, not a verdict. Empty below the threshold or with no position.
+     */
+    public static function shortBadgeHtml(?float $pct): string
+    {
+        if ($pct === null || !self::isShorted($pct)) {
+            return '';
+        }
+
+        return '<span class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
+            . self::e('Blankad ' . self::shortPctText($pct)) . '</span>';
+    }
+
+    /**
+     * spec-short-interest-badge-ui — Aktiedetalj's variant:
+     * "Blankad 15,8 % (FI 2 okt)", where the date is FI's own
+     * `position_date` (day without zero-padding + lowercase Swedish month
+     * abbreviation). An unparseable date drops the parenthesis rather than
+     * printing garbage.
+     */
+    public static function shortBadgeWithDateHtml(?float $pct, ?string $positionDate): string
+    {
+        if ($pct === null || !self::isShorted($pct)) {
+            return '';
+        }
+
+        $text = 'Blankad ' . self::shortPctText($pct);
+        $date = $positionDate !== null ? self::swedishShortDate($positionDate) : null;
+        if ($date !== null) {
+            $text .= ' (FI ' . $date . ')';
+        }
+
+        return '<span class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
+            . self::e($text) . '</span>';
+    }
+
+    /** "2026-10-02" → "2 okt"; null when not a valid Y-m-d date. */
+    public static function swedishShortDate(string $ymd): ?string
+    {
+        $d = \DateTimeImmutable::createFromFormat('!Y-m-d', $ymd);
+        if ($d === false || $d->format('Y-m-d') !== $ymd) {
+            return null;
+        }
+
+        return $d->format('j') . ' ' . self::SWEDISH_MONTHS[(int) $d->format('n') - 1];
+    }
+
+    /**
      * "+412 · 0,9 %" — count and percent always together (DESIGN.md), sign
      * shown on the count, magnitude-only on the percent. Empty when either
      * value is unavailable (no stored predecessor within 5 days to compare to).
@@ -534,8 +633,15 @@ final class LeaderboardController
      *   this row's isin, or null when Nordnet has no stored data for it
      *   ("ingen data", never a misleading zero).
      */
-    private function renderRow(array $row, string $source, string $rankingMode, int $rank, bool $starred, ?int $nordnetOwners): string
-    {
+    private function renderRow(
+        array $row,
+        string $source,
+        string $rankingMode,
+        int $rank,
+        bool $starred,
+        ?int $nordnetOwners,
+        ?float $shortPct,
+    ): string {
         $isin = (string) $row['isin'];
         $name = (string) $row['name'];
         $owners = (int) $row['number_of_owners'];
@@ -562,6 +668,7 @@ final class LeaderboardController
             $badgesHtml .= self::plusDaysChipHtml((int) $row['plus_days'], (int) $row['data_days'], (int) $row['new_owners']);
         }
         $badgesHtml .= self::spikeBadgeHtml($spikeScore);
+        $badgesHtml .= self::shortBadgeHtml($shortPct);
         $sparklineHtml = self::sparklineHtml($series, $muted, $spikeScore, $delta);
         $deltaChipHtml = self::deltaChipHtml($delta, $pct);
         $periodPctsHtml = self::periodPctsHtml($pct7d, $pct30d, $pct90d, $pct365d);
@@ -699,12 +806,13 @@ final class LeaderboardController
         ?string $market,
         string $rowsHtml,
         bool $hasRows,
+        bool $excludeShorted = false,
     ): string {
         $tabBar = self::tabBarHtml('topplista', $source);
-        $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes, $market);
-        $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes, $market);
-        $periodRow = self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes, $market);
-        $marketRow = self::marketRowHtml($source, $rankingMode, $period, $excludeSpikes, $market);
+        $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
+        $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
+        $periodRow = self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
+        $marketRow = self::marketRowHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
         $fullListHref = self::e(self::fullListUrl($source, $market));
         $infoHref = self::e(self::infoUrl($source));
         $rowHead = $hasRows ? self::rowHeadHtml() : '';
@@ -830,6 +938,7 @@ final class LeaderboardController
         string $period,
         bool $excludeSpikes,
         ?string $market,
+        bool $excludeShorted = false,
     ): string {
         // spec-5-4 — Alla shown first, before Avanza and Nordnet (Intent).
         // spec-topplista-market-filter — period and market (every mode) and
@@ -837,9 +946,9 @@ final class LeaderboardController
         $allaClass = $source === self::SOURCE_ALL ? 'tab tab--active' : 'tab';
         $avanzaClass = $source === NormalizedRow::SOURCE_AVANZA ? 'tab tab--active' : 'tab';
         $nordnetClass = $source === NormalizedRow::SOURCE_NORDNET ? 'tab tab--active' : 'tab';
-        $allaHref = self::e(self::url(self::SOURCE_ALL, $rankingMode, $period, $excludeSpikes, $market));
-        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode, $period, $excludeSpikes, $market));
-        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode, $period, $excludeSpikes, $market));
+        $allaHref = self::e(self::url(self::SOURCE_ALL, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted));
+        $avanzaHref = self::e(self::url(NormalizedRow::SOURCE_AVANZA, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted));
+        $nordnetHref = self::e(self::url(NormalizedRow::SOURCE_NORDNET, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted));
 
         return <<<HTML
         <div class="source-switcher" role="tablist" aria-label="Källa">
@@ -856,6 +965,7 @@ final class LeaderboardController
         string $period,
         bool $excludeSpikes,
         ?string $market,
+        bool $excludeShorted = false,
     ): string {
         $countClass = $rankingMode === self::RANKING_COUNT ? 'tab tab--active' : 'tab';
         $steadyClass = $rankingMode === self::RANKING_STEADY ? 'tab tab--active' : 'tab';
@@ -865,9 +975,9 @@ final class LeaderboardController
         // the period too, so it survives a round trip through it); only
         // Plusdagar carries the spike toggle. Plain labels: the period lives
         // in the period row, never in a tab.
-        $countHref = self::e(self::url($source, self::RANKING_COUNT, $period, false, $market));
-        $steadyHref = self::e(self::url($source, self::RANKING_STEADY, $period, false, $market));
-        $plusHref = self::e(self::url($source, self::RANKING_PLUS, $period, $excludeSpikes, $market));
+        $countHref = self::e(self::url($source, self::RANKING_COUNT, $period, false, $market, $excludeShorted));
+        $steadyHref = self::e(self::url($source, self::RANKING_STEADY, $period, false, $market, $excludeShorted));
+        $plusHref = self::e(self::url($source, self::RANKING_PLUS, $period, $excludeSpikes, $market, $excludeShorted));
 
         return <<<HTML
         <div class="ranking-toggle" role="tablist" aria-label="Rankningsläge">
@@ -884,7 +994,9 @@ final class LeaderboardController
      * segmented pill "Vecka | Månad | 3 mån | År" (same `.range-picker`
      * markup as Aktiedetalj's Range picker), plus — in Plusdagar only — the
      * checkbox-styled "☐/☑ Dölj spikar" link to its right (Stadig tillväxt
-     * always excludes spikes). In Flest ägare the period doesn't apply: the
+     * always excludes spikes), and — in every mode — "☐/☑ Dölj blankade"
+     * after it (spec-short-interest-badge-ui; a live link even in Flest ägare's
+     * muted row). In Flest ägare the period doesn't apply: the
      * row is greyed out (`.period-row--muted`), its segments are inert
      * `<span>`s rather than links, the remembered period stays marked, and
      * a muted note says "Gäller inte Flest ägare". Plain links, no JS
@@ -896,6 +1008,7 @@ final class LeaderboardController
         string $period,
         bool $excludeSpikes,
         ?string $market,
+        bool $excludeShorted = false,
     ): string {
         $inert = $rankingMode === self::RANKING_COUNT;
 
@@ -909,7 +1022,7 @@ final class LeaderboardController
                     : "<span class=\"tab\">{$label}</span>";
                 continue;
             }
-            $href = self::e(self::url($source, $rankingMode, $key, $excludeSpikes, $market));
+            $href = self::e(self::url($source, $rankingMode, $key, $excludeSpikes, $market, $excludeShorted));
             $segments .= $active
                 ? "<a class=\"tab tab--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
                 : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
@@ -919,11 +1032,22 @@ final class LeaderboardController
         if ($inert) {
             $extraHtml = '<span class="period-note">Gäller inte Flest ägare</span>';
         } elseif ($rankingMode === self::RANKING_PLUS) {
-            $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes, $market));
+            $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes, $market, $excludeShorted));
             $spikeClass = $excludeSpikes ? 'spike-toggle spike-toggle--active' : 'spike-toggle';
             $spikeGlyph = $excludeSpikes ? '☑' : '☐';
             $extraHtml = "<a class=\"{$spikeClass}\" href=\"{$spikeHref}\"><span aria-hidden=\"true\">{$spikeGlyph}</span> Dölj spikar</a>";
         }
+
+        // spec-short-interest-badge-ui — "Dölj blankade", a live link in
+        // every mode (including Flest ägare's muted row), right of the
+        // note / "Dölj spikar" / pill.
+        $shortHref = self::e(self::url($source, $rankingMode, $period, $excludeSpikes, $market, !$excludeShorted));
+        $shortClass = $excludeShorted ? 'spike-toggle short-toggle spike-toggle--active' : 'spike-toggle short-toggle';
+        $shortGlyph = $excludeShorted ? '☑' : '☐';
+        $extraHtml .= "<a class=\"{$shortClass}\" href=\"{$shortHref}\"><span aria-hidden=\"true\">{$shortGlyph}</span> Dölj blankade</a>";
+        // One wrapper for the pill's right-hand neighbours, so they stack
+        // under each other on a narrow viewport instead of squeezing.
+        $extraHtml = '<span class="period-extras">' . $extraHtml . '</span>';
 
         $rowClass = $inert ? 'period-row period-row--muted' : 'period-row';
         $pickerAttrs = $inert ? ' aria-disabled="true"' : '';
@@ -950,12 +1074,13 @@ final class LeaderboardController
         string $period,
         bool $excludeSpikes,
         ?string $market,
+        bool $excludeShorted = false,
     ): string {
         $options = array_merge([null], FullListController::MARKETS);
 
         $segments = '';
         foreach ($options as $option) {
-            $href = self::e(self::url($source, $rankingMode, $period, $excludeSpikes, $option));
+            $href = self::e(self::url($source, $rankingMode, $period, $excludeSpikes, $option, $excludeShorted));
             $label = self::e($option ?? 'Alla');
             $segments .= $option === $market
                 ? "<a class=\"tab tab--active\" href=\"{$href}\" aria-current=\"true\">{$label}</a>"
@@ -976,7 +1101,8 @@ final class LeaderboardController
      * link may be bare); every other param is omitted when it is the
      * default. `period` and `market` are carried in every mode
      * (spec-topplista-market-filter — Flest ägare ignores the period but
-     * keeps it for the next mode switch); `spikes` only in Plusdagar.
+     * keeps it for the next mode switch); `spikes` only in Plusdagar; `shorts`
+     * in every mode, only when on (spec-short-interest-badge-ui).
      */
     private static function url(
         string $source,
@@ -984,8 +1110,9 @@ final class LeaderboardController
         string $period = self::PERIOD_DEFAULT,
         bool $excludeSpikes = false,
         ?string $market = null,
+        bool $excludeShorted = false,
     ): string {
-        return '/?' . http_build_query(self::viewParams($source, $rankingMode, $period, $excludeSpikes, $market));
+        return '/?' . http_build_query(self::viewParams($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted));
     }
 
     /**
@@ -999,6 +1126,7 @@ final class LeaderboardController
         string $period,
         bool $excludeSpikes,
         ?string $market,
+        bool $excludeShorted = false,
     ): array {
         $params = [];
         if ($source === self::SOURCE_ALL) {
@@ -1012,6 +1140,9 @@ final class LeaderboardController
         }
         if ($rankingMode === self::RANKING_PLUS && $excludeSpikes) {
             $params['spikes'] = self::SPIKES_EXCLUDE;
+        }
+        if ($excludeShorted) {
+            $params['shorts'] = self::SHORTS_EXCLUDE;
         }
         if ($market !== null) {
             $params['market'] = $market;

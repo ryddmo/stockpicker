@@ -236,14 +236,14 @@
   summary: Measure Topplista/`/list` render time and `EXPLAIN` against production after the view gained four RANGE-framed windows.
   evidence: Unverified (maybe-false); settle with timings on Loopia before/after the migration. Would be medium if pages approach the 180s web-PHP limit.
 - source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
-  summary: AGENTS.md's "row CSS hand-duplicated across three controllers" pitfall is stale; the row CSS now lives in `public_html/assets/app.css`.
+  summary: RESOLVED 2026-10-03 (AGENTS.md updated) — AGENTS.md's "row CSS hand-duplicated across three controllers" pitfall is stale; the row CSS now lives in `public_html/assets/app.css`.
   evidence: The period-chip CSS change landed only in app.css; editing agent-context files is out of a story's scope.
 - source_spec: `_bmad-output/implementation-artifacts/spec-calendar-period-metrics.md`
   summary: Between rsync and `phinx migrate` on deploy, Topplista selects `pct_30d` before the view has it.
   evidence: Another instance of the pre-existing deploy-order window deferred in spec-5-5.
 - source_spec: `_bmad-output/implementation-artifacts/spec-topplista-market-filter.md`
-  summary: The Topplista tab link (from Fullständig lista, Aktiedetalj, Bevakningslista) resets ranking, period and market to defaults.
+  summary: RESOLVED 2026-10-03 (found already fixed by the topplista_view cookie, spec-plusdagar-landing-cookie / PR #29: the tab's source-only `/?source=` link restores the remembered view) — The Topplista tab link (from Fullständig lista, Aktiedetalj, Bevakningslista) resets ranking, period and market to defaults.
   evidence: tabBarHtml() in LeaderboardController/FullListController/StockDetailController builds the Topplista link from source only. That predates this change, and the market-filter intent only lists mode, source, period, market and full-list links as carrying state.
 - source_spec: `_bmad-output/implementation-artifacts/spec-short-interest-data.md`
-  summary: The UI half of the short-interest feature, still to build: a "Blankad X %" badge (≥ 5 %) on Topplista (all modes), Fullständig lista, Bevakningslista and Aktiedetalj ("Blankad 15,8 % (FI 2 okt)"), and a "Dölj blankade" toggle in all three Topplista modes (period row, remembered in the topplista_view cookie as `shorts=exclude`).
+  summary: RESOLVED 2026-10-03 (spec-short-interest-badge-ui, branch feat/short-interest-badge-ui) — The UI half of the short-interest feature, still to build: a "Blankad X %" badge (≥ 5 %) on Topplista (all modes), Fullständig lista, Bevakningslista and Aktiedetalj ("Blankad 15,8 % (FI 2 okt)"), and a "Dölj blankade" toggle in all three Topplista modes (period row, remembered in the topplista_view cookie as `shorts=exclude`).
   evidence: Split from the original spec on 2026-10-03 at Stefan's request ("data first"). The decisions are in the UX memlog (2026-10-03). It depends on short_position + instrument.lei from spec-short-interest-data.
