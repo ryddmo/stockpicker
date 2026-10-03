@@ -33,7 +33,14 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         );
 
         $this->owners = new OwnerCountRepository($this->pdo);
-        $this->metrics = new DerivedMetricsRepository($this->pdo);
+        // The clock only drives the short-position staleness cutoff; pinned
+        // so the fixed 2026-10-0x snapshots below stay "current".
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow());
+    }
+
+    private static function shortsNow(string $date = '2026-10-03'): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('Europe/Stockholm'));
     }
 
     /**
@@ -1890,6 +1897,26 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $this->insertShort('2026-10-02', 'LEIBETA0000000000001', '30.00');
         foreach ($this->topplistaCalls() as $name => $call) {
             self::assertCount(4, $call(true, null, 10), "{$name}: NULL lei is never hidden");
+        }
+    }
+
+    public function testShortedExclusionIgnoresALatestSnapshotOlderThanSevenDays(): void
+    {
+        $this->seedMarketFixture();
+        $beta = 'SE0000000202';
+        $this->setLei($beta, 'LEIBETA0000000000001');
+        $this->insertShort('2026-10-02', 'LEIBETA0000000000001', '30.00');
+
+        // 2026-10-09 is exactly 7 days after the snapshot: still current.
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow('2026-10-09'));
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertNotContains($beta, array_column($call(true, null, 10), 'isin'), "{$name}: 7-day-old snapshot still hides");
+        }
+
+        // 2026-10-10 is 8 days after: stale, so it counts as no data.
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow('2026-10-10'));
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertContains($beta, array_column($call(true, null, 10), 'isin'), "{$name}: stale snapshot hides nothing");
         }
     }
 }

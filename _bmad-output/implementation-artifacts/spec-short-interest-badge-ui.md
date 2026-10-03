@@ -169,3 +169,8 @@ deferred:
 - **Residual risks:**
   - The 390px period-row layout is not checked in a browser.
   - Badges depend on LEI coverage (719/743 resolved) and on the first nightly `shorts` run succeeding under web-PHP.
+
+## Follow-up (2026-10-03, at Stefan's request)
+
+- **Deferred staleness item resolved:** a latest snapshot older than 7 days (`ShortPositionRepository::MAX_SNAPSHOT_AGE_DAYS`, measured against today in Europe/Stockholm) counts as no data, in both `currentForIsins()` and the "Dölj blankade" filter. Both repos take an optional clock that the tests pin. The route tests use snapshot dates relative to today. New tests cover the 7-day boundary in the store and on the routes.
+- **AGENTS.md updated** with the new adapters, writers, the cookie and the short-interest rules. The stale row-CSS pitfall is fixed.

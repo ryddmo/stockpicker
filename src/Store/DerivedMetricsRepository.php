@@ -33,8 +33,15 @@ final class DerivedMetricsRepository
     public const SORT_COUNT = 'count';
     public const SORT_PCT = 'pct';
 
-    public function __construct(private readonly PDO $pdo)
-    {
+    /**
+     * @param \DateTimeImmutable|null $now the clock for the short-position
+     *     staleness cutoff (ShortPositionRepository::freshSince()); tests pin
+     *     it, null means the real current time
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly ?\DateTimeImmutable $now = null,
+    ) {
     }
 
     /**
@@ -119,7 +126,7 @@ final class DerivedMetricsRepository
         );
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
         self::bindMarket($stmt, $market);
-        self::bindShorted($stmt, $excludeShorted);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
@@ -182,7 +189,7 @@ final class DerivedMetricsRepository
         $stmt->bindValue(':source', $source, PDO::PARAM_STR);
         $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
         self::bindMarket($stmt, $market);
-        self::bindShorted($stmt, $excludeShorted);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 
@@ -212,8 +219,10 @@ final class DerivedMetricsRepository
      * issuer (matched by LEI only) is in the *latest* FI snapshot at or above
      * ShortPositionRepository::BADGE_THRESHOLD_PCT. Applied before LIMIT, so
      * the top N refills. A NULL `i.lei`, an issuer absent from the latest
-     * snapshot, or an empty `short_position` table never matches — the row
-     * is kept. Same "current" semantics as ShortPositionRepository::currentForIsins().
+     * snapshot, a stale latest snapshot (ShortPositionRepository::
+     * MAX_SNAPSHOT_AGE_DAYS) or an empty `short_position` table never
+     * matches — the row is kept. Same "current" semantics as
+     * ShortPositionRepository::currentForIsins().
      */
     private static function shortedCondition(bool $excludeShorted): string
     {
@@ -222,14 +231,16 @@ final class DerivedMetricsRepository
                   SELECT 1 FROM short_position sp
                   WHERE sp.lei = i.lei
                     AND sp.snapshot_date = (SELECT MAX(snapshot_date) FROM short_position)
+                    AND sp.snapshot_date >= :short_fresh_since
                     AND sp.position_pct >= :short_threshold
               )'
             : '';
     }
 
-    private static function bindShorted(\PDOStatement $stmt, bool $excludeShorted): void
+    private function bindShorted(\PDOStatement $stmt, bool $excludeShorted): void
     {
         if ($excludeShorted) {
+            $stmt->bindValue(':short_fresh_since', ShortPositionRepository::freshSince($this->now), PDO::PARAM_STR);
             $stmt->bindValue(':short_threshold', (string) ShortPositionRepository::BADGE_THRESHOLD_PCT, PDO::PARAM_STR);
         }
     }
@@ -365,7 +376,7 @@ final class DerivedMetricsRepository
             $stmt->bindValue(':spike_threshold', self::SPIKE_THRESHOLD);
         }
         self::bindMarket($stmt, $market);
-        self::bindShorted($stmt, $excludeShorted);
+        $this->bindShorted($stmt, $excludeShorted);
         $stmt->bindValue(':lim', max(0, $limit), PDO::PARAM_INT);
         $stmt->execute();
 

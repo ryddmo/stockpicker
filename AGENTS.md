@@ -40,7 +40,8 @@ architecture spine.
   `_bmad-output/planning-artifacts/ux-designs/ux-stockpicker-2026-09-12/{DESIGN.md,EXPERIENCE.md}`
 - Layout: `public_html/` thin front controller — public: `/health`; token-gated:
   `/cron/refill`, `/cron/work`, `/cron/derive`; session-gated: `/login`, `/`
-  (Topplista), `/list`, `/watchlist`, `/stock/{isin}`; plus `assets/watchlist.js`.
+  (Topplista), `/list`, `/watchlist`, `/stock/{isin}`, `/info`; plus `assets/app.css`
+  (all page CSS) and `assets/watchlist.js`.
   `src/{Adapter,Pipeline,Store,Error,Web}/`; `bin/` for SSH-run scripts;
   `db/migrations/` (Phinx); `config.php` outside webroot.
 - Deploying to Loopia, and every tunable `settings.*` key with its default
@@ -79,8 +80,10 @@ merged and live) — trust `git log` and this section over it for current state.
 
 - All external HTTP lives in `src/Adapter/` — owner-count sources behind the `SourceAdapter`
   port, the universe listing in its own adapter class (`AvanzaUniverseAdapter`,
-  `listUniverse()`, not a `SourceAdapter`). No `curl`/Guzzle, source URL, or source-specific
-  parsing anywhere else. (AD-1)
+  `listUniverse()`, not a `SourceAdapter`), and the short-interest sources in theirs:
+  `FiShortPositionAdapter` (FI blankningsregister file, behind `ShortPositionSource`) and
+  `GleifAdapter` (ISIN → issuer LEI, behind `LeiResolver`). No `curl`/Guzzle, source URL,
+  or source-specific parsing anywhere else. (AD-1)
 - All DB access goes through PDO repositories in `src/Store/` — no SQL in pipeline,
   adapter, or web code, no ORM. (AD-14)
 - `src/Web/` and `src/Pipeline/` are parallel layers that never call each other — both
@@ -88,10 +91,17 @@ merged and live) — trust `git log` and this section over it for current state.
   methods, never inline in a controller. An uncaught `src/Web/` exception is caught by
   the same shared front-controller handler as the cron routes — one generic error page,
   never a per-controller variant. (AD-14)
-- One writer per table: `instrument` is written only by `UniverseSync`; each source's flow
-  writes only its own `source` rows in `owner_count_daily`; `Deriver` reads facts, never
-  writes them; `watchlist` is written only by `WatchlistController`/`WatchlistRepository`
-  — the first write path in the system that isn't the nightly pipeline. (AD-3, AD-15)
+- One writer per table: `instrument` is written only by `UniverseSync` (including
+  `instrument.lei`, resolved via GLEIF in its LEI pass); each source's flow writes only its
+  own `source` rows in `owner_count_daily`; `Deriver` reads facts, never writes them;
+  `short_position` is written only by `ShortPositionSync` (one FI snapshot per night, run
+  from the first `/cron/derive` hit, `run_type='shorts'`); `watchlist` is written only by
+  `WatchlistController`/`WatchlistRepository` — the first write path in the system that
+  isn't the nightly pipeline. (AD-3, AD-15)
+- Short interest is matched to instruments by LEI only, never by name. "Current" means the
+  latest snapshot, and only if it is at most `ShortPositionRepository::MAX_SNAPSHOT_AGE_DAYS`
+  (7) days old; the badge/filter threshold is `BADGE_THRESHOLD_PCT` (5 %). Read via
+  `currentForIsins()` (badges) and `DerivedMetricsRepository`'s `$excludeShorted` (filter).
 - Fact storage is idempotent upsert keyed on `(isin, source, as_of_date)` — a re-run night
   yields the same end state, no existing row overwritten. (AD-4)
 - Adapter `fetch()` returns a normalized row or a typed error
@@ -120,13 +130,19 @@ merged and live) — trust `git log` and this section over it for current state.
   cookie gets a "session expired" message. (AD-13)
 - UI copy — labels, errors, dates — is Swedish throughout; never introduce English UI
   text. (NFR12)
+- Topplista remembers its last view in the `topplista_view` cookie (a documented AD-14
+  exception, not stored state in the DB). Only `/` reads or writes it, via
+  `LeaderboardController::resolveView()`, and its value always goes through
+  `normalizeView()`. A query with no view param uses the cookie without rewriting it; a
+  `source`-only query (the Topplista tab) merges into it; any other view param
+  (`ranking`/`period`/`spikes`/`market`/`shorts`) is authoritative.
 
 ## Known pitfalls
 
-- Leaderboard-style row CSS (`.row-body`/`.namecol`/`.trend`/`.statcol`/etc.) is
-  hand-duplicated identically across `LeaderboardController.php`,
-  `FullListController.php`, and `WatchlistController.php` (no shared CSS file) — a row
-  layout change must be made in all three, verified against all three.
+- All page CSS lives in `public_html/assets/app.css`, and the row markup is shared via
+  `LeaderboardController::rowBodyHtml()` — but Topplista, Fullständig lista and
+  Bevakningslista each build their own badge row and `renderRow()`; a new row badge or row
+  change must be added to all three controllers (and Aktiedetalj for badges).
 - `tests/Store/StoreTestCase.php::createSchema()` hand-mirrors every table's DDL instead
   of running the real Phinx migrations — a migration-only schema change (new column,
   index, type) can pass the store test suite silently while drifting from production

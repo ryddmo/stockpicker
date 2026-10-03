@@ -2612,6 +2612,18 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
             ->execute(['lei' => $lei, 'isin' => $isin]);
     }
 
+    /**
+     * A `snapshot_date` relative to the real Stockholm today: the front
+     * controller's short-position staleness cutoff uses the real clock, so
+     * fixed snapshot dates would go stale (positions are fixed dates).
+     */
+    private static function snapshotDaysAgo(int $days): string
+    {
+        return (new \DateTimeImmutable('now', new \DateTimeZone('Europe/Stockholm')))
+            ->modify(sprintf('-%d days', $days))
+            ->format('Y-m-d');
+    }
+
     private function insertShortPosition(string $snapshotDate, string $lei, string $pct, string $positionDate): void
     {
         $this->pdo->prepare(
@@ -2643,9 +2655,9 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         $this->setLei('SE0000001001', 'LEIALPHA000000000001');
         $this->setLei('SE0000001002', 'LEIBETA0000000000001');
         $this->setLei('SE0000001003', 'LEIGAMMA000000000001');
-        $this->insertShortPosition('2026-10-01', 'LEIALPHA000000000001', '20.00', '2026-09-30');
-        $this->insertShortPosition('2026-10-02', 'LEIBETA0000000000001', '15.82', '2026-10-02');
-        $this->insertShortPosition('2026-10-02', 'LEIGAMMA000000000001', '4.99', '2026-10-01');
+        $this->insertShortPosition(self::snapshotDaysAgo(1), 'LEIALPHA000000000001', '20.00', '2026-09-30');
+        $this->insertShortPosition(self::snapshotDaysAgo(0), 'LEIBETA0000000000001', '15.82', '2026-10-02');
+        $this->insertShortPosition(self::snapshotDaysAgo(0), 'LEIGAMMA000000000001', '4.99', '2026-10-01');
     }
 
     public function testShortBadgeShowsLastInTheBadgeRowOnEveryTopplistaModeAndSource(): void
@@ -2775,7 +2787,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
             $this->seedPlusMonth($isin, 1000, 12 - $i);
         }
         $this->setLei('SE0000004001', 'LEITOP00000000000001');
-        $this->insertShortPosition('2026-10-02', 'LEITOP00000000000001', '7.50', '2026-10-02');
+        $this->insertShortPosition(self::snapshotDaysAgo(0), 'LEITOP00000000000001', '7.50', '2026-10-02');
 
         [, $offBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
         $off = $this->rowIsins($offBody);
@@ -2804,7 +2816,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('☑</span> Dölj blankade', $body);
         self::assertSame(['SE0000001002', 'SE0000001001'], $this->rowIsins($body));
 
-        $this->insertShortPosition('2026-10-02', 'LEIBETA0000000000001', '15.82', '2026-10-02');
+        $this->insertShortPosition(self::snapshotDaysAgo(0), 'LEIBETA0000000000001', '15.82', '2026-10-02');
 
         // Garbage values are off, never a 500.
         foreach (['/?ranking=plus&shorts=yes', '/?ranking=plus&shorts[]=x'] as $path) {
@@ -2820,6 +2832,30 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertSame(200, $status);
         self::assertSame([], $this->rowIsins($body));
         self::assertStringContainsString('Inga aktier med fler ägare under perioden.', $body);
+    }
+
+    public function testAShortSnapshotOlderThanSevenDaysShowsNoBadgeAndHidesNothing(): void
+    {
+        $this->seedMatchedUniverse();
+        $this->seedPlusMonth('SE0000001001', 1000, 1);
+        $this->seedPlusMonth('SE0000001002', 50000, 100);
+        $this->setLei('SE0000001002', 'LEIBETA0000000000001');
+        $this->insertShortPosition(self::snapshotDaysAgo(8), 'LEIBETA0000000000001', '15.82', '2026-10-02');
+
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&shorts=exclude', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('badge--short', $body);
+        self::assertSame(['SE0000001002', 'SE0000001001'], $this->rowIsins($body), 'stale snapshot hides nothing');
+
+        [$status, $body] = $this->endpoint->get('/stock/SE0000001002', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertStringNotContainsString('Blankad', $body);
+
+        // 7 days old is still current.
+        $this->pdo->exec("UPDATE short_position SET snapshot_date = '" . self::snapshotDaysAgo(7) . "'");
+        [$status, $body] = $this->endpoint->get('/?ranking=plus&shorts=exclude', $this->validCookie());
+        self::assertSame(200, $status);
+        self::assertSame(['SE0000001001'], $this->rowIsins($body));
     }
 
     private function seedOwnerCount(
