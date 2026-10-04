@@ -22,8 +22,14 @@ final class ShortPositionRepositoryTest extends StoreTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->repo = new ShortPositionRepository($this->pdo);
+        $this->repo = new ShortPositionRepository($this->pdo, self::now());
         $this->instruments = new InstrumentRepository($this->pdo);
+    }
+
+    /** The staleness clock, pinned so the fixed 2026-10-0x snapshots stay current. */
+    private static function now(string $date = '2026-10-03'): DateTimeImmutable
+    {
+        return new DateTimeImmutable($date . ' 12:00:00', new DateTimeZone('Europe/Stockholm'));
     }
 
     private function fetchedAt(): DateTimeImmutable
@@ -145,5 +151,20 @@ final class ShortPositionRepositoryTest extends StoreTestCase
         $this->instruments->cacheLei('SE0000163628', self::OTHER_LEI);
 
         self::assertSame(self::ELEKTA_LEI, $this->instruments->get('SE0000163628')?->lei);
+    }
+
+    public function testCurrentForIsinsIgnoresALatestSnapshotOlderThanSevenDays(): void
+    {
+        $this->instrument('SE0000163628', 'Elekta B', self::ELEKTA_LEI);
+        $this->repo->upsertSnapshot('2026-10-03', [new ShortPosition(self::ELEKTA_LEI, 'Elekta AB (publ)', 16.05, '2026-10-02')], $this->fetchedAt());
+
+        self::assertSame(
+            ['SE0000163628' => ['pct' => 16.05, 'position_date' => '2026-10-02']],
+            (new ShortPositionRepository($this->pdo, self::now('2026-10-10')))->currentForIsins(['SE0000163628']),
+            'exactly 7 days old is still current',
+        );
+        self::assertSame([], (new ShortPositionRepository($this->pdo, self::now('2026-10-11')))->currentForIsins(['SE0000163628']), '8 days old is stale');
+        self::assertSame('2026-10-11', ShortPositionRepository::freshSince(new DateTimeImmutable('2026-10-18 00:30:00', new DateTimeZone('Europe/Stockholm'))));
+        self::assertSame('2026-10-11', ShortPositionRepository::freshSince(new DateTimeImmutable('2026-10-17 22:30:00', new DateTimeZone('UTC'))), 'today is the Stockholm date');
     }
 }

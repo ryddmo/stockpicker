@@ -17,12 +17,49 @@ use Stockpicker\Adapter\ShortPosition;
  * date (`snapshot_date`). The *current* position of an issuer is its row in
  * the latest snapshot (`MAX(snapshot_date)`) — FI's file lists only issuers
  * that currently have a reported position, so an issuer absent from the
- * latest snapshot has none, and an older row never counts.
+ * latest snapshot has none, and an older row never counts. A latest
+ * snapshot older than self::MAX_SNAPSHOT_AGE_DAYS (the FI fetch has kept
+ * failing) counts as no data at all: no badge, nothing hidden.
  */
 final class ShortPositionRepository
 {
-    public function __construct(private readonly PDO $pdo)
+    /**
+     * spec-short-interest-badge-ui — the single threshold for the
+     * "Blankad X %" badge and the Topplista "Dölj blankade" filter, compared
+     * against the raw stored `position_pct` (>= qualifies). Shared by
+     * DerivedMetricsRepository's exclusion SQL and
+     * LeaderboardController::isShorted(), so the two can never drift apart.
+     */
+    public const BADGE_THRESHOLD_PCT = 5.0;
+
+    /**
+     * A latest snapshot whose `snapshot_date` is more than this many days
+     * before today (Europe/Stockholm) is stale and ignored everywhere —
+     * badges and the "Dölj blankade" filter alike — so weeks-old positions
+     * are never shown as current when the nightly FI fetch keeps failing.
+     * Covers weekends and holidays (no fetch on non-trading nights).
+     */
+    public const MAX_SNAPSHOT_AGE_DAYS = 7;
+
+    /**
+     * @param DateTimeImmutable|null $now the clock for the staleness cutoff
+     *     (tests pin it); null means the real current time
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly ?DateTimeImmutable $now = null,
+    ) {
+    }
+
+    /**
+     * The oldest `snapshot_date` still counted as current: today
+     * (Europe/Stockholm) minus self::MAX_SNAPSHOT_AGE_DAYS, as Y-m-d.
+     */
+    public static function freshSince(?DateTimeImmutable $now = null): string
     {
+        $today = ($now ?? new DateTimeImmutable('now'))->setTimezone(new DateTimeZone('Europe/Stockholm'));
+
+        return $today->modify(sprintf('-%d days', self::MAX_SNAPSHOT_AGE_DAYS))->format('Y-m-d');
     }
 
     /**
@@ -82,7 +119,8 @@ final class ShortPositionRepository
      * matching). Share classes of one issuer (same LEI) each get that
      * issuer's position. An ISIN with no resolved LEI, or whose issuer is
      * absent from the latest snapshot, is simply missing from the result —
-     * an older snapshot row never counts.
+     * an older snapshot row never counts. A stale latest snapshot (older
+     * than self::MAX_SNAPSHOT_AGE_DAYS) yields an empty result.
      *
      * @param list<string> $isins
      *
@@ -101,9 +139,10 @@ final class ShortPositionRepository
                FROM instrument i
                JOIN short_position sp ON sp.lei = i.lei
               WHERE i.isin IN ($placeholders)
-                AND sp.snapshot_date = (SELECT MAX(snapshot_date) FROM short_position)"
+                AND sp.snapshot_date = (SELECT MAX(snapshot_date) FROM short_position)
+                AND sp.snapshot_date >= ?"
         );
-        $stmt->execute($isins);
+        $stmt->execute([...$isins, self::freshSince($this->now)]);
 
         $out = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {

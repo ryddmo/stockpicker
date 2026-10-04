@@ -33,7 +33,14 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         );
 
         $this->owners = new OwnerCountRepository($this->pdo);
-        $this->metrics = new DerivedMetricsRepository($this->pdo);
+        // The clock only drives the short-position staleness cutoff; pinned
+        // so the fixed 2026-10-0x snapshots below stay "current".
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow());
+    }
+
+    private static function shortsNow(string $date = '2026-10-03'): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable($date . ' 12:00:00', new \DateTimeZone('Europe/Stockholm'));
     }
 
     /**
@@ -1800,5 +1807,116 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 38));
         self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_AVANZA, 90));
         self::assertFalse($this->metrics->historySpansDays(NormalizedRow::SOURCE_NORDNET, 7), 'per source');
+    }
+
+    // -- spec-short-interest-badge-ui: "Dölj blankade" on the three rankings --
+
+    private function setLei(string $isin, ?string $lei): void
+    {
+        $this->pdo->prepare('UPDATE instrument SET lei = :lei WHERE isin = :isin')
+            ->execute(['lei' => $lei, 'isin' => $isin]);
+    }
+
+    private function insertShort(string $snapshotDate, string $lei, string $pct): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO short_position (snapshot_date, lei, issuer_name, position_pct, position_date, fetched_at)
+             VALUES (:snapshot_date, :lei, :name, :pct, :position_date, :fetched_at)'
+        )->execute([
+            'snapshot_date' => $snapshotDate,
+            'position_date' => $snapshotDate,
+            'lei' => $lei,
+            'name' => 'Emittent ' . $lei,
+            'pct' => $pct,
+            'fetched_at' => $snapshotDate . ' 20:00:00',
+        ]);
+    }
+
+    /**
+     * @return array<string, callable(bool, ?string, int): list<array<string, mixed>>>
+     */
+    private function topplistaCalls(): array
+    {
+        $src = NormalizedRow::SOURCE_AVANZA;
+
+        return [
+            'topByOwnerCount' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByOwnerCount($src, $lim, $m, $x),
+            'topByTrendQualityForPeriod' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByTrendQualityForPeriod($src, 30, $lim, $m, $x),
+            'topByPlusDays' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByPlusDays($src, 30, false, $lim, $m, $x),
+        ];
+    }
+
+    public function testEveryTopplistaRankingExcludesLatestSnapshotShortedIssuersBeforeTheLimit(): void
+    {
+        $this->seedMarketFixture();
+        $alpha = 'SE0000000201';
+        $beta = 'SE0000000202';
+        $gamma = 'SE0000000203';
+        $delta = 'SE0000000205';
+
+        // Alpha: shorted only in an older snapshot (stale) -> never hidden.
+        // Beta + Delta: two share classes of one issuer at 6 % -> both hidden.
+        // Gamma: 4.99 % -> below the threshold, kept.
+        $this->setLei($alpha, 'LEIALPHA000000000001');
+        $this->setLei($beta, 'LEIBETA0000000000001');
+        $this->setLei($delta, 'LEIBETA0000000000001');
+        $this->setLei($gamma, 'LEIGAMMA000000000001');
+        $this->insertShort('2026-10-01', 'LEIALPHA000000000001', '20.00');
+        $this->insertShort('2026-10-01', 'LEIGAMMA000000000001', '9.00');
+        $this->insertShort('2026-10-02', 'LEIBETA0000000000001', '6.00');
+        $this->insertShort('2026-10-02', 'LEIGAMMA000000000001', '4.99');
+
+        foreach ($this->topplistaCalls() as $name => $call) {
+            $off = array_column($call(false, null, 10), 'isin');
+            self::assertCount(4, $off, "{$name}: toggle off hides nothing");
+            $on = array_column($call(true, null, 10), 'isin');
+            self::assertSame(array_values(array_intersect($off, [$alpha, $gamma])), $on, "{$name}: Beta/Delta hidden, Alpha (stale) and Gamma (4.99) kept");
+            self::assertSame([$gamma], array_column($call(true, 'MC', 1), 'isin'), "{$name}: filtered before LIMIT, so the next row moves up");
+        }
+
+        // Exactly 5.00 qualifies.
+        $this->pdo->exec("UPDATE short_position SET position_pct = 5.00 WHERE snapshot_date = '2026-10-02' AND lei = 'LEIGAMMA000000000001'");
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertSame([], $call(true, 'MC', 10), "{$name}: every MC qualifier shorted -> empty");
+        }
+    }
+
+    public function testShortedExclusionKeepsInstrumentsWithoutLeiAndDoesNothingWithoutASnapshot(): void
+    {
+        $this->seedMarketFixture();
+
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertSame(
+                array_column($call(false, null, 10), 'isin'),
+                array_column($call(true, null, 10), 'isin'),
+                "{$name}: empty short_position hides nothing",
+            );
+        }
+
+        // A snapshot exists, but no instrument has a LEI: NULL never matches.
+        $this->insertShort('2026-10-02', 'LEIBETA0000000000001', '30.00');
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertCount(4, $call(true, null, 10), "{$name}: NULL lei is never hidden");
+        }
+    }
+
+    public function testShortedExclusionIgnoresALatestSnapshotOlderThanSevenDays(): void
+    {
+        $this->seedMarketFixture();
+        $beta = 'SE0000000202';
+        $this->setLei($beta, 'LEIBETA0000000000001');
+        $this->insertShort('2026-10-02', 'LEIBETA0000000000001', '30.00');
+
+        // 2026-10-09 is exactly 7 days after the snapshot: still current.
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow('2026-10-09'));
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertNotContains($beta, array_column($call(true, null, 10), 'isin'), "{$name}: 7-day-old snapshot still hides");
+        }
+
+        // 2026-10-10 is 8 days after: stale, so it counts as no data.
+        $this->metrics = new DerivedMetricsRepository($this->pdo, self::shortsNow('2026-10-10'));
+        foreach ($this->topplistaCalls() as $name => $call) {
+            self::assertContains($beta, array_column($call(true, null, 10), 'isin'), "{$name}: stale snapshot hides nothing");
+        }
     }
 }

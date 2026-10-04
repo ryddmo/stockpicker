@@ -91,6 +91,7 @@ try {
             $controller = new LeaderboardController(
                 new DerivedMetricsRepository($pdo),
                 new WatchlistRepository($pdo),
+                new ShortPositionRepository($pdo),
             );
 
             // spec-plusdagar-landing-cookie — which of the query string and
@@ -109,6 +110,7 @@ try {
                 $view['period'],
                 $view['spikes'] ? LeaderboardController::SPIKES_EXCLUDE : '',
                 $view['market'] ?? '',
+                $view['shorts'] ? LeaderboardController::SHORTS_EXCLUDE : '',
             );
 
             if ($resolved['write']) {
@@ -140,6 +142,7 @@ try {
             $controller = new FullListController(
                 new DerivedMetricsRepository($pdo),
                 new WatchlistRepository($pdo),
+                new ShortPositionRepository($pdo),
             );
 
             $source = $_GET['source'] ?? '';
@@ -167,7 +170,10 @@ try {
             }
 
             $pdo = Database::connect($services['config']);
-            $controller = new WatchlistController(new DerivedMetricsRepository($pdo));
+            $controller = new WatchlistController(
+                new DerivedMetricsRepository($pdo),
+                new ShortPositionRepository($pdo),
+            );
 
             $source = $_GET['source'] ?? '';
             $source = is_string($source) ? $source : '';
@@ -625,6 +631,7 @@ function route_stock_detail(array $services, string $isin): void
     $controller = new StockDetailController(
         new DerivedMetricsRepository($pdo),
         new WatchlistRepository($pdo),
+        new ShortPositionRepository($pdo),
     );
 
     $source = $_GET['source'] ?? '';
