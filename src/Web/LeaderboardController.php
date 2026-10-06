@@ -809,6 +809,7 @@ final class LeaderboardController
         bool $excludeShorted = false,
     ): string {
         $tabBar = self::tabBarHtml('topplista', $source);
+        $homeHref = self::e(self::homeHref($source));
         $sourceSwitcher = self::sourceSwitcherHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
         $rankingToggle = self::rankingToggleHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
         $periodRow = self::periodRowHtml($source, $rankingMode, $period, $excludeSpikes, $market, $excludeShorted);
@@ -825,11 +826,12 @@ final class LeaderboardController
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Topplista — stockpicker</title>
         <link rel="stylesheet" href="/assets/app.css">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
         </head>
         <body>
         <div class="page">
           <div class="nav-strip">
-            <div class="wordmark">Stockpicker</div>
+            <a class="wordmark" href="{$homeHref}"><img src="/assets/stockpicker-logo-horizontal.png" alt="Stockpicker" class="wordmark-logo"></a>
             {$tabBar}
           </div>
           <header class="page-header">
@@ -895,6 +897,36 @@ final class LeaderboardController
     }
 
     /**
+     * Shared by tabBarHtml()'s Topplista/Bevakningslista tabs and the
+     * wordmark/home link (pageHtml()) — one source of truth for "what does
+     * carrying the source forward mean from here".
+     *
+     * spec-5-4 (review round, iteration 1): unlike fullListUrl()/infoUrl()
+     * (whose targets don't support Alla, so dropping the param is
+     * harmless), Topplista itself *does* support Alla — so it must carry
+     * SOURCE_ALL forward too, or clicking home while already in Alla mode
+     * silently resets the view back to Avanza.
+     */
+    private static function sourceSuffix(string $source): string
+    {
+        return match ($source) {
+            self::SOURCE_ALL => '?source=alla',
+            NormalizedRow::SOURCE_NORDNET => '?source=nordnet',
+            default => '',
+        };
+    }
+
+    /**
+     * Where the wordmark/home link (pageHtml()) goes — per the design
+     * handbook's 2026-10-06 wordmark-is-a-link decision ("samma mål och
+     * URL-regler som flikfältets Topplista-flik").
+     */
+    private static function homeHref(string $source): string
+    {
+        return '/' . self::sourceSuffix($source);
+    }
+
+    /**
      * Story 4.5 — the persistent two-tab bar (Topplista, Bevakningslista)
      * added to all four authenticated pages (Design Notes/Code Map,
      * spec-4-5). No shared layout file exists (Stories 4.3/4.4's
@@ -910,17 +942,7 @@ final class LeaderboardController
     {
         $topplistaClass = $active === 'topplista' ? 'tab tab--active' : 'tab';
         $watchlistClass = $active === 'watchlist' ? 'tab tab--active' : 'tab';
-        // spec-5-4 (review round, iteration 1): unlike fullListUrl()/infoUrl()
-        // (whose targets don't support Alla, so dropping the param is
-        // harmless), this tab bar's own "Topplista" link points at Topplista
-        // itself, which *does* support Alla — so it must carry SOURCE_ALL
-        // forward too, or clicking it while already in Alla mode silently
-        // resets the view back to Avanza.
-        $suffix = match ($source) {
-            self::SOURCE_ALL => '?source=alla',
-            NormalizedRow::SOURCE_NORDNET => '?source=nordnet',
-            default => '',
-        };
+        $suffix = self::sourceSuffix($source);
         $topplistaHref = self::e('/' . $suffix);
         $watchlistHref = self::e('/watchlist' . $suffix);
 

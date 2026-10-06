@@ -639,6 +639,7 @@ final class StockDetailController
         $ariaPressed = $starred ? 'true' : 'false';
 
         $tabBar = self::tabBarHtml('topplista', $source);
+        $homeHref = self::e(self::homeHref($source));
         $rangePicker = self::rangePickerHtml($isin, $source, $range);
         $sourceSwitcher = self::sourceSwitcherHtml($isin, $source, $range);
         $avanzaLink = self::avanzaLinkHtml($instrument->avanzaOrderbookId);
@@ -651,11 +652,12 @@ final class StockDetailController
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{$eName} — stockpicker</title>
         <link rel="stylesheet" href="/assets/app.css">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
         </head>
         <body>
         <div class="page">
           <div class="nav-strip">
-            <div class="wordmark">Stockpicker</div>
+            <a class="wordmark" href="{$homeHref}"><img src="/assets/stockpicker-logo-horizontal.png" alt="Stockpicker" class="wordmark-logo"></a>
             {$tabBar}
           </div>
           <header class="stock-header">
@@ -694,6 +696,16 @@ final class StockDetailController
      * reachable only via Topplista's own footer action, never a tab of
      * their own).
      */
+    /**
+     * Shared by tabBarHtml()'s Topplista tab and the wordmark/home link
+     * (render()) — per the design handbook's 2026-10-06 wordmark-is-a-link
+     * decision ("samma mål och URL-regler som flikfältets Topplista-flik").
+     */
+    private static function homeHref(string $source): string
+    {
+        return '/' . ($source === NormalizedRow::SOURCE_NORDNET ? '?source=nordnet' : '');
+    }
+
     private static function tabBarHtml(string $active, string $source): string
     {
         $topplistaClass = $active === 'topplista' ? 'tab tab--active' : 'tab';

@@ -273,6 +273,7 @@ final class FullListController
     private static function pageHtml(array $active, string $rowsHtml, bool $hasRows, int $resultCount): string
     {
         $tabBar = self::tabBarHtml('topplista', $active['source']);
+        $homeHref = self::e(self::homeHref($active['source']));
         $sourceSwitcher = self::sourceSwitcherHtml($active);
         $searchForm = self::searchFormHtml($active);
         $sortToggle = self::sortToggleHtml($active);
@@ -293,11 +294,12 @@ final class FullListController
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Fullständig lista — stockpicker</title>
         <link rel="stylesheet" href="/assets/app.css">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
         </head>
         <body>
         <div class="page">
           <div class="nav-strip">
-            <div class="wordmark">Stockpicker</div>
+            <a class="wordmark" href="{$homeHref}"><img src="/assets/stockpicker-logo-horizontal.png" alt="Stockpicker" class="wordmark-logo"></a>
             {$tabBar}
           </div>
           <header class="page-header">
@@ -401,6 +403,16 @@ final class FullListController
      * (Boundaries & Constraints: it is reachable only via Topplista's own
      * footer action, never a tab of its own).
      */
+    /**
+     * Shared by tabBarHtml()'s Topplista tab and the wordmark/home link
+     * (pageHtml()) — per the design handbook's 2026-10-06 wordmark-is-a-link
+     * decision ("samma mål och URL-regler som flikfältets Topplista-flik").
+     */
+    private static function homeHref(string $source): string
+    {
+        return '/' . ($source === NormalizedRow::SOURCE_NORDNET ? '?source=nordnet' : '');
+    }
+
     private static function tabBarHtml(string $active, string $source): string
     {
         $topplistaClass = $active === 'topplista' ? 'tab tab--active' : 'tab';

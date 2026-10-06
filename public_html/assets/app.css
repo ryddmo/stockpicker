@@ -161,16 +161,10 @@ select:focus-visible,
   margin: 0 0 var(--sp-4);
 }
 .wordmark {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
-  font-family: var(--font-heading); font-size: 13px; font-weight: 600;
-  letter-spacing: 0.02em; color: var(--text-primary);
+  display: inline-flex; align-items: center;
 }
-.wordmark::before {
-  content: "SP";
-  display: inline-grid; place-items: center;
-  width: 22px; height: 22px; border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff;
-  font-size: 10px; font-weight: 600;
+.wordmark-logo {
+  display: block; height: 22px; width: auto;
 }
 
 /* -- Segmented controls (källa, period) + product nav share this pill look -- */

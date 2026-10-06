@@ -113,11 +113,12 @@ final class AuthController
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Logga in — stockpicker</title>
         <link rel="stylesheet" href="/assets/app.css">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
         </head>
         <body>
         <div class="auth-page">
           <div class="auth-card">
-            <div class="wordmark">Stockpicker</div>
+            <div class="wordmark"><img src="/assets/stockpicker-logo-horizontal.png" alt="Stockpicker" class="wordmark-logo"></div>
             <h1>Logga in</h1>
             <p class="subtitle">Ägarantalsdata för Avanza och Nordnet.</p>
             {$messageHtml}<form method="post" action="/login">

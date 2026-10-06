@@ -37,6 +37,7 @@ final class InfoController
             : NormalizedRow::SOURCE_AVANZA;
 
         $tabBar = self::tabBarHtml($source);
+        $homeHref = self::e(self::homeHref($source));
         $plusDaysChip = LeaderboardController::plusDaysChipHtml(16, 18, 1035);
 
         return <<<HTML
@@ -47,11 +48,12 @@ final class InfoController
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Information — stockpicker</title>
         <link rel="stylesheet" href="/assets/app.css">
+        <link rel="icon" type="image/png" href="/assets/favicon.png">
         </head>
         <body>
         <div class="page">
           <div class="nav-strip">
-            <div class="wordmark">Stockpicker</div>
+            <a class="wordmark" href="{$homeHref}"><img src="/assets/stockpicker-logo-horizontal.png" alt="Stockpicker" class="wordmark-logo"></a>
             {$tabBar}
           </div>
           <header class="page-header">
@@ -127,6 +129,16 @@ final class InfoController
         </html>
 
         HTML;
+    }
+
+    /**
+     * Shared by tabBarHtml()'s Topplista tab and the wordmark/home link
+     * (render()) — per the design handbook's 2026-10-06 wordmark-is-a-link
+     * decision ("samma mål och URL-regler som flikfältets Topplista-flik").
+     */
+    private static function homeHref(string $source): string
+    {
+        return '/' . ($source === NormalizedRow::SOURCE_NORDNET ? '?source=nordnet' : '');
     }
 
     private static function tabBarHtml(string $source): string
