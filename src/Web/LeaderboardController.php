@@ -500,8 +500,10 @@ final class LeaderboardController
 
     /**
      * spec-short-interest-badge-ui — the "Blankad 15,8 %" badge, last in
-     * every row's badge row. Quiet grey (`badge--nohist`): context to
-     * weigh, not a verdict. Empty below the threshold or with no position.
+     * every row's badge row. spec-topplista-filter-toggle-badge-color gave
+     * it its own red rule (`badge--short`, no longer `badge--nohist`'s
+     * grey) so it reads as distinct from the neutral chips around it.
+     * Empty below the threshold or with no position.
      */
     public static function shortBadgeHtml(?float $pct): string
     {
@@ -509,7 +511,7 @@ final class LeaderboardController
             return '';
         }
 
-        return '<span class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
+        return '<span class="badge badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
             . self::e('Blankad ' . self::shortPctText($pct)) . '</span>';
     }
 
@@ -532,7 +534,7 @@ final class LeaderboardController
             $text .= ' (FI ' . $date . ')';
         }
 
-        return '<span class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
+        return '<span class="badge badge--short" title="Aggregerad blankning enligt Finansinspektionen">'
             . self::e($text) . '</span>';
     }
 
@@ -1014,15 +1016,20 @@ final class LeaderboardController
      * spec-stadig-tillvaxt-period / spec-topplista-market-filter — the
      * period row (header row 2), rendered in every mode: a compact
      * segmented pill "Vecka | Månad | 3 mån | År" (same `.range-picker`
-     * markup as Aktiedetalj's Range picker), plus — in Plusdagar only — the
-     * checkbox-styled "☐/☑ Dölj spikar" link to its right (Stadig tillväxt
-     * always excludes spikes), and — in every mode — "☐/☑ Dölj blankade"
-     * after it (spec-short-interest-badge-ui; a live link even in Flest ägare's
-     * muted row). In Flest ägare the period doesn't apply: the
-     * row is greyed out (`.period-row--muted`), its segments are inert
-     * `<span>`s rather than links, the remembered period stays marked, and
-     * a muted note says "Gäller inte Flest ägare". Plain links, no JS
-     * (AD-12); source, market and the other controls survive each click.
+     * markup as Aktiedetalj's Range picker), then — in Flest ägare only —
+     * the muted note "Gäller inte Flest ägare", then a fixed two-row,
+     * right-aligned `.period-extras` slot
+     * (spec-topplista-filter-toggle-badge-color): row 1 holds the
+     * `.filter-toggle` checkbox chip "Dölj spikar" in Plusdagar only
+     * (Stadig tillväxt always excludes spikes) or is rendered empty
+     * (`aria-hidden`, height-reserved) otherwise; row 2 always holds the
+     * `.filter-toggle` chip "Dölj blankade" (spec-short-interest-badge-ui;
+     * a live link even in Flest ägare's muted row), so its position never
+     * shifts between ranking modes. In Flest ägare the period doesn't
+     * apply: the row is greyed out (`.period-row--muted`), its segments
+     * are inert `<span>`s rather than links, and the remembered period
+     * stays marked. Plain links, no JS (AD-12); source, market and the
+     * other controls survive each click.
      */
     private static function periodRowHtml(
         string $source,
@@ -1050,33 +1057,40 @@ final class LeaderboardController
                 : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
         }
 
-        $extraHtml = '';
-        if ($inert) {
-            $extraHtml = '<span class="period-note">Gäller inte Flest ägare</span>';
-        } elseif ($rankingMode === self::RANKING_PLUS) {
+        $noteHtml = $inert ? '<span class="period-note">Gäller inte Flest ägare</span>' : '';
+
+        // Row 1: the spike filter-toggle in Plusdagar, or an empty,
+        // height-reserved row otherwise (Design Notes — omitting the
+        // element entirely would collapse row 2 upward, reintroducing the
+        // position-shift bug this spec fixes).
+        if ($rankingMode === self::RANKING_PLUS) {
             $spikeHref = self::e(self::url($source, self::RANKING_PLUS, $period, !$excludeSpikes, $market, $excludeShorted));
-            $spikeClass = $excludeSpikes ? 'spike-toggle spike-toggle--active' : 'spike-toggle';
-            $spikeGlyph = $excludeSpikes ? '☑' : '☐';
-            $extraHtml = "<a class=\"{$spikeClass}\" href=\"{$spikeHref}\"><span aria-hidden=\"true\">{$spikeGlyph}</span> Dölj spikar</a>";
+            $spikeClass = $excludeSpikes ? 'filter-toggle filter-toggle--active' : 'filter-toggle';
+            $spikePressed = $excludeSpikes ? 'true' : 'false';
+            $row1 = "<span class=\"period-extras-row\"><a class=\"{$spikeClass}\" href=\"{$spikeHref}\" aria-pressed=\"{$spikePressed}\">Dölj spikar</a></span>";
+        } else {
+            $row1 = '<span class="period-extras-row" aria-hidden="true"></span>';
         }
 
-        // spec-short-interest-badge-ui — "Dölj blankade", a live link in
-        // every mode (including Flest ägare's muted row), right of the
-        // note / "Dölj spikar" / pill.
+        // Row 2: "Dölj blankade", a live filter-toggle in every mode
+        // (including Flest ägare's muted row) — spec-short-interest-badge-ui.
         $shortHref = self::e(self::url($source, $rankingMode, $period, $excludeSpikes, $market, !$excludeShorted));
-        $shortClass = $excludeShorted ? 'spike-toggle short-toggle spike-toggle--active' : 'spike-toggle short-toggle';
-        $shortGlyph = $excludeShorted ? '☑' : '☐';
-        $extraHtml .= "<a class=\"{$shortClass}\" href=\"{$shortHref}\"><span aria-hidden=\"true\">{$shortGlyph}</span> Dölj blankade</a>";
-        // One wrapper for the pill's right-hand neighbours, so they stack
-        // under each other on a narrow viewport instead of squeezing.
-        $extraHtml = '<span class="period-extras">' . $extraHtml . '</span>';
+        $shortClass = $excludeShorted ? 'filter-toggle filter-toggle--active' : 'filter-toggle';
+        $shortPressed = $excludeShorted ? 'true' : 'false';
+        $row2 = "<span class=\"period-extras-row\"><a class=\"{$shortClass}\" href=\"{$shortHref}\" aria-pressed=\"{$shortPressed}\">Dölj blankade</a></span>";
+
+        $extraHtml = '<span class="period-extras">' . $row1 . $row2 . '</span>';
 
         $rowClass = $inert ? 'period-row period-row--muted' : 'period-row';
         $pickerAttrs = $inert ? ' aria-disabled="true"' : '';
+        // No dedicated heredoc line for the note: an empty $noteHtml (every
+        // mode except Flest ägare) must not leave a stray blank line in the
+        // rendered markup.
+        $noteLine = $noteHtml === '' ? '' : "\n  {$noteHtml}";
 
         return <<<HTML
         <div class="{$rowClass}">
-          <div class="range-picker" role="tablist" aria-label="Period"{$pickerAttrs}>{$segments}</div>
+          <div class="range-picker" role="tablist" aria-label="Period"{$pickerAttrs}>{$segments}</div>{$noteLine}
           {$extraHtml}
         </div>
         HTML;

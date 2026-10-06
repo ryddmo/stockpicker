@@ -1039,7 +1039,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('href="/?ranking=plus&amp;period=vecka">Vecka</a>', $body);
         self::assertStringContainsString('href="/?ranking=plus&amp;period=3man">3 mån</a>', $body);
         self::assertStringContainsString('href="/?ranking=plus&amp;period=ar">År</a>', $body);
-        self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude"><span aria-hidden="true">☐</span> Dölj spikar</a>', $body);
+        self::assertStringContainsString('class="filter-toggle" href="/?ranking=plus&amp;spikes=exclude" aria-pressed="false">Dölj spikar</a>', $body);
 
         self::assertStringContainsString('Alpha AB', $body);
         self::assertStringContainsString('Beta AB', $body);
@@ -1153,7 +1153,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertStringContainsString('Beta AB', $defaultBody);
         self::assertStringNotContainsString('Alpha AB', $hiddenBody);
         self::assertStringContainsString('Beta AB', $hiddenBody);
-        self::assertStringContainsString('class="spike-toggle spike-toggle--active" href="/?ranking=plus&amp;period=vecka"><span aria-hidden="true">☑</span> Dölj spikar</a>', $hiddenBody);
+        self::assertStringContainsString('class="filter-toggle filter-toggle--active" href="/?ranking=plus&amp;period=vecka" aria-pressed="true">Dölj spikar</a>', $hiddenBody);
         self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude">Månad</a>', $hiddenBody, 'spike toggle survives a period switch');
         self::assertStringContainsString(
             'href="/?source=nordnet&amp;ranking=plus&amp;period=vecka&amp;spikes=exclude">Nordnet</a>',
@@ -1194,7 +1194,7 @@ final class FrontControllerIntegrationTest extends StoreTestCase
         self::assertSame(200, $status);
         self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus">Plusdagar</a>', $body);
         self::assertStringContainsString('class="tab tab--active" href="/?ranking=plus" aria-current="true">Månad</a>', $this->periodRowHtmlFor($body));
-        self::assertStringContainsString('<span aria-hidden="true">☐</span> Dölj spikar', $body);
+        self::assertStringContainsString('class="filter-toggle" href="/?ranking=plus&amp;spikes=exclude" aria-pressed="false">Dölj spikar</a>', $body);
         self::assertStringContainsString('22/22 · +22', strip_tags($this->rowHtmlFor($body, 'SE0000001001')));
 
         [$status] = $this->endpoint->get('/?ranking[]=plus&period[]=x&spikes[]=y', $this->validCookie());
@@ -2568,7 +2568,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertStringContainsString('☆', $body);
         self::assertStringContainsString('★', $body);
         self::assertStringContainsString('Delta-chip', $body);
-        self::assertStringContainsString('<span class="badge badge--nohist badge--short">Blankad 15,8 %</span>', $body);
+        self::assertStringContainsString('<span class="badge badge--short">Blankad 15,8 %</span>', $body);
         self::assertStringContainsString('"Dölj blankade"', $body);
         self::assertStringContainsString(
             'kvalificerar om aktien har minst 1 dags obruten uppgångssvit och inte just nu spikar.',
@@ -2669,7 +2669,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
             self::assertSame(200, $status, $path);
             self::assertSame(1, substr_count($body, 'badge--short'), "{$path}: only Beta is badged");
             self::assertStringContainsString(
-                'class="badge badge--nohist badge--short" title="Aggregerad blankning enligt Finansinspektionen">Blankad 15,8 %</span></span>',
+                'class="badge badge--short" title="Aggregerad blankning enligt Finansinspektionen">Blankad 15,8 %</span></span>',
                 $this->rowHtmlFor($body, 'SE0000001002'),
                 "{$path}: badge last in Beta's badge row",
             );
@@ -2712,8 +2712,8 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
 
         [, $offBody] = $this->endpoint->get('/?ranking=plus', $this->validCookie());
         $offRow = $this->periodRowHtmlFor($offBody);
-        self::assertStringContainsString('<a class="spike-toggle short-toggle" href="/?ranking=plus&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj blankade</a>', $offRow);
-        self::assertLessThan(strpos($offRow, 'Dölj blankade'), strpos($offRow, 'Dölj spikar'), 'right of "Dölj spikar"');
+        self::assertStringContainsString('<a class="filter-toggle" href="/?ranking=plus&amp;shorts=exclude" aria-pressed="false">Dölj blankade</a>', $offRow);
+        self::assertLessThan(strpos($offRow, 'Dölj blankade'), strpos($offRow, 'Dölj spikar'), 'after "Dölj spikar" in the markup');
         self::assertContains('SE0000001002', $this->rowIsins($offBody));
 
         [$status, $body, $headers] = $this->endpoint->getWithHeaders('/?ranking=plus&shorts=exclude', $this->validCookie());
@@ -2724,29 +2724,31 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertContains('SE0000001003', $this->rowIsins($body), 'below the threshold is never hidden');
         self::assertContains('SE0000001004', $this->rowIsins($body), 'no LEI is never hidden');
         self::assertStringContainsString(
-            '<a class="spike-toggle short-toggle spike-toggle--active" href="/?ranking=plus"><span aria-hidden="true">☑</span> Dölj blankade</a>',
+            '<a class="filter-toggle filter-toggle--active" href="/?ranking=plus" aria-pressed="true">Dölj blankade</a>',
             $body,
             'the toggle drops its own param',
         );
 
         self::assertSame(1, preg_match('~<header class="page-header">(.*?)</header>~s', $body, $m));
-        preg_match_all('~<a ([^>]*)href="([^"]*)"~', $m[1], $links, PREG_SET_ORDER);
+        preg_match_all('~<a ([^>]*)>([^<]*)</a>~', $m[1], $links, PREG_SET_ORDER);
         self::assertGreaterThan(10, count($links));
-        foreach ($links as [, $attrs, $href]) {
-            if (str_contains($attrs, 'short-toggle')) {
+        foreach ($links as [, $attrs, $text]) {
+            self::assertSame(1, preg_match('~href="([^"]*)"~', $attrs, $hrefMatch));
+            $href = $hrefMatch[1];
+            if (trim($text) === 'Dölj blankade') {
                 self::assertStringNotContainsString('shorts=', $href);
                 continue;
             }
             self::assertStringContainsString('shorts=exclude', $href, $href);
         }
-        self::assertStringContainsString('href="/?ranking=plus&amp;spikes=exclude&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj spikar</a>', $body);
+        self::assertStringContainsString('class="filter-toggle" href="/?ranking=plus&amp;spikes=exclude&amp;shorts=exclude" aria-pressed="false">Dölj spikar</a>', $body);
 
         self::assertSame('ranking=plus&shorts=exclude', $this->viewSetCookieValue($headers));
 
         // A following bare `/` with that cookie renders with the toggle on.
         [$status, $bareBody, $bareHeaders] = $this->endpoint->getWithHeaders('/', $this->viewCookie('ranking=plus&shorts=exclude'));
         self::assertSame(200, $status);
-        self::assertStringContainsString('☑</span> Dölj blankade', $bareBody);
+        self::assertStringContainsString('filter-toggle filter-toggle--active" href="/?ranking=plus" aria-pressed="true">Dölj blankade</a>', $bareBody);
         self::assertNotContains('SE0000001002', $this->rowIsins($bareBody));
         self::assertNull($this->viewSetCookie($bareHeaders));
     }
@@ -2759,20 +2761,29 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         self::assertSame(200, $status);
         $periodRow = $this->periodRowHtmlFor($body);
         self::assertStringStartsWith('class="period-row period-row--muted"', $periodRow);
+        self::assertStringContainsString('<span class="period-note">Gäller inte Flest ägare</span>', $periodRow);
         self::assertStringContainsString(
-            '<span class="period-extras"><span class="period-note">Gäller inte Flest ägare</span><a class="spike-toggle short-toggle" href="/?ranking=count&amp;shorts=exclude"><span aria-hidden="true">☐</span> Dölj blankade</a></span>',
+            '<span class="period-extras"><span class="period-extras-row" aria-hidden="true"></span><span class="period-extras-row"><a class="filter-toggle" href="/?ranking=count&amp;shorts=exclude" aria-pressed="false">Dölj blankade</a></span></span>',
             $periodRow,
         );
 
         [$status, $body] = $this->endpoint->get('/', $this->viewCookie('ranking=count&shorts=exclude'));
         self::assertSame(200, $status);
         self::assertSame(['Topplista', 'Avanza', 'Flest ägare', 'Månad', 'Alla'], $this->activeLabels($body));
-        self::assertStringContainsString('href="/?ranking=count"><span aria-hidden="true">☑</span> Dölj blankade</a>', $body);
+        self::assertStringContainsString('class="filter-toggle filter-toggle--active" href="/?ranking=count" aria-pressed="true">Dölj blankade</a>', $body);
         self::assertNotContains('SE0000001002', $this->rowIsins($body));
 
         [, $steadyBody] = $this->endpoint->get('/?ranking=steady&shorts=exclude', $this->validCookie());
         self::assertNotContains('SE0000001002', $this->rowIsins($steadyBody), 'Stadig tillväxt hides it too');
-        self::assertStringContainsString('☑</span> Dölj blankade', $steadyBody);
+        self::assertStringContainsString('filter-toggle--active" href="/?ranking=steady" aria-pressed="true">Dölj blankade</a>', $steadyBody);
+        // Stadig tillväxt is not muted, but still has no spike toggle of its
+        // own (only Plusdagar does): row 1 must still be the same empty,
+        // height-reserved placeholder as Flest ägare's muted row above, so
+        // row 2 ("Dölj blankade") never shifts position between modes.
+        self::assertStringContainsString(
+            '<span class="period-extras"><span class="period-extras-row" aria-hidden="true"></span><span class="period-extras-row"><a class="filter-toggle filter-toggle--active" href="/?ranking=steady" aria-pressed="true">Dölj blankade</a></span></span>',
+            $this->periodRowHtmlFor($steadyBody),
+        );
     }
 
     public function testRootDoljBlankadeFiltersBeforeTheTopTenIsCut(): void
@@ -2813,7 +2824,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         [$status, $body] = $this->endpoint->get('/?ranking=plus&shorts=exclude', $this->validCookie());
         self::assertSame(200, $status);
         self::assertStringNotContainsString('badge--short', $body);
-        self::assertStringContainsString('☑</span> Dölj blankade', $body);
+        self::assertStringContainsString('filter-toggle--active" href="/?ranking=plus" aria-pressed="true">Dölj blankade</a>', $body);
         self::assertSame(['SE0000001002', 'SE0000001001'], $this->rowIsins($body));
 
         $this->insertShortPosition(self::snapshotDaysAgo(0), 'LEIBETA0000000000001', '15.82', '2026-10-02');
@@ -2822,7 +2833,7 @@ public function testStockDetailWithSourceNordnetMakesNordnetThePrimaryLineAndAva
         foreach (['/?ranking=plus&shorts=yes', '/?ranking=plus&shorts[]=x'] as $path) {
             [$status, $body, $headers] = $this->endpoint->getWithHeaders($path, $this->validCookie());
             self::assertSame(200, $status, $path);
-            self::assertStringContainsString('☐</span> Dölj blankade', $body, $path);
+            self::assertStringContainsString('class="filter-toggle" href="/?ranking=plus&amp;shorts=exclude" aria-pressed="false">Dölj blankade</a>', $body, $path);
             self::assertContains('SE0000001002', $this->rowIsins($body), $path);
             self::assertSame('ranking=plus', $this->viewSetCookieValue($headers), $path);
         }

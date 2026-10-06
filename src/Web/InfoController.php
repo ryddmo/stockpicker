@@ -91,7 +91,7 @@ final class InfoController
                   <span class="symbol-text"><strong>Spike</strong> — ägarantalet har ökat ovanligt mycket på en enda dag. Flaggas alltid, döljs aldrig, så att en kraftig engångsökning inte förväxlas med en äkta trend.</span>
                 </li>
                 <li>
-                  <span class="symbol-example" aria-hidden="true"><span class="badge badge--nohist badge--short">Blankad 15,8 %</span></span>
+                  <span class="symbol-example" aria-hidden="true"><span class="badge badge--short">Blankad 15,8 %</span></span>
                   <span class="symbol-text"><strong>Blankad X %</strong> — bolagets sammanlagda korta positioner enligt Finansinspektionens blankningsregister, när de är minst 5 % av aktierna. Gäller bolaget, inte en enskild aktieserie, så A- och B-aktier får samma värde, och samma värde visas oavsett källa. Bara Finansinspektionens senaste lista räknas; ett bolag som inte längre finns med där får ingen symbol. På Aktiedetalj står även datumet för Finansinspektionens senaste rapporterade position, till exempel "(FI 2 okt)".</span>
                 </li>
                 <li>

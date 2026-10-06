@@ -586,12 +586,12 @@ final class LeaderboardControllerTest extends TestCase
         self::assertFalse(LeaderboardController::isShorted(null));
     }
 
-    public function testShortBadgeHtmlFormatsOneDecimalWithDecimalCommaInTheQuietGreyBadge(): void
+    public function testShortBadgeHtmlFormatsOneDecimalWithDecimalCommaInItsOwnRedBadge(): void
     {
         $html = LeaderboardController::shortBadgeHtml(15.82);
 
         self::assertSame('Blankad 15,8 %', strip_tags($html));
-        self::assertStringContainsString('class="badge badge--nohist badge--short"', $html);
+        self::assertStringContainsString('class="badge badge--short"', $html);
         self::assertSame('Blankad 5,0 %', strip_tags(LeaderboardController::shortBadgeHtml(5.0)));
     }
 

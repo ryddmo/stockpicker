@@ -217,25 +217,20 @@ select:focus-visible,
    in every mode. Each its own full-width line under .controls, left-aligned
    with the source switcher: the shared .range-picker pill (same look and
    32px tap targets as Aktiedetalj's Range picker); right of the period
-   pill sits one .period-extras wrapper holding Flest ägare's note,
-   Plusdagar's checkbox-styled "Dölj spikar" and, in every mode,
-   "Dölj blankade". Wraps (segments within the pill, then the extras
-   under each other) on a
-   narrow viewport rather than scrolling. The negative top margin collapses
-   with the previous block's sp-4 bottom margin to an sp-2 gap. -- */
+   pill sits Flest ägare's muted note (when present) and then one
+   .period-extras slot — a fixed two-row, right-aligned stack
+   (spec-topplista-filter-toggle-badge-color) reusing the Fullständig
+   lista .filter-toggle checkbox chip for "Dölj spikar"/"Dölj blankade"
+   instead of the old plain-text .spike-toggle links. Wraps (segments
+   within the pill, then the note/slot) on a narrow viewport rather than
+   scrolling. The negative top margin collapses with the previous block's
+   sp-4 bottom margin to an sp-2 gap. -- */
 .period-row, .market-row {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
   gap: var(--sp-2) var(--sp-4);
   margin: calc(var(--sp-2) - var(--sp-4)) 0 var(--sp-4);
   max-width: 100%;
 }
-.spike-toggle {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 38px;
-  padding: 0 var(--sp-2);
-  text-decoration: none; font-size: 13px; font-weight: 500; color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-}
-.spike-toggle--active { color: var(--text-primary); }
 
 /* Flest ägare: the period doesn't apply — greyed out, inert <span>
    segments, remembered period still marked (muted), plus a muted note. */
@@ -243,20 +238,21 @@ select:focus-visible,
 .period-row--muted .range-picker .tab--active {
   background: transparent; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border);
 }
-/* The period pill's right-hand neighbours (Flest ägare's note, Plusdagar's
-   "Dölj spikar", and "Dölj blankade" in every mode — `.spike-toggle
-   .short-toggle`, never greyed by the muted rules above, which target only
-   `.range-picker .tab`) share one .period-extras wrapper: flex-basis 0 +
-   min-width 0 so it never wraps onto a line of its own (that would push the
-   market row lower than in the other modes). Inside it the items never
-   break mid-label: side by side when wide, stacked under each other beside
-   the pill when narrow. */
+.period-note { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+/* The period pill's right-hand slot: exactly two fixed, right-aligned rows
+   (never greyed by the muted rules above, which target only
+   `.range-picker .tab`) so "Dölj blankade" sits in the same row 2 position
+   in every ranking mode. Row 1 holds the spike .filter-toggle in Plusdagar
+   or is rendered empty (aria-hidden) in Flest ägare/Stadig tillväxt — still
+   reserving its min-height so row 2 never shifts up. Row 2 always holds
+   the short .filter-toggle. flex-basis 0 + min-width 0 so the slot never
+   wraps onto a line of its own (that would push the market row lower than
+   in the other modes). */
 .period-extras {
   flex: 1 1 0; min-width: 0; line-height: 1.25;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sp-2);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-1);
 }
-.period-extras .period-note, .period-extras .spike-toggle { white-space: nowrap; }
-.period-note { font-size: 12px; color: var(--text-muted); }
+.period-extras-row { display: flex; align-items: center; min-height: 32px; }
 
 .market-filter {
   display: inline-flex; flex-wrap: wrap; gap: 2px;
@@ -357,9 +353,7 @@ select:focus-visible,
 .badge--streak { background: var(--accent-tint); color: var(--accent); }
 .badge--spike { background: var(--spike-tint); color: var(--spike); }
 /* text-secondary, not text-muted: 3.90:1 against --neutral-tint measured
-   below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). Also
-   used by "Blankad 15,8 %" (`badge--nohist badge--short`, no rule of its
-   own): short interest is context to weigh, not a verdict — no colour. */
+   below WCAG AA's 4.5:1 (P2 contrast QA pass, design handbook §13). */
 .badge--nohist { background: var(--neutral-tint); color: var(--text-secondary); }
 /* Plusdagar "16/18 · +1 035" chip: same quiet grey as "flat", mono digits. */
 .badge--plusdays {
@@ -367,6 +361,10 @@ select:focus-visible,
   white-space: normal; max-width: 100%;
 }
 .plusdays-part { white-space: nowrap; }
+/* "Blankad 15,8 %" — its own red rule (spec-topplista-filter-toggle-badge-color):
+   short interest used to share .badge--nohist's quiet grey and got lost
+   among the other neutral chips in the Topplista header. */
+.badge--short { background: var(--negative-tint); color: var(--negative); }
 .trend {
   flex: 0 0 auto; width: 52px; display: flex; flex-direction: column;
   align-items: flex-start; gap: 2px;
