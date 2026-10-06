@@ -2,264 +2,303 @@
 name: stockpicker
 status: final
 sources: []
-updated: 2026-10-02
-description: Personligt enanvändarverktyg för att följa trender i ägarantal för svenska/nordiska aktier, hämtat från Avanza och Nordnet (aldrig sammanslaget). Modern fintech-visuell stil hållen ärlig — spikar uppmärksammas, firas inte.
+updated: 2026-10-06
+description: Personligt enanvändarverktyg för att följa trender i ägarantal för svenska/nordiska aktier, hämtat från Avanza och Nordnet (aldrig sammanslaget). "Fintech Precision" — en återhållsam, hög-konsekvens fintech-stil; inga pillerformer, inga lekfulla accenter.
 colors:
-  bg-app: '#F5F6FA'
+  bg-app: '#F2F4F5'
   bg-surface: '#FFFFFF'
-  border: '#E4E7EC'
-  row-border: '#EEF0F5'
-  control-bg: '#ECEEF3'
-  text-primary: '#101323'
-  text-secondary: '#667085'
-  text-muted: '#98A2B3'
-  brand: '#5B4FE9'
-  brand-tint: '#EEEDFD'
-  positive: '#12B76A'
-  positive-tint: '#E7F9F0'
-  negative: '#F04438'
-  negative-tint: '#FEECEB'
-  spike-bg: '#FEF0C7'
-  spike-text: '#B54708'
-  star-filled: '#F5A623'
-  star-empty: '#D0D5DD'
-  nohist-bg: '#F2F4F7'
+  text-primary: '#152126'
+  text-secondary: '#526168'
+  text-muted: '#68777E'
+  border: '#D8DEE1'
+  accent: '#146C94'
+  accent-tint: '#E7F2F7'
+  positive: '#0B7F52'
+  positive-tint: '#E7F6F0'
+  negative: '#C93832'
+  negative-tint: '#FBEDEC'
+  spike: '#8C5100'
+  spike-tint: '#FFF3D8'
+  neutral-tint: '#E8ECEE'
+  star-filled: '#A86100'
+  star-empty: '#B7C0C4'
 typography:
-  wordmark:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 12px
-    fontWeight: '800'
-    letterSpacing: 0.06em
-  h1:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 22px
-    fontWeight: '800'
-  subtitle:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 12.5px
-    fontWeight: '400'
+  heading:
+    fontFamily: "'Sora', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    fontWeight: '600'
   body:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 13.5px
-    fontWeight: '700'
+    fontFamily: "'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+    weights: [400, 500, 600]
+  mono:
+    fontFamily: "'JetBrains Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace"
+    fontWeight: '500'
+    usage: 'Siffror med mening: ägarantal, delta, periodprocent, y-axelns tick-etiketter — font-variant-numeric: tabular-nums.'
+  h1:
+    font: '{typography.heading}'
+    fontSize: 24px
+    lineHeight: 30px
+  h2:
+    font: '{typography.heading}'
+    fontSize: 20px
+    lineHeight: 28px
+  subtitle:
+    font: '{typography.body}'
+    fontSize: 13px
+    fontWeight: '400'
+    color: '{colors.text-secondary}'
+  tabLabel:
+    font: '{typography.body}'
+    fontSize: 13px
+    fontWeight: '600'
+  name:
+    font: '{typography.body}'
+    fontSize: 14px
+    fontWeight: '600'
   stat:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 13.5px
-    fontWeight: '800'
-  label:
-    fontFamily: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif
-    fontSize: 9px
-    fontWeight: '800'
+    font: '{typography.mono}'
+    fontSize: 14px
+  badge:
+    font: '{typography.body}'
+    fontSize: 11px
+    fontWeight: '600'
+  periodPctLabel:
+    font: '{typography.body}'
+    fontSize: 10px
+    fontWeight: '600'
+    color: '{colors.text-muted}'
 rounded:
-  sm: 6px
-  md: 16px
-  lg: 20px
-  full: 9999px
+  sm: 4px
+  md: 6px
+  lg: 8px
 spacing:
   '1': 4px
   '2': 8px
   '3': 12px
   '4': 16px
-  '5': 18px
-  '6': 24px
-  gutter: 18px
-  card-gap: 8px
-  card-padding: 12px
-  row-internal-gap: 10px
+  '5': 24px
+  '6': 32px
+  '7': 48px
+  '8': 64px
 shadow:
-  page: '0 12px 40px rgba(16,19,31,0.08)'
-  tab-active: '0 1px 3px rgba(16,19,31,0.12)'
+  page: '0 12px 32px rgba(21,33,38,0.08)'
+  range-active: '0 1px 2px rgba(21,33,38,0.12)'
+  toast: '0 4px 16px rgba(21,33,38,0.24)'
 components:
-  leaderboard-row:
+  row:
     background: '{colors.bg-surface}'
-    border: '1px solid {colors.row-border}'
+    border: '1px solid {colors.border}'
+    radius: '{rounded.lg}'
+    padding: '{spacing.2} {spacing.3}'
+    gap: '{spacing.3}'
+  pill-track:
+    background: '{colors.neutral-tint}'
     radius: '{rounded.md}'
-    padding: '10px {spacing.card-padding}'
-    gap: '{spacing.row-internal-gap}'
-  streak-badge:
-    background: '{colors.brand-tint}'
-    text: '{colors.brand}'
-    radius: '{rounded.full}'
-    fontSize: '{typography.label.fontSize}'
-    fontWeight: '{typography.label.fontWeight}'
-  spike-badge:
-    background: '{colors.spike-bg}'
-    text: '{colors.spike-text}'
-    radius: '{rounded.full}'
-    fontSize: '{typography.label.fontSize}'
-    fontWeight: '{typography.label.fontWeight}'
-  nohist-badge:
-    background: '{colors.nohist-bg}'
-    text: '{colors.text-muted}'
-    radius: '{rounded.full}'
-    fontSize: '{typography.label.fontSize}'
-    fontWeight: '{typography.label.fontWeight}'
+    padding: 3px
+    gap: 2px
+    tab-minHeight: 32px
+    tab-padding: '{spacing.1} {spacing.3}'
+    tab-radius: '{rounded.sm}'
+    tab-font: '{typography.tabLabel}'
+    tab-inactive-text: '{colors.text-secondary}'
+  tab-bar:
+    extends: '{components.pill-track}'
+    active-background: '{colors.text-primary}'
+    active-text: '{colors.bg-surface}'
+  source-tab:
+    extends: '{components.pill-track}'
+    active-background: '{colors.text-primary}'
+    active-text: '{colors.bg-surface}'
+  range-picker:
+    extends: '{components.pill-track}'
+    active-background: '{colors.bg-surface}'
+    active-text: '{colors.accent}'
+    active-shadow: '{shadow.range-active}'
+  ranking-toggle:
+    border: '1px solid {colors.border}'
+    radius: '{rounded.md}'
+    tab-minHeight: 32px
+    tab-radius: 0
+    active-background: '{colors.accent-tint}'
+    active-text: '{colors.accent}'
+  filter-toggle:
+    border: '1px solid {colors.border}'
+    radius: '{rounded.md}'
+    minHeight: 32px
+    padding: '6px {spacing.3}'
+    background: '{colors.bg-surface}'
+    text: '{colors.text-secondary}'
+    box-size: 12px
+    box-radius: 3px
+    box-border-unchecked: '{colors.text-muted}'
+    active-border: '{colors.accent}'
+    active-text: '{colors.accent}'
+    active-background: '{colors.accent-tint}'
+    active-box-background: '{colors.accent}'
+    active-box-glyph: '✓'
+  spike-toggle:
+    minHeight: 38px
+    padding: '0 {spacing.2}'
+    font: '{typography.body}'
+    fontSize: 13px
+    fontWeight: '500'
+    text: '{colors.text-secondary}'
+    active-text: '{colors.text-primary}'
+    glyph-unchecked: '☐'
+    glyph-checked: '☑'
+  badge:
+    radius: '{rounded.sm}'
+    padding: '2px 6px'
+    font: '{typography.badge}'
+  badge-streak:
+    extends: '{components.badge}'
+    background: '{colors.accent-tint}'
+    text: '{colors.accent}'
+  badge-spike:
+    extends: '{components.badge}'
+    background: '{colors.spike-tint}'
+    text: '{colors.spike}'
+  badge-nohist:
+    extends: '{components.badge}'
+    background: '{colors.neutral-tint}'
+    text: '{colors.text-secondary}'
+  badge-short:
+    extends: '{components.badge}'
+    background: '{colors.negative-tint}'
+    text: '{colors.negative}'
+    status: 'Beslutad 2026-10-06, INTE implementerad ännu. Delar idag CSS-regel med badge-nohist (ren grå, ingen egen regel) — se Komponenter → Blankningsbadge.'
+  delta-chip:
+    radius: '{rounded.sm}'
+    padding: '2px 6px'
+    fontSize: 11px
   sparkline:
-    stroke-neutral: '{colors.brand}'
     stroke-positive: '{colors.positive}'
     stroke-negative: '{colors.negative}'
-    stroke-spike: '{colors.spike-text}'
+    stroke-neutral: '{colors.accent}'
+    stroke-spike: '{colors.spike}'
     stroke-nohistory: '{colors.text-muted}'
     stroke-nohistory-dasharray: '2 3'
-    strokeWidth-mobile: 2px
-    strokeWidth-wide: 2.5px
+    strokeWidth: 2px
     width-mobile: 52px
-    width-wide: 130px
     height-mobile: 22px
+    width-wide: 130px
     height-wide: 30px
   trend-overlay:
-    width-mobile: 100%
-    width-wide: 100%
-    height-mobile: 160px
-    height-wide: 220px
-    primary-strokeWidth-mobile: '{components.sparkline.strokeWidth-mobile}'
-    primary-strokeWidth-wide: '{components.sparkline.strokeWidth-wide}'
+    width: 100%
+    height: 220px
+    primary-strokeWidth: 2.5px
     secondary-stroke: '{colors.text-secondary}'
-    secondary-strokeWidth-mobile: 2px
-    secondary-strokeWidth-wide: 2.5px
-    secondary-dasharray: '4 3'
-    legend-swatch-size: 8px
-    legend-fontSize: '{typography.label.fontSize}'
-    legend-fontWeight: '{typography.label.fontWeight}'
-    legend-text: '{colors.text-secondary}'
-  source-tab:
-    container-background: '{colors.control-bg}'
-    container-radius: '{rounded.full}'
-    tab-inactive-text: '{colors.text-secondary}'
-    tab-active-background: '{colors.text-primary}'
-    tab-active-text: '{colors.bg-surface}'
-    radius: '{rounded.full}'
-  ranking-mode-toggle:
-    container-background: '{colors.control-bg}'
-    container-radius: '{rounded.full}'
-    tab-inactive-text: '{colors.text-secondary}'
-    tab-active-background: '{colors.bg-surface}'
-    tab-active-text: '{colors.brand}'
-    tab-active-shadow: '{shadow.tab-active}'
-    radius: '{rounded.full}'
-  range-picker:
-    container-background: '{colors.control-bg}'
-    container-radius: '{rounded.full}'
-    segment-inactive-text: '{colors.text-secondary}'
-    segment-active-background: '{colors.bg-surface}'
-    segment-active-text: '{colors.brand}'
-    segment-active-shadow: '{shadow.tab-active}'
-    radius: '{rounded.full}'
+    secondary-strokeWidth: 2px
+    secondary-dasharray: '4 4'
+    y-axis-width: 34px
+    legend-swatch: '14px x 3px, {rounded.sm}-ish 2px'
   watchlist-star:
     filled: '{colors.star-filled}'
     empty: '{colors.star-empty}'
-    fontSize: 15px
+    fontSize: 18px
+    tapTarget: '44px x 44px'
     glyph-filled: '★'
     glyph-empty: '☆'
-  delta-chip-positive:
-    background: '{colors.positive-tint}'
-    text: '{colors.positive}'
-    radius: '{rounded.sm}'
-    fontSize: 9.5px
-    fontWeight: '800'
-  delta-chip-negative:
-    background: '{colors.negative-tint}'
-    text: '{colors.negative}'
-    radius: '{rounded.sm}'
-    fontSize: 9.5px
-    fontWeight: '800'
+  focus-ring:
+    width: 2px
+    color: '{colors.accent}'
+    offset: 2px
 ---
 
 ## Varumärke och stil
 
-Stockpicker är ett personligt instrument, inte en produkt. En användare, ett syfte: se genom en dag-till-dag-uppgång och avgöra om den är verklig. Den visuella stilen lånar fintech-världens självklara sätt att hantera siffror och rundade, självsäkra kort, men inget av fintechs övertalningskonst — ingen brådskande copy, ingen gamifierad streak-jakt, ingen "möjlighets"-inramning. UI:ts uppgift är att göra frågan spik-eller-trend besvarbar i en snabb blick, och att säga rakt ut när den ännu inte kan besvaras ("inte tillräckligt med historik än" slår ett falskt diagram varje gång).
+Stockpicker är ett personligt instrument, inte en produkt. En användare, ett syfte: se genom en dag-till-dag-uppgång och avgöra om den är verklig. UI:ts uppgift är att göra frågan spik-eller-trend besvarbar i en snabb blick, och att säga rakt ut när den ännu inte kan besvaras ("inte tillräckligt med historik än" slår ett falskt diagram varje gång). Ingen brådskande copy, ingen gamifierad streak-jakt, ingen "möjlighets"-inramning.
 
-Konkret: en accentfärg ({colors.brand}) som bara används på det som faktiskt är poängen — det aktiva rankningsläget, wordmarken, streak-badgen. Allt annat hålls i en sval, tyst gråskala-på-vitt-palett, så att de två färger som *faktiskt* bär mening — {colors.positive} och {colors.negative} — är omisskännliga i samma sekund de dyker upp. Spike-badgar får en egen bärnstensfärg, medvetet varken röd eller grön, eftersom en spik ännu inte är en dom.
+**Riktningsbyte 2026-09-27 (viktigt att känna till):** den ursprungliga riktningen här var "Modern fintech" — rundade kort, helt pillerformade kontroller (`border-radius: 9999px`), en lila-blå accent (`#5B4FE9`). Den 27 september ersattes den, i den riktiga koden, av Lovables handbok **"Fintech Precision"**: samma anti-hype-hållning och samma semantiska färglogik, men en strammare visuell exekvering — återhållsamma hörnradier (4/6/8px, aldrig 9999px), en tealfärgad accent (`#146C94`), och två egna typsnitt (Sora/Manrope) istället för systemfontstacken. Den här filen beskrev fram till idag (2026-10-06) bara den gamla riktningen och hade tappat kontakt med koden i nästan två veckor — se `docs/lovable-ux-review-brief.md` för det granskningsunderlag som drev omarbetningen, och minnesanteckningen `lovable-design-handbook-applied.md` för vad som faktiskt kördes (P0 "konsekvens och åtkomst" + P1 "skannbarhet"; P2 "förklaring och förfining" är fortfarande öppet). Den bakomliggande varumärkeskänslan — ett ärligt, oglamoröst verktyg — är densamma i båda riktningarna; det som bytte var exekveringen, inte avsikten.
 
-## Inspiration och antimönster
+Accentfärgen (`{colors.accent}`) används bara på det som faktiskt är poängen — aktiv Range picker/Periodväljare, Ranking-/sort-toggle, Streak badge, fokusringen. Allt annat hålls i en sval, tyst gråskala-på-vitt-palett, så att de två färger som *faktiskt* bär mening — `{colors.positive}` och `{colors.negative}` — är omisskännliga i samma sekund de dyker upp. Spike-badgar får en egen bärnstensfärg, medvetet varken röd eller grön, eftersom en spik ännu inte är en dom.
 
-Tre riktningar renderades och jämfördes som fullständiga mockuper av Topplistans hero-skärm innan den här valdes:
+**Öppen spänning, inte dold:** Lovable-paletten gav Star (`{colors.star-filled}`, `#A86100`) och Spike (`{colors.spike}`, `#8C5100`) nästan samma bärnstensbruna ton — i den gamla paletten var stjärnan medvetet den enda varma färgen och delade den aldrig med något annat. Det är inte rättat här eftersom det är ett genuint kvarvarande spänningsmoment i den riktiga appen, inte ett dokumentationsfel; flagga det om du gör vidare visuellt arbete i närheten av badges eller stjärnan.
 
-- **Clean terminal** (förkastad) — för tät och kalkylbladslik för en skärm som ska scannas på några sekunder över morgonkaffet, inte frågas mot som ett datagrid.
-- **Calm editorial** (förkastad) — för mjuk och journallik; en personlig-ekonomi-dagboksstil underspelar den "gå och verifiera det här"-skepsis som verktyget ska förmedla.
-- **Modern fintech** (vald) — rundade kort, sparklines inline per rad, en djärv accentfärg använd sparsamt för deltan/spikflaggor, samtida konsumentapp-stil, ljust tema, diagramfokuserad. Hållen ärlig genom att fintechs vanliga övertalningslager har skalats bort (se Varumärke och stil ovan).
-
-Den här anti-hype-hållningen är medveten, inte ett förbiseende: varumärket finns för att svara på "är det här verkligt," inte för att få Stefan att känna sig bra över en siffra.
+**Medvetet undantag, beslutat 2026-10-06 (ej implementerat ännu):** `{colors.negative}` ska utökas från två till tre utlösare — nedåtgående delta, nedåttrendande Sparkline, och Blankningsbadgen (`{components.badge-short}`) — eftersom den delade tysta grå badgen drunknade bland de andra gråa kontrollerna och chipsen i Topplista-headern. Se Komponenter → Blankningsbadge för statusen.
 
 ## Färger
 
-- **Appbakgrund (`{colors.bg-app}`)** — sval ljusgrå, aldrig ren vit. Håller kortytor (`{colors.bg-surface}`) visuellt åtskilda utan en kant runt varje sida.
-- **Ytvit (`{colors.bg-surface}`)** — Leaderboard row-rader, den breda vyns ram. Aldrig appbakgrunden själv — de två måste förbli urskiljbara.
-- **Kant (`{colors.border}`) / Radkant (`{colors.row-border}`)** — bara hårfina avgränsare. `{colors.row-border}` är en aning ljusare, reserverad för sömmen kort-mot-kort där en rad ligger på appbakgrunden; `{colors.border}` är till strukturella avdelare som fotnotslinjen och den breda vyns kolumnrubriklinje. Används aldrig för att ge visuell tyngd.
-- **Kontrollbakgrund (`{colors.control-bg}`)** — den pillerformade banan bakom Source switcher och Ranking-mode toggle. Finns bara som en behållare för en växlare; används aldrig som en fristående yta.
-- **Text primär (`{colors.text-primary}`)** — nästan svart, inte helt svart. Radnamn, rubriksiffror, den aktiva Source switcherns egen bakgrund (inverterad — se Komponenter). Reserverad för innehåll som svarar på "vad" och "hur många," inte för dekoration.
-- **Text sekundär (`{colors.text-secondary}`)** och **text dämpad (`{colors.text-muted}`)** — sekundär är till för underrubriker och inaktiva flikettiketter; dämpad är till för innehåll med platshållartyngd (badge-texten "ingen trend än", fotnotens totalantal). Använd aldrig dämpad för något som användaren behöver agera på.
-- **Brand (`{colors.brand}`) / Brand tint (`{colors.brand-tint}`)** — den enda kromatiska accentfärgen som inte är en domfärg. Wordmark, aktiv Ranking-mode toggle-flik, Streak badge. Används aldrig för deltavärden — en streak och ett delta svarar på olika frågor och får aldrig dela färg.
-- **Positiv (`{colors.positive}`) / Positiv tint (`{colors.positive-tint}`)** — bara för uppåtgående deltan och uppåttrendande Sparklines. Det här är den enda färg som får antyda "bra," så den får aldrig förekomma dekorativt.
-- **Negativ (`{colors.negative}`) / Negativ tint (`{colors.negative-tint}`)** — bara för nedåtgående deltan och nedåttrendande Sparklines. Symmetrisk partner till positiv; samma disciplin.
-- **Spike (`{colors.spike-bg}` / `{colors.spike-text}`)** — bärnstensfärgad, inte röd eller grön, och medvetet så: en Spike badge är en flagga att gå och verifiera, inte en dom om huruvida rörelsen är bra eller dålig. En rad som spikar kan fortfarande visa en positiv Delta chip i grönt *och* en Spike badge i bärnsten samtidigt — det är poängen, inte en bugg.
-- **Star (`{colors.star-filled}` guld / `{colors.star-empty}` grå)** — bara för Watchlist star-växlaren. Det här är den enda varma, icke-dömande färgen i paletten; återanvänds aldrig någon annanstans.
-- **No-history (`{colors.nohist-bg}`)** — ihopparad med `{colors.text-muted}`-text. Används både för fallback-badgen "flat" (ingen pågående streak) och det genuina läget "inte tillräckligt med historik än." Medvetet den minst visuellt intressanta badgen i systemet — otillräcklig data ska aldrig konkurrera om uppmärksamhet med en riktig signal.
+- **Appbakgrund (`{colors.bg-app}`)** — sval ljusgrå, aldrig ren vit. Håller kortytor (`{colors.bg-surface}`) visuellt åtskilda utan en kant runt varje sida. Vid laptop-bredd (≥900px) får själva sidramen samma `{colors.bg-app}`-ton plus `{shadow.page}` — ett kort som "flyter" på en likfärgad omgivning, bara skuggan skiljer dem åt.
+- **Ytvit (`{colors.bg-surface}`)** — rader, kort, Info-sektioner, inloggningskortet. Aldrig appbakgrunden själv.
+- **Kant (`{colors.border}`)** — en enda kanttoken numera (den gamla uppdelningen i kant/radkant är borta). Används till radramar, kort, inmatningsfält och Ranking-/sort-togglens ytterram. Används aldrig för att ge visuell tyngd.
+- **Neutral tint (`{colors.neutral-tint}`)** — den ljusgrå banan bakom Tab-bar/Source switcher/Range picker, bakgrunden för neutrala badges (flat, Plusdagar-chip, "Blankad" idag) och för neutrala Delta chips. Finns bara som en tyst behållarfärg; används aldrig som en framträdande yta.
+- **Text primär (`{colors.text-primary}`)** — nästan svart, inte helt svart. Radnamn, rubriker, den aktiva Tab-bar-/Source switcher-flikens egen bakgrund (inverterad). Reserverad för innehåll som svarar på "vad" och "hur många."
+- **Text sekundär (`{colors.text-secondary}`)** och **text dämpad (`{colors.text-muted}`)** — sekundär är till för underrubriker, inaktiva flikettiketter och radhuvuden (desktop); dämpad är till för genuint perifert innehåll (otillräcklig-historik-text, period-pct-etiketter). Mätt och medvetet val under P2-tillgänglighetsgranskningen (se `app.css`): radhuvudet ligger direkt på `{colors.bg-app}` utan ett kort bakom sig, där `{colors.text-muted}` föll under WCAG AA:s 4,5:1 för den textstorleken — `{colors.text-secondary}` används där istället.
+- **Accent (`{colors.accent}`) / Accent tint (`{colors.accent-tint}`)** — den enda kromatiska accentfärgen som inte är en domfärg. Aktivt segment i Range picker/Periodväljare, aktiv Ranking-/sort-toggle, Streak badge, fokusringen överallt. Används aldrig för deltavärden — en streak och ett delta svarar på olika frågor och får aldrig dela färg.
+- **Positiv (`{colors.positive}`) / Positiv tint (`{colors.positive-tint}`)** — bara för uppåtgående deltan, uppåttrendande Sparklines/Trend overlay-linjer och positiva periodprocent. Den enda färg som får antyda "bra."
+- **Negativ (`{colors.negative}`) / Negativ tint (`{colors.negative-tint}`)** — nedåtgående deltan, nedåttrendande Sparklines/Trend overlay-linjer, negativa periodprocent, och (beslutat men ej implementerat, se Varumärke och stil) framtida Blankningsbadge.
+- **Spike (`{colors.spike}` / `{colors.spike-tint}`)** — bärnstensfärgad, inte röd eller grön, medvetet så: en Spike badge är en flagga att gå och verifiera, inte en dom. En rad som spikar kan fortfarande visa en positiv Delta chip i grönt *och* en Spike badge i bärnsten samtidigt.
+- **Star (`{colors.star-filled}` / `{colors.star-empty}`)** — bara för Watchlist star. Se "Öppen spänning" ovan — ligger numera nära Spike-tonen, vilket den gamla paletten explicit undvek.
+- **Neutral/no-history-badges** — "flat" (ingen pågående streak), Plusdagar-chip och (idag, se ovan) Blankningsbadgen delar `{colors.neutral-tint}` + `{colors.text-secondary}`. Medvetet den minst visuellt intressanta badge-ytan i systemet.
 
-Undvik: gradienter, inflygande "success"-toaster, all röd/grön-användning utanför deltan och sparkline-linjer, samt firande färg för streaks — en Streak badge är informativ, inte en belöning.
+Undvik: gradienter, pillerformad (9999px) rundning var som helst, all röd/grön-användning utanför delta/sparkline/trendlinje, samt firande färg för streaks.
 
 ## Typografi
 
-Systemfont-stack genomgående (`-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif`) — inget eget webbtypsnitt. Det här är ett personligt verktyg; plattformens egen rendering är rätt val, inte en kompromiss.
+Två självhostade webbtypsnitt plus ett monospace, inget längre på systemfontstacken:
 
-- `{typography.wordmark}` — versaler, utspärrad, brand-färgad. Förekommer en gång per skärm, uppe till vänster. Används aldrig till något annat än själva "Stockpicker"-märket.
-- `{typography.h1}` — bara skärmtitel ("Topplista," "Bevakningslista," en akties namn på dess detaljsida). En per skärm.
-- `{typography.subtitle}` — den enda förklarande raden under en skärmtitel (till exempel, "Ägarantal, rankade. Spikar uppmärksammas, döljs inte."). Sätter den skeptiska tonen i text, inte bara i badge-färg.
-- `{typography.body}` — radnamn och allt primärt listinnehåll. Tillräckligt fet för att snabbt scanna en lista på 10–740 rader.
-- `{typography.stat}` — själva ägarantalssiffran. Något tyngre vikt än `{typography.body}` i samma storlek — siffran är anledningen till att raden finns.
-- `{typography.label}` — varje badge och rankningssiffra. Medvetet liten (9px) och genomgående versaler, fet vikt så att badgar läses som metadata, aldrig som rubriker som konkurrerar med radnamnet.
+- `{typography.heading}` (**Sora**, 600) — `{typography.h1}` (skärmtitel, 24/30px) och `{typography.h2}` (Info-sidans sektionsrubriker, 20/28px). Bara en Sora-vikt är självhostad (600); det finns ingen lättare headingvikt att falla tillbaka på.
+- `{typography.body}` (**Manrope**, 400/500/600) — brödtext, radnamn (`{typography.name}`, 14px/600), flik-/kontrolletiketter (`{typography.tabLabel}`, 13px/600), underrubrik (`{typography.subtitle}`, 13px/400), badges (`{typography.badge}`, 11px/600), period-pct-etiketter (`{typography.periodPctLabel}`, 10px/600).
+- `{typography.mono}` (**JetBrains Mono**, 500) — siffror med mening, inte bara text som råkar vara siffror: ägarantal (`{typography.stat}`, 14px), delta-chip, periodprocent-värden, Aktiedetaljens y-axel-etiketter. `font-variant-numeric: tabular-nums` så kolumner av tal linjerar. Det här är nytt sedan 27 september — den gamla riktningen hade inget separat monospace-register för tal.
 
-Ingen display-/hero-typografi någonstans — den här produkten har ingen marknadsföringsyta, bara arbetsskärmar.
+Appen har i praktiken ingen lätt (400-vikt) rubriktext och inget display-/hero-typsnitt — bara arbetsvikter för en arbetsskärm.
 
 ## Layout och mellanrum
 
-Basskala: `{spacing.1}`–`{spacing.6}` (4/8/12/16/18/24px), plus namngivna tokens för de former som återkommer konstant: `{spacing.gutter}` (18px sidmarginaler på varje skärm), `{spacing.card-gap}` (8px mellan Leaderboard row-rader), `{spacing.card-padding}` (12px inre radpadding), `{spacing.row-internal-gap}` (10px mellan en rads celler för rank/star/namn/sparkline/stat).
+4pt-skala: `{spacing.1}`–`{spacing.8}` (4/8/12/16/24/32/48/64px) — en jämnare, renare progression än den gamla skalan (som hade udda värden som 18px). Sidpadding är `{spacing.4}` (16px) rakt av; det finns ingen separat namngiven "gutter"-token längre.
 
-På mobil är layouten enkolumnig: kort i full bredd, kant-till-kant förutom `{spacing.gutter}`. Vid laptop-bredd flödar samma innehåll om till ett explicit kolumnrutnät (rank / star / namn / ägare / trend / delta / flagga) inuti ett brett kort — se Responsivitet och plattform i EXPERIENCE.md för det exakta brytpunktsbeteendet; den här filen specificerar bara de tokens som båda layouterna delar.
+Tre brytpunkter (tidigare bara en):
+
+- **<700px** — enkolumn, kontrollerna staplas. Ranking-togglens flikar får tightare padding så tre lägen ryms på en 390px-bredd utan att radbryta.
+- **700–899px** — kontrollerna flödar i rad (tvåkolumns-ish), men radlistan är fortfarande staplade kort — den riktiga kolumntabellen kräver 900px:s rutnät.
+- **≥900px** — sidan blir ett `{spacing.4}`-paddat kort (`{shadow.page}`, `{rounded.lg}`) på samma `{colors.bg-app}`-bakgrund; radlistan blir ett riktigt kolumnrutnät (rank/namn/trend/ägare/delta, plus periodprocent-kolumnen bara på Topplista) via CSS Grid, med ett eget radhuvud.
+- **≥1200px** — sidans maxbredd växer ytterligare (1152px).
 
 ## Elevation och djup
 
-Elevation används sparsamt och betyder bara "det här är valt" eller "det här är en självständig yta," aldrig som generisk dekoration:
-
-- Leaderboard row-rader är platta — bara `{colors.row-border}`-hårlinje, ingen skugga. En lista på upp till 740 rader har inte råd med skugg-brus per rad.
-- Den aktiva fliken inuti Ranking-mode toggle (och det aktiva segmentet i Range picker, som återanvänder samma aktiva-tillstånd-familj) får en mjuk lyftning (`{shadow.tab-active}`) för att visa valt tillstånd utan att bara förlita sig på färg — Source switcherns aktiva flik inverterar istället till en solid mörk piller, ingen skugga, så att de två växlarna inte konkurrerar visuellt.
-- Den breda vy-behållaren (laptop) får en enda ambient skugga (`{shadow.page}`) för att lyfta hela topplistan från den omgivande sidramen — det här är den enda "sidnivå"-skuggan i systemet.
+- Rader är platta — bara `{colors.border}`-hårlinje, ingen skugga. En lista på upp till ~740 rader har inte råd med skugg-brus per rad.
+- Aktivt segment i Range picker/Periodväljare får en mjuk lyftning (`{shadow.range-active}`) — Tab-bar/Source switcherns aktiva flik inverterar istället till en solid mörk bakgrund, ingen skugga, så de två växlarfamiljerna aldrig konkurrerar visuellt.
+- Den breda sidramen (≥900px) får `{shadow.page}` — den enda "sidnivå"-skuggan i systemet.
+- En tillfällig toast (bevakningsstjärnans felmeddelande) får `{shadow.toast}` — den enda flytande, tillfälliga ytan i appen.
+- Fokusringen (`{components.focus-ring}`) är ett outline, inte en skugga, synlig på alla interaktiva element vid tangentbordsnavigering (P0-tillgänglighetskrav från Lovable-handboken; fanns inte alls i den gamla riktningen).
 
 ## Former
 
-Hörnradien skalar med hur kontrollartad en form är:
+Hörnradien är medvetet återhållsam sedan 27 september — **ingen pillerformad (9999px) rundning finns längre någonstans i appen.** Det var ett uttryckligt brott med den gamla riktningen, inte en glidning:
 
-- `{rounded.sm}` (6px) — Delta chip. Liten, rektangulär, informationstät; en helt rundad piller skulle få en tvåordsstatistik att se ut som en knapp.
-- `{rounded.md}` (16px) — Leaderboard row-kort. Mjuk nog för att kännas tryckbar, inte så rund att den läses som en knapp.
-- `{rounded.lg}` (20px) — den yttre breda vy-ramen vid laptop-bredd. Den enskilt största ytan får den enskilt största radien.
-- `{rounded.full}` (9999px) — Source switcher, Ranking-mode toggle, Range picker, samt Streak/Spike/No-history-badgar. Full rundning är reserverad för sådant som verkligen är valbart eller informativa taggar — det är formens sätt att säga "det här är en kontroll eller en etikett, inte innehåll."
+- `{rounded.sm}` (4px) — flikar inuti en pill-track, badges, Delta chip, filter-toggle-kryssrutans egen ruta (avrundad ytterligare till ~3px).
+- `{rounded.md}` (6px) — pill-track-behållare (Tab-bar/Source switcher/Range picker/Marknadsfilter), Ranking-/sort-toggle, filter-toggle, inmatningsfält, knappar.
+- `{rounded.lg}` (8px) — rader/kort, Aktiedetaljens diagramkort, Info-sektioner, inloggningskortet, den breda sidramen.
 
 ## Komponenter
 
-Visuell referens: [`mockups/leaderboard-hero.html`](mockups/leaderboard-hero.html) (Topplista) och [`mockups/stock-detail.html`](mockups/stock-detail.html) (Aktiedetalj, inklusive Trend overlay nedan). Den här filens tokens vinner vid all konflikt med en mockup.
+**Status:** den här sektionen beskriver den riktiga, körande appen (`public_html/assets/app.css`), rekonstruerad 2026-10-06 efter att ha legat efter koden i nästan två veckor (se Varumärke och stil). Där ett beslut är fattat men inte kodat står det uttryckligen.
 
-- **Leaderboard row** (`{components.leaderboard-row}`) — rankningssiffra, Watchlist star, namn + badge-rad, Sparkline, ägarantal + Delta chip, vänster till höger. Namnet trunkeras med en ellips innan något annat ger vika.
-- **Streak badge** (`{components.streak-badge}`) — "🔥 {n}d" på `{colors.brand-tint}`. Visas bara när den pågående uppgångs-streaken är ≥ 1 dag; ersätts av No-history badgens "flat"-variant när streaken är 0. Se EXPERIENCE.md:s Komponentmönster för det exakta utlösarvillkoret — den här posten är visuell kontext, inte en andra sanningskälla.
-- **Spike badge** (`{components.spike-badge}`) — "⚡ spike" på `{colors.spike-bg}`. Kan visas tillsammans med en Streak badge på samma rad (en aktie kan både vara mitt i en streak och spika samtidigt) — de två är oberoende signaler och får aldrig slås ihop till en badge. Se EXPERIENCE.md:s Komponentmönster för det exakta utlösarvillkoret — den här posten är visuell kontext, inte en andra sanningskälla.
-- **No-history badge** (`{components.nohist-badge}`) — återanvänds för två olika meddelanden: en kort "flat"-etikett (raden har ingen pågående uppgångs-streak) och den längre etiketten "{n}d spårade · ingen trend än" (för få rader för en trendlinje). Båda delar samma tysta, dämpade visuella behandling. Se EXPERIENCE.md:s Tillståndsmönster för de exakta utlösarvillkoren — den här posten är visuell kontext, inte en andra sanningskälla.
-- **Plusdagar chip** (återanvänder `{components.nohist-badge}`, bara i läget Plusdagar) — "15/16 · +1 035" i badge-raden efter Streak/flat-badgen. Samma tysta grå behandling ({colors.nohist-bg} + {colors.text-secondary}) som "flat": varken brand (reserverat för Streak badge) eller {colors.positive} (grönt betyder dagens riktning, och varje rankad rad har netto tillväxt, så den skulle alltid vara grön och sluta säga något). Siffrorna bär signalen, inte färgen.
-- **Blankningsbadge** (återanvänder `{components.nohist-badge}`, klass `badge--short`; alla radytor och Aktiedetalj) — "Blankad 15,8 %" sist i badge-raden (efter Streak/flat, Plusdagar chip och Spike badge); på Aktiedetalj "Blankad 15,8 % (FI 2 okt)". Samma tysta grå som "flat" och Plusdagar chip, ingen egen färg: rött och grönt är reserverade för deltan, bärnsten för spikar och brand för streaks, och en hög blankning är kontext att väga in, inte en dom. Se EXPERIENCE.md:s Komponentmönster för utlösarvillkoret.
-- **Periodväljare, spikväxlare och marknadsfilter** (Topplista, alla tre lägen) — två egna fullbreddsrader under Source switcher och Ranking-mode toggle, vänsterställda i linje med Source switcher: rad 2 perioden, rad 3 marknaden "Alla | LC | MC | SC | First North". Båda raderna använder samma segmentkontroll. I Flest ägare är periodraden nedtonad (segmenten i {colors.text-muted}; aktivt segment utan fyllning och skugga, bara en tunn {colors.border}-kontur) med noten "Gäller inte Flest ägare" i {colors.text-muted} till höger. Perioden är en kompakt segmentkontroll "Vecka | Månad | 3 mån | År" med samma utseende som Aktiedetaljens Range picker (`{components.range-picker}`: vitt aktivt segment + brand-färgad text + `{shadow.tab-active}`) — samma begrepp, samma kontroll. I Plusdagar står den checkbox-formade länken "☐ Dölj spikar" i {colors.text-secondary} till höger om den. Länken "☐ Dölj blankade" (samma utseende) står i alla tre lägen längst till höger på periodraden — efter "Dölj spikar", efter noten "Gäller inte Flest ägare" eller direkt efter perioden — och är aldrig nedtonad, inte ens i Flest ägares nedtonade rad.
-- **Sparkline** (`{components.sparkline}`) — linjefärgen är kontextuell, inte dekorativ: `{colors.positive}` vid uppåttrend, `{colors.negative}` vid nedåttrend, `{colors.spike-text}` när raden är flaggad som spikande, `{colors.text-muted}` med streckad linje när det inte finns tillräckligt med historik för att rita en riktig trend. Ungefär dubbleras i bredd vid laptop-brytpunkten eftersom det då finns plats att visa den faktiska formen.
-- **Trend overlay** (`{components.trend-overlay}`, bara Aktiedetalj) — ritar båda källornas trendlinjer i samma diagram utan att låta dem smälta ihop till en signal; till skillnad från Sparkline (en kompakt blicksignal inuti en rad) är det här skärmens primära innehåll. **Dimensioner:** full kortbredd, `{components.trend-overlay.height-mobile}` hög på mobil och `{components.trend-overlay.height-wide}` på laptop — tillräckligt hög för att frågan "är det här en riktig trend" faktiskt ska kunna bedömas med ögat, vilket är hela anledningen till att Aktiedetalj finns. **Primär linje:** den aktuellt aktiva källan i Source switcher, med sparklinens kontextuella linjefärgslogik och linjebredd (`{components.trend-overlay.primary-strokeWidth-mobile}`) oförändrad, bara skalad till den större ytan. **Sekundär linje:** den andra källan, alltid renderad i en fast, icke-kontextuell `{colors.text-secondary}` med streckad linje (`{components.trend-overlay.secondary-dasharray}`) oavsett om den trendar upp eller ner — streckmönstret svarar på "vilken källa," Sparklinens egen färglogik svarar på "är det här bra," och de två frågorna måste förbli visuellt separerbara. **Legend:** en liten rad under diagrammet parar ihop varje linjestil med sitt källnamn ("Avanza" / "Nordnet") med `{typography.label}`-storlek så att det inte finns någon tvetydighet om vilken linje som är vilken.
-- **Source switcher** (`{components.source-tab}`) — tvåvägsväxlare, Avanza / Nordnet, som bor i en `{colors.control-bg}`-piller. Aktiv flik inverterar till en solid `{colors.text-primary}`-bakgrund — medvetet den högsta-kontrast-växlaren i UI:t, eftersom att få källan fel (Avanza-data avläst som Nordnet-data) är det enda misstag den här appen inte får göra tyst.
-- **Ranking-mode toggle** (`{components.ranking-mode-toggle}`) — "Flest ägare" / "Stadig tillväxt" / "Plusdagar" (bara lägets namn; perioden visas i Periodväljaren), samma pillerfamilj som Source switcher men ett visuellt distinkt aktivt tillstånd (vit flik + brand-färgad text + mjuk skugga, jämfört med Source switcherns solidmörka inversion) så att de två växlarna aldrig förväxlas trots att de sitter i samma header-rad vid laptop-bredd.
-- **Range picker** (`{components.range-picker}`, Aktiedetalj; samma utseende återanvänds av Topplistans Periodväljare) — Dag / Vecka / Månad / 3 mån / År, en femsegmentskontroll. Samma pillerfamilj och aktiva-tillstånd-behandling som Ranking-mode toggle (vitt aktivt segment + brand-färgad text + `{shadow.tab-active}`), inte Source switcherns högkontrast-inversion — att välja ett intervall är en lågriskändring av vyn, inte ett beslut om dataidentitet, så det konkurrerar inte om UI:ts högsta kontrastbehandling. Vecka/Månad/3 mån/År är kalenderfönster på 7/30/90/365 dagar; År spärras som 3 mån vid otillräcklig historik.
-- **Watchlist star** (`{components.watchlist-star}`) — fylld guldglyf eller tom konturglyf, ett tryckmål oberoende av resten av raden.
-- **Delta chip** (`{components.delta-chip-positive}` / `{components.delta-chip-negative}`) — antal och procent tillsammans ("+412 · 0,9 %"), alltid båda, aldrig bara en — ett rått antal utan procent (eller tvärtom) svarar inte på "är det här en stor grej för just den här aktien."
+- **Rad** (`{components.row}`) — rankningssiffra, Watchlist star, namn + badge-rad, Sparkline, ägarantal + Delta chip, vänster till höger (periodprocent-kolumn också på Topplista). Namnet trunkeras med ellips innan något annat ger vika.
+- **Tab-bar / Source switcher** (`{components.tab-bar}` / `{components.source-tab}`) — delar en gemensam "pill-track"-grund (`{components.pill-track}`) med Range picker, men med det högst-kontrast aktiva tillståndet (solid `{colors.text-primary}`-bakgrund, inverterad text) — medvetet, eftersom att få källan fel är det enda misstag appen inte får göra tyst. Topplista: trevägs "Alla / Avanza / Nordnet". Fullständig lista: egen, enklare tvåvägs-instans (Avanza / Nordnet, inget Alla).
+- **Range picker / Periodväljare** (`{components.range-picker}`) — samma pill-track-grund, men ett mjukare aktivt tillstånd (vit flik + accentfärgad text + `{shadow.range-active}`) eftersom ett intervallval är en lågriskändring, inte ett beslut om dataidentitet. Aktiedetalj: Dag/Vecka/30d/90d/År. Topplista (Periodväljaren): Vecka/Månad/3 mån/År, nedtonad och overksam i Flest ägare (segmenten `{colors.text-muted}`, aktivt segment utan fyllning, bara en `{colors.border}`-kontur).
+- **Ranking-/sort-toggle** (`{components.ranking-toggle}`) — *inte* en pill-track. En egen, visuellt lättare familj: enkel ytterram (`{colors.border}`), fyrkantiga inre flikar (ingen radie), aktivt tillstånd `{colors.accent-tint}`-fyllning + accenttext, ingen skugga. Avsiktligt nedtonad relativt Källa/Period så den läses som ett lättare val, inte ännu en identisk segmentkontroll (se `docs/lovable-ux-review-brief.md`s "avsiktliga avvikelser": anchor-länk-toggles behölls medvetet istället för en `<select>`, för att inte bryta appens stateless-URL-kontrakt).
+- **Filter-toggle** (`{components.filter-toggle}`) — en riktig kryssruteformad chip: ytterram, 12px inre ruta (3px radie) med `{colors.text-muted}`-kontur obockad; ikryssad fylls rutan med `{colors.accent}` + vit bock, och hela chipen får `{colors.accent}`-ram och `{colors.accent-tint}`-bakgrund. Används idag av Fullständig listas tre filter (Stadig tillväxt/Spik/Bevakade). **Öppet beslut (2026-10-06, ej kodat):** Topplistans Spikväxlare och Blankningsväxlare ska migreras hit — de använder idag en egen, enklare `{components.spike-toggle}` med bokstavliga "☐"/"☑"-glyfer istället för en riktig CSS-ritad ruta, vilket var Stefans ursprungliga klagomål ("checkboxen känns off"). Att återanvända `.filter-toggle` istället för att uppfinna en ny komponent är rätt väg — den finns redan, en rad bort i Fullständig lista.
+- **Spike-toggle** (`{components.spike-toggle}`, nuvarande implementation) — "☐ Dölj spikar" / "☑ Dölj blankade" som en enkel textlänk med ett `aria-hidden`-glyf-tecken, ingen CSS-ritad ruta. Sitter i Topplistans periodrad: Spikväxlaren bara i Plusdagar, Blankningsväxlaren i alla tre lägen. Se `EXPERIENCE.md` för det fasta tvåradsfacket som löser positionsflytten.
+- **Badge-familj** (`{components.badge}`) — `{rounded.sm}` (inte pillerformad längre), 11px/600, padding 2px 6px.
+  - **Streak badge** (`{components.badge-streak}`) — "🔥 {n}d" på `{colors.accent-tint}`/`{colors.accent}`. Visas bara när streaken är ≥ 1 dag; ersätts av "flat" (No-history-familjen) när den är 0.
+  - **Spike badge** (`{components.badge-spike}`) — "⚡ spike" på `{colors.spike-tint}`/`{colors.spike}`. Kan samexistera med en Streak badge på samma rad — oberoende signaler, slås aldrig ihop.
+  - **No-history / flat / Plusdagar-chip** (`{components.badge-nohist}`) — delad tyst grå behandling (`{colors.neutral-tint}`/`{colors.text-secondary}`) för tre olika meddelanden: "flat" (ingen streak), "{n}d spårade · ingen trend än" (för lite historik), och Plusdagar-chipen "15/16 · +1 035" (mono-siffror, annars samma grå).
+  - **Blankningsbadge** (`{components.badge-short}`) — "Blankad 15,8 %" sist i badge-raden. **Idag:** delar `badge-nohist`s grå rakt av (ingen egen regel). **Beslutat 2026-10-06, ej kodat:** egen röd behandling (`{colors.negative-tint}`/`{colors.negative}`) — se Varumärke och stil för avvägningen mot "rött = bara dagens nedgång".
+- **Delta chip** (`{components.delta-chip}`) — antal och procent tillsammans ("+412 · 0,9 %"), alltid båda. Positiv/negativ/neutral variant, samma tint+text-par som badge-familjen.
+- **Sparkline** (`{components.sparkline}`) — kontextuell linjefärg: `{colors.positive}` uppåt, `{colors.negative}` nedåt, `{colors.spike}` vid spik, `{colors.text-muted}` streckad vid för lite historik. 52×22px mobil, 130×30px vid ≥900px (strokeWidth konstant 2px — ingen separat bred vikt längre).
+- **Trend overlay** (`{components.trend-overlay}`, bara Aktiedetalj) — ritar båda källornas linjer i samma diagram. **Nytt sedan 27 september:** en vänsterställd y-axel med tick-etiketter (`{typography.mono}`, `{components.trend-overlay.y-axis-width}` bred) — fanns inte i den gamla riktningen. Fast höjd 220px (ingen mobil/bred-delning längre), full bredd. Primärlinje: aktiv källa, 2,5px, samma kontextuella färglogik som Sparkline. Sekundärlinje: andra källan, alltid `{colors.text-secondary}`, streckad ("4 4"), 2px. Legend under diagrammet parar linjestil med källnamn.
+- **Watchlist star** (`{components.watchlist-star}`) — fylld/tom glyf, 44×44px tryckmål (oförändrat), oberoende tryckmål från resten av raden.
+- **Fokusring** (`{components.focus-ring}`) — `{colors.accent}`, 2px, 2px offset, på alla interaktiva element vid tangentbordsnavigering. Nytt tillskott från Lovable-handbokens P0 ("konsekvens och åtkomst").
 
 ## Gör och gör inte
 
 | Gör | Gör inte |
 |---|---|
-| Spendera `{colors.brand}` bara på wordmark, aktiv Ranking-mode toggle-flik (och aktivt segment i Range picker/Periodväljare) och Streak badge | Använd brand-lila till deltan, spikar eller stjärnan — varje signal behåller sin egen färg |
-| Låt en Spike badge och en Streak badge samexistera på samma rad | Slå ihop spike + streak till en enda kombinerad badge — de svarar på olika frågor |
+| Spendera `{colors.accent}` bara på aktivt Range picker/Periodväljare-segment, aktiv Ranking-/sort-toggle, Streak badge och fokusringen | Använd accentfärgen till deltavärden, spikar eller stjärnan — varje signal behåller sin egen färg |
+| Låt en Spike badge och en Streak badge samexistera på samma rad | Slå ihop spike + streak till en enda kombinerad badge |
 | Visa antal och procent tillsammans i varje Delta chip | Visa en ensam procent eller ett ensamt antal |
-| Använd den dämpade No-history badge-behandlingen för både "flat" och "otillräcklig data" | Hitta på en separat larmande färg för "otillräcklig data" — det är ett faktum om datamognad, inte ett problem |
-| Håll rader platta, bara hårlinje | Lägg till skuggor per rad — listan kan vara 740 rader djup |
-| Reservera den ambienta sidnivå-skuggan för den enda breda vy-behållaren | Lägg till skuggor på enskilda kontroller eller badgar |
+| Håll `{rounded.sm}`/`{rounded.md}`/`{rounded.lg}` — aldrig pillerformad 9999px-rundning | Återinför full pillerundning "för att det såg snyggare ut förr" — det är ett medvetet, dokumenterat riktningsbyte |
+| Håll rader platta, bara hårlinje | Lägg till skuggor per rad — listan kan vara ~740 rader djup |
+| Reservera `{shadow.page}` för den enda breda sidramen och `{shadow.toast}` för toasten | Lägg till skuggor på enskilda kontroller eller badges |
+| Återanvänd `{components.filter-toggle}` för nya kryssruteformade kontroller | Uppfinn en ny checkbox-stil (som gårdagens nu ersatta `filter-checkbox`-förslag) när en redan finns i koden |
