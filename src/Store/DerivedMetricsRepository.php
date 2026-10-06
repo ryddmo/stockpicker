@@ -17,7 +17,7 @@ final class DerivedMetricsRepository
     /**
      * Story 4.2/spec-4-2 — the single source of truth for the spike
      * threshold: `spike_score >= 2` marks a row spiking, upward only. Shared
-     * by topByTrendQualityForPeriod()'s exclusion filter (bound as a query parameter,
+     * by topByTrendQuality()'s exclusion filter (bound as a query parameter,
      * never a raw literal) and LeaderboardController::isSpiking() (the Spike
      * badge condition), so the two can never drift apart.
      */
@@ -134,28 +134,25 @@ final class DerivedMetricsRepository
     }
 
     /**
-     * spec-stadig-tillvaxt-period — Topplista's "Stadig tillväxt" ranking
-     * for a chosen period (Vecka 7 / Månad 30 / 3 mån 90 / År 365 days).
-     * To qualify, an isin's latest row must be active
-     * (`instrument.last_seen IS NULL`), have a real ongoing streak
-     * (`up_streak >= 1`, the Streak badge condition) and not be spiking
-     * (any row at or above self::SPIKE_THRESHOLD is excluded outright,
-     * decided 2026-09-13, spec-4-2 — however long its streak). Flat/
-     * no-streak rows (0 or NULL) never qualify, which keeps the
-     * zero-qualifiers empty state reachable. Ordered by the period's percentage
-     * growth (`pct_7d`/`pct_30d`/`pct_90d`/`pct_365d`) DESC; rows lacking
-     * that percentage (NULL, e.g. a new listing) come after every row with
-     * one, then `up_streak` DESC, then `isin` ASC. The `$days` → column
-     * mapping is a fixed whitelist (self::periodPctColumn()), never
-     * interpolated from input.
+     * spec-topplista-steady-no-period (2026-10-06, supersedes
+     * spec-stadig-tillvaxt-period's period-based version) — Topplista's
+     * "Stadig tillväxt" ranking. To qualify, an isin's latest row must be
+     * active (`instrument.last_seen IS NULL`), not be currently declining
+     * (`delta_1d IS NULL` — a brand-new listing with no prior row — OR
+     * `delta_1d >= 0`, which also admits a flat/unchanged day, not just an
+     * active up-streak) and not be spiking (any row at or above
+     * self::SPIKE_THRESHOLD is excluded outright, decided 2026-09-13,
+     * spec-4-2 — however long its streak). Ordered by `up_streak` DESC
+     * (longest ongoing streak first; a flat day's streak is 0, so it always
+     * sorts after any real streak), then `number_of_owners` DESC, then
+     * `isin` ASC. No period — every Vecka/Månad/3 mån/År column is still
+     * selected (the per-row period-pct footer still shows them), but none
+     * drives qualification or order any more.
      *
      * @return list<array<string, mixed>>
-     *
-     * @throws \InvalidArgumentException when `$days` is not 7/30/90/365
      */
-    public function topByTrendQualityForPeriod(string $source, int $days, int $limit, ?string $market = null, bool $excludeShorted = false): array
+    public function topByTrendQuality(string $source, int $limit, ?string $market = null, bool $excludeShorted = false): array
     {
-        $col = self::periodPctColumn($days);
         $marketCondition = self::marketCondition($market);
         $shortCondition = self::shortedCondition($excludeShorted);
 
@@ -178,11 +175,11 @@ final class DerivedMetricsRepository
             JOIN instrument i ON i.isin = latest.isin
             WHERE latest.rn = 1
               AND i.last_seen IS NULL
-              AND latest.up_streak >= 1
+              AND (latest.delta_1d IS NULL OR latest.delta_1d >= 0)
               AND (latest.spike_score IS NULL OR latest.spike_score < :spike_threshold)
               {$marketCondition}
               {$shortCondition}
-            ORDER BY latest.{$col} IS NULL, latest.{$col} DESC, latest.up_streak DESC, latest.isin ASC
+            ORDER BY latest.up_streak DESC, latest.number_of_owners DESC, latest.isin ASC
             LIMIT :lim
             SQL
         );
@@ -243,21 +240,6 @@ final class DerivedMetricsRepository
             $stmt->bindValue(':short_fresh_since', ShortPositionRepository::freshSince($this->now), PDO::PARAM_STR);
             $stmt->bindValue(':short_threshold', (string) ShortPositionRepository::BADGE_THRESHOLD_PCT, PDO::PARAM_STR);
         }
-    }
-
-    /**
-     * Whitelisted period-length → view column mapping for
-     * topByTrendQualityForPeriod().
-     */
-    private static function periodPctColumn(int $days): string
-    {
-        return match ($days) {
-            7 => 'pct_7d',
-            30 => 'pct_30d',
-            90 => 'pct_90d',
-            365 => 'pct_365d',
-            default => throw new \InvalidArgumentException(sprintf('Unsupported period length: %d days', $days)),
-        };
     }
 
     /**
@@ -457,7 +439,7 @@ final class DerivedMetricsRepository
     /**
      * Story 4.4 — `/list`'s combined search/filter/sort query: every active
      * instrument for `$source` (same "latest row per isin" + "active"
-     * shape as topByOwnerCount()/topByTrendQualityForPeriod()), narrowed by whichever
+     * shape as topByOwnerCount()/topByTrendQuality()), narrowed by whichever
      * of `$filters` are present, all combined with AND. No `LIMIT` (the spec
      * renders the full result in one page load).
      *
@@ -465,7 +447,10 @@ final class DerivedMetricsRepository
      * active"):
      *  - 'q': string — case-insensitive substring match on instrument name.
      *  - 'growth': bool — the exact Topplista "Stadig tillväxt" qualifying
-     *    rule (`up_streak >= 1` AND not spiking).
+     *    rule (2026-10-06: not currently declining — `delta_1d IS NULL OR
+     *    delta_1d >= 0`, which also admits a flat day — AND not spiking;
+     *    kept identical to topByTrendQuality() on purpose, see
+     *    spec-topplista-steady-no-period).
      *  - 'spike': bool — `spike_score >= self::SPIKE_THRESHOLD`.
      *  - 'watchlist': bool — isin exists in `watchlist`.
      *  - 'market': string — exact match on `instrument.list` (the literal
@@ -490,7 +475,7 @@ final class DerivedMetricsRepository
         }
 
         if (!empty($filters['growth'])) {
-            $conditions[] = 'latest.up_streak >= 1';
+            $conditions[] = '(latest.delta_1d IS NULL OR latest.delta_1d >= 0)';
             $conditions[] = '(latest.spike_score IS NULL OR latest.spike_score < :spike_threshold_growth)';
             $params['spike_threshold_growth'] = self::SPIKE_THRESHOLD;
         }
@@ -648,10 +633,14 @@ final class DerivedMetricsRepository
 
     /**
      * spec-5-6 — TopTenDigest's "Stadig tillväxt" snapshot for one exact
-     * calendar date: same qualifying rule as topByTrendQualityForPeriod() (`up_streak
-     * >= 1`, spike-excluded), pinned to `m.as_of_date = :date` instead of the
-     * "latest per isin" CTE. See topByOwnerCountAsOf() for why no window
-     * function is needed here.
+     * calendar date: deliberately kept on the OLD qualifying rule
+     * (`up_streak >= 1`, spike-excluded) rather than topByTrendQuality()'s
+     * 2026-10-06 broadened one (not-currently-declining, flat included) —
+     * an explicit, known divergence from the web UI's two Stadig
+     * tillväxt surfaces (Topplista, Fullständig lista), not an oversight;
+     * revisit if the digest should match. Pinned to `m.as_of_date = :date`
+     * instead of the "latest per isin" CTE. See topByOwnerCountAsOf() for
+     * why no window function is needed here.
      *
      * @return list<array<string, mixed>>
      */

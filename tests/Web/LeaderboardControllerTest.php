@@ -537,18 +537,22 @@ final class LeaderboardControllerTest extends TestCase
         );
     }
 
-    public function testEmptyStateCopyForSteadyModeDistinguishesShortHistoryFromNoQualifiers(): void
+    public function testEmptyStateCopyForSteadyModeHasNoShortHistoryStateSinceTheNoPeriodChange(): void
     {
+        // spec-topplista-steady-no-period (2026-10-06): Stadig tillväxt
+        // dropped the period entirely, so $insufficientHistory is now
+        // ignored for it too -- same as Flest ägare always was.
         self::assertSame(
             'Inga aktier med stadig tillväxt just nu.',
             LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'manad'),
         );
         self::assertSame(
-            'För lite historik för månad ännu.',
+            'Inga aktier med stadig tillväxt just nu.',
             LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'manad', true),
+            'the insufficientHistory flag no longer has any effect on Stadig tillväxt',
         );
         self::assertSame(
-            'För lite historik för vecka ännu.',
+            'Inga aktier med stadig tillväxt just nu.',
             LeaderboardController::emptyStateCopy(LeaderboardController::RANKING_STEADY, 'vecka', true),
         );
         self::assertSame(

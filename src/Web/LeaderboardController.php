@@ -17,7 +17,9 @@ use Stockpicker\Store\WatchlistRepository;
  * owner count and delta chip. The header is the same three rows in every
  * mode (spec-topplista-market-filter): row 1 source switcher + ranking
  * toggle; row 2 the shared period row (Vecka | Månad | 3 mån | År — greyed
- * out and inert in Flest ägare, with "Dölj spikar" to its right in
+ * out and inert in Flest ägare and, since 2026-10-06
+ * (spec-topplista-steady-no-period), Stadig tillväxt too, which no longer
+ * sorts by a period's percentage growth; "Dölj spikar" sits to its right in
  * Plusdagar only); row 3 the market filter (Alla | LC | MC | SC | First
  * North), which narrows the top 10 *within* the market. In Plusdagar each
  * row carries a "{plus}/{data} · +{new}" chip. spec-short-interest-badge-ui
@@ -161,15 +163,14 @@ final class LeaderboardController
                 ? []
                 : $this->metrics->topByPlusDays($rankingSource, $days, $excludeSpikes, self::TOP_N, $market, $excludeShorted);
         } elseif ($rankingMode === self::RANKING_STEADY) {
-            // spec-stadig-tillvaxt-period — sorted by the period's % growth;
-            // every period is history-gated (the % needs a row N days back).
-            // Spikes are always excluded here, so `?spikes` is ignored.
+            // spec-topplista-steady-no-period (2026-10-06) — sorted by
+            // streak length then owner count, no period involved; the
+            // period row is greyed out and inert here, same as Flest
+            // ägare, so there is no history-gated "too little history for
+            // the period" state any more either. Spikes are always
+            // excluded here, so `?spikes` is ignored.
             $excludeSpikes = false;
-            $days = self::PERIODS[$period]['days'];
-            $insufficientHistory = !$this->metrics->historySpansDays($rankingSource, $days);
-            $rows = $insufficientHistory
-                ? []
-                : $this->metrics->topByTrendQualityForPeriod($rankingSource, $days, self::TOP_N, $market, $excludeShorted);
+            $rows = $this->metrics->topByTrendQuality($rankingSource, self::TOP_N, $market, $excludeShorted);
         } else {
             $rows = $this->metrics->topByOwnerCount($rankingSource, self::TOP_N, $market, $excludeShorted);
         }
@@ -386,17 +387,19 @@ final class LeaderboardController
      * Steady growth and Plusdagar have product-specified copy; the
      * owner-count mode's empty case is not reachable in normal operation
      * (it would mean zero active instruments) but still gets a plain
-     * fallback rather than a blank page. Plusdagar (3 mån/År) and Stadig
-     * tillväxt (every period) distinguish "the source's history is shorter
-     * than the period window" ($insufficientHistory) from "nothing
-     * qualifies"; both use the same short-history copy.
+     * fallback rather than a blank page. Only Plusdagar (3 mån/År) still
+     * distinguishes "the source's history is shorter than the period
+     * window" ($insufficientHistory) from "nothing qualifies" — Stadig
+     * tillväxt dropped the period entirely (2026-10-06,
+     * spec-topplista-steady-no-period), so it has no history-gated state
+     * any more, same as Flest ägare.
      */
     public static function emptyStateCopy(
         string $rankingMode,
         string $period = self::PERIOD_DEFAULT,
         bool $insufficientHistory = false,
     ): string {
-        if ($insufficientHistory && ($rankingMode === self::RANKING_PLUS || $rankingMode === self::RANKING_STEADY)) {
+        if ($insufficientHistory && $rankingMode === self::RANKING_PLUS) {
             return sprintf('För lite historik för %s ännu.', self::PERIODS[self::normalizePeriod($period)]['phrase']);
         }
 
@@ -629,7 +632,7 @@ final class LeaderboardController
     }
 
     /**
-     * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQualityForPeriod()/topByPlusDays() row
+     * @param array<string, mixed> $row one topByOwnerCount()/topByTrendQuality()/topByPlusDays() row
      * @param ?int $nordnetOwners only meaningful when $source is
      *   self::SOURCE_ALL (null otherwise) — Nordnet's latest owner count for
      *   this row's isin, or null when Nordnet has no stored data for it
@@ -1013,23 +1016,24 @@ final class LeaderboardController
     }
 
     /**
-     * spec-stadig-tillvaxt-period / spec-topplista-market-filter — the
+     * spec-topplista-steady-no-period / spec-topplista-market-filter — the
      * period row (header row 2), rendered in every mode: a compact
      * segmented pill "Vecka | Månad | 3 mån | År" (same `.range-picker`
-     * markup as Aktiedetalj's Range picker), then — in Flest ägare only —
-     * the muted note "Gäller inte Flest ägare", then a fixed two-row,
-     * right-aligned `.period-extras` slot
+     * markup as Aktiedetalj's Range picker), then — in Flest ägare and
+     * Stadig tillväxt, where it's inert — a mode-specific muted note, then
+     * a fixed two-row, right-aligned `.period-extras` slot
      * (spec-topplista-filter-toggle-badge-color): row 1 holds the
      * `.filter-toggle` checkbox chip "Dölj spikar" in Plusdagar only
      * (Stadig tillväxt always excludes spikes) or is rendered empty
      * (`aria-hidden`, height-reserved) otherwise; row 2 always holds the
      * `.filter-toggle` chip "Dölj blankade" (spec-short-interest-badge-ui;
-     * a live link even in Flest ägare's muted row), so its position never
-     * shifts between ranking modes. In Flest ägare the period doesn't
-     * apply: the row is greyed out (`.period-row--muted`), its segments
-     * are inert `<span>`s rather than links, and the remembered period
-     * stays marked. Plain links, no JS (AD-12); source, market and the
-     * other controls survive each click.
+     * a live link even in the two muted modes' rows), so its position
+     * never shifts between ranking modes. In Flest ägare and (2026-10-06)
+     * Stadig tillväxt the period doesn't apply: the row is greyed out
+     * (`.period-row--muted`), its segments are inert `<span>`s rather than
+     * links, and the remembered period stays marked (so it's still there
+     * if you switch to Plusdagar). Plain links, no JS (AD-12); source,
+     * market and the other controls survive each click.
      */
     private static function periodRowHtml(
         string $source,
@@ -1039,7 +1043,7 @@ final class LeaderboardController
         ?string $market,
         bool $excludeShorted = false,
     ): string {
-        $inert = $rankingMode === self::RANKING_COUNT;
+        $inert = $rankingMode === self::RANKING_COUNT || $rankingMode === self::RANKING_STEADY;
 
         $segments = '';
         foreach (self::PERIODS as $key => $def) {
@@ -1057,7 +1061,12 @@ final class LeaderboardController
                 : "<a class=\"tab\" href=\"{$href}\">{$label}</a>";
         }
 
-        $noteHtml = $inert ? '<span class="period-note">Gäller inte Flest ägare</span>' : '';
+        $noteText = match ($rankingMode) {
+            self::RANKING_COUNT => 'Gäller inte Flest ägare',
+            self::RANKING_STEADY => 'Gäller inte Stadig tillväxt',
+            default => '',
+        };
+        $noteHtml = $noteText !== '' ? '<span class="period-note">' . $noteText . '</span>' : '';
 
         // Row 1: the spike filter-toggle in Plusdagar, or an empty,
         // height-reserved row otherwise (Design Notes — omitting the

@@ -55,7 +55,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
     /**
      * Same as seed(), for an arbitrary isin — used by the topByOwnerCount()/
-     * topByTrendQualityForPeriod() tests (Story 4.2), which need more than one
+     * topByTrendQuality() tests (Story 4.2), which need more than one
      * instrument. The caller must insert the `instrument` row itself first.
      */
     private function seedFor(string $isin, string $asOfDate, int $owners, string $source = NormalizedRow::SOURCE_AVANZA): void
@@ -588,7 +588,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         $results = [
             'topByOwnerCount' => $this->metrics->topByOwnerCount(NormalizedRow::SOURCE_AVANZA, 10),
-            'topByTrendQualityForPeriod' => $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 30, 10),
+            'topByTrendQuality' => $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10),
             'topByOwnerCountAsOf' => $this->metrics->topByOwnerCountAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-02', 10),
             'topByTrendQualityAsOf' => $this->metrics->topByTrendQualityAsOf(NormalizedRow::SOURCE_AVANZA, '2026-01-02', 10),
         ];
@@ -642,9 +642,9 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame(1000, (int) $top[0]['number_of_owners'], 'Nordnet\'s count must never leak into an Avanza query');
     }
 
-    // -- topByTrendQualityForPeriod(): qualifier (Story 4.2 rule, unchanged) --
+    // -- topByTrendQuality(): qualifier (spec-topplista-steady-no-period, 2026-10-06) --
 
-    public function testTopByTrendQualityForPeriodFallsBackToUpStreakWithoutAPctAndExcludesAnyRowMeetingTheSpikeThreshold(): void
+    public function testTopByTrendQualityOrdersByStreakLengthAndExcludesAnyRowMeetingTheSpikeThreshold(): void
     {
         $this->insertInstrument('SE0000108656', 'Atlas Copco A');
         $this->insertInstrument('SE0000222222', 'SSAB B');
@@ -671,7 +671,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
             $this->seedFor('SE0000222222', sprintf('2026-04-%02d', $i + 1), $v);
         }
 
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
 
         $isins = array_column($top, 'isin');
         self::assertNotContains(self::ISIN, $isins, 'the spiking isin must never appear in the steady-growth ranking');
@@ -680,30 +680,50 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         self::assertSame(2, (int) $top[1]['up_streak']);
     }
 
-    public function testTopByTrendQualityForPeriodReturnsEmptyArrayWhenNothingQualifies(): void
+    public function testTopByTrendQualityReturnsEmptyArrayWhenNothingQualifies(): void
     {
         // No owner_count_daily rows at all for this source -> nothing to rank,
         // and the empty-state copy ("Inga aktier med stadig tillväxt just
         // nu.") is a LeaderboardController concern, not this repository's.
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
 
         self::assertSame([], $top);
     }
 
-    public function testTopByTrendQualityForPeriodExcludesFlatOrNoStreakInstrumentsEvenWhenNotSpiking(): void
+    public function testTopByTrendQualityIncludesAFlatDayButExcludesADecliningOne(): void
     {
-        // A single, non-spiking, non-growing instrument: rn=1 has up_streak
-        // NULL (no predecessor), and a down/flat day resets it to 0. Neither
-        // ever qualifies as "stadig tillväxt".
-        $this->seed('2026-06-01', 1000);
-        $this->seed('2026-06-02', 990); // down day -> up_streak 0
+        // 2026-10-06 rule: a flat (unchanged) latest day still qualifies --
+        // only an actual decline disqualifies. Both reset up_streak to 0,
+        // so this is purely a delta_1d distinction.
+        $this->insertInstrument('SE0000108656', 'Flat AB');
+        $this->insertInstrument('SE0000222222', 'Decline AB');
 
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $this->seedFor('SE0000108656', '2026-06-01', 1000);
+        $this->seedFor('SE0000108656', '2026-06-02', 1000); // flat -> qualifies
 
-        self::assertSame([], $top, 'a flat/no-streak instrument must never qualify for Stadig tillväxt');
+        $this->seedFor('SE0000222222', '2026-06-01', 1000);
+        $this->seedFor('SE0000222222', '2026-06-02', 990); // down -> excluded
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame(['SE0000108656'], array_column($top, 'isin'), 'flat qualifies, declining does not');
+        self::assertSame(0, (int) $top[0]['up_streak']);
+        self::assertSame(0, (int) $top[0]['delta_1d']);
     }
 
-    public function testTopByTrendQualityForPeriodExcludesDelistedInstruments(): void
+    public function testTopByTrendQualityIncludesABrandNewListingWithNoPriorRow(): void
+    {
+        // A single row, no predecessor: delta_1d is NULL, which the rule
+        // treats as "not declining" (never having gone down yet).
+        $this->seed('2026-06-01', 1000);
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame([self::ISIN], array_column($top, 'isin'));
+        self::assertNull($top[0]['delta_1d']);
+    }
+
+    public function testTopByTrendQualityExcludesDelistedInstruments(): void
     {
         $this->insertInstrument('SE0000199999', 'Delisted AB', '2026-02-01');
 
@@ -711,109 +731,57 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
             $this->seedFor('SE0000199999', sprintf('2026-05-%02d', $i + 1), $v);
         }
 
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
 
         self::assertSame([], $top);
     }
 
-    // -- topByTrendQualityForPeriod() (spec-stadig-tillvaxt-period) -----------
+    // -- topByTrendQuality(): sort order (spec-topplista-steady-no-period) ----
 
-    public function testTopByTrendQualityForPeriodVeckaOrdersByPct7dThenNullPctLastByStreak(): void
-    {
-        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
-        $this->insertInstrument('SE0000222222', 'SSAB B');
-        $this->insertInstrument('SE0000333333', 'Nykomling C');
-        $this->insertInstrument('SE0000444444', 'Nykomling D');
-        $this->insertInstrument('SE0000555555', 'Tappare E');
-
-        // self::ISIN: 10 days of +1 -> up_streak 9 (longest), pct_7d tiny.
-        for ($i = 0; $i < 10; ++$i) {
-            $this->seedFor(self::ISIN, sprintf('2026-06-%02d', $i + 1), 1000 + $i);
-        }
-
-        // Atlas Copco A: flat for 8 days, then +100 twice -> up_streak 2,
-        // pct_7d 20 % -- ranks first despite the shorter streak.
-        for ($i = 0; $i < 8; ++$i) {
-            $this->seedFor('SE0000108656', sprintf('2026-06-%02d', $i + 1), 1000);
-        }
-        $this->seedFor('SE0000108656', '2026-06-09', 1100);
-        $this->seedFor('SE0000108656', '2026-06-10', 1200);
-
-        // Nykomling C/D: new listings, no row 7 days back -> pct_7d NULL.
-        // C has the longer streak (2) and goes before D (1).
-        foreach ([500, 510, 520] as $i => $v) {
-            $this->seedFor('SE0000333333', sprintf('2026-06-%02d', $i + 8), $v);
-        }
-        foreach ([600, 610] as $i => $v) {
-            $this->seedFor('SE0000444444', sprintf('2026-06-%02d', $i + 9), $v);
-        }
-
-        // Tappare E: a big week, but the last day is down -> up_streak 0,
-        // never listed whatever its %.
-        for ($i = 0; $i < 8; ++$i) {
-            $this->seedFor('SE0000555555', sprintf('2026-06-%02d', $i + 1), 1000);
-        }
-        $this->seedFor('SE0000555555', '2026-06-09', 2000);
-        $this->seedFor('SE0000555555', '2026-06-10', 1990);
-
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
-
-        self::assertSame(
-            ['SE0000108656', self::ISIN, 'SE0000333333', 'SE0000444444'],
-            array_column($top, 'isin'),
-        );
-        self::assertNull($top[2]['pct_7d']);
-        self::assertNull($top[3]['pct_7d']);
-    }
-
-    public function testTopByTrendQualityForPeriodManadOrdersByPct30dNotPct7d(): void
-    {
-        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
-
-        // self::ISIN: 31 days of +10 from 1000 -> pct_30d 30 %, pct_7d ~5.7 %.
-        for ($i = 0; $i < 31; ++$i) {
-            $this->seedFor(self::ISIN, (new DateTimeImmutable('2026-05-01'))->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
-        }
-
-        // Atlas Copco A: 8 days of +100 from 1000 at the end of the same
-        // window -> pct_7d 70 %, pct_30d NULL (no row 30 days back).
-        for ($i = 0; $i < 8; ++$i) {
-            $this->seedFor('SE0000108656', (new DateTimeImmutable('2026-05-24'))->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 100);
-        }
-
-        $vecka = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
-        $manad = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 30, 10);
-
-        self::assertSame(['SE0000108656', self::ISIN], array_column($vecka, 'isin'));
-        self::assertSame([self::ISIN, 'SE0000108656'], array_column($manad, 'isin'));
-    }
-
-    public function testTopByTrendQualityForPeriodTiesBreakOnUpStreakThenIsin(): void
+    public function testTopByTrendQualityOrdersByStreakLengthThenNumberOfOwners(): void
     {
         $this->insertInstrument('SE0000108656', 'Atlas Copco A');
         $this->insertInstrument('SE0000222222', 'SSAB B');
 
-        // All three end at +10 % over the week. self::ISIN has the
-        // longest streak; Atlas/SSAB tie on streak and fall back to isin.
-        foreach ([1000, 1020, 1040, 1060, 1080, 1090, 1095, 1100] as $i => $v) {
-            $this->seedFor(self::ISIN, sprintf('2026-07-%02d', $i + 1), $v);
+        // Both have a clean 3-day up-streak (same length); SSAB ends with
+        // more owners, so it ranks first despite its isin sorting after
+        // Atlas Copco's -- proves the order is streak, then owners, not isin.
+        foreach ([2000, 2010, 2020, 2030] as $i => $v) {
+            $this->seedFor('SE0000108656', sprintf('2026-05-%02d', $i + 1), $v);
         }
-        foreach (['SE0000222222', 'SE0000108656'] as $isin) {
-            foreach ([1000, 1000, 1000, 1000, 1000, 1000, 1050, 1100] as $i => $v) {
-                $this->seedFor($isin, sprintf('2026-07-%02d', $i + 1), $v);
-            }
+        foreach ([3000, 3100, 3200, 3300] as $i => $v) {
+            $this->seedFor('SE0000222222', sprintf('2026-05-%02d', $i + 1), $v);
         }
 
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
 
-        self::assertSame([self::ISIN, 'SE0000108656', 'SE0000222222'], array_column($top, 'isin'));
+        self::assertSame(['SE0000222222', 'SE0000108656'], array_column($top, 'isin'));
+        self::assertSame(3, (int) $top[0]['up_streak']);
+        self::assertSame(3, (int) $top[1]['up_streak']);
     }
 
-    public function testTopByTrendQualityForPeriodExcludesSpikingRowsWhateverTheirPct(): void
+    public function testTopByTrendQualityTiesBreakOnIsinWhenStreakAndOwnersAreEqual(): void
+    {
+        $this->insertInstrument('SE0000222222', 'SSAB B');
+        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
+
+        // Identical streak length and identical final owner count for both
+        // -- only isin ASC can separate them.
+        foreach ([2000, 2010, 2020] as $i => $v) {
+            $this->seedFor('SE0000222222', sprintf('2026-05-%02d', $i + 1), $v);
+            $this->seedFor('SE0000108656', sprintf('2026-05-%02d', $i + 1), $v);
+        }
+
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
+
+        self::assertSame(['SE0000108656', 'SE0000222222'], array_column($top, 'isin'));
+    }
+
+    public function testTopByTrendQualityExcludesSpikingRowsWhateverTheirStreak(): void
     {
         $this->insertInstrument('SE0000108656', 'Atlas Copco A');
 
-        // self::ISIN: 29 days of +10, then a huge jump -> spiking, highest pct.
+        // self::ISIN: 29 days of +10, then a huge jump -> spiking, longest streak.
         $start = new DateTimeImmutable('2026-03-01');
         for ($i = 0; $i < 29; ++$i) {
             $this->seedFor(self::ISIN, $start->modify("+{$i} days")->format('Y-m-d'), 1000 + $i * 10);
@@ -824,68 +792,9 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
             $this->seedFor('SE0000108656', $start->modify('+' . (22 + $i) . ' days')->format('Y-m-d'), $v);
         }
 
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 7, 10);
+        $top = $this->metrics->topByTrendQuality(NormalizedRow::SOURCE_AVANZA, 10);
 
         self::assertSame(['SE0000108656'], array_column($top, 'isin'));
-    }
-
-    /**
-     * Every period maps to its own column: three instruments over 366 days
-     * whose growth is concentrated in different stretches, so the 30/90/365
-     * orders all differ (7 matches 30 here) -- swapping any two columns in
-     * the whitelist turns this red.
-     *
-     * @return array<string, array{int, list<string>}>
-     */
-    public static function periodOrderProvider(): array
-    {
-        return [
-            'vecka' => [7, ['SE0000333333', 'SE0000222222', 'SE0000108656']],
-            'manad' => [30, ['SE0000333333', 'SE0000222222', 'SE0000108656']],
-            '3man' => [90, ['SE0000222222', 'SE0000333333', 'SE0000108656']],
-            'ar' => [365, ['SE0000108656', 'SE0000222222', 'SE0000333333']],
-        ];
-    }
-
-    /**
-     * @param list<string> $expected
-     */
-    #[DataProvider('periodOrderProvider')]
-    public function testTopByTrendQualityForPeriodOrdersByThatPeriodsOwnColumn(int $days, array $expected): void
-    {
-        // Daily step per instrument for days 1..275 / 276..335 / 336..365:
-        // Atlas grows early (top on År), SSAB in the 90-day stretch (top on
-        // 3 mån), Kvartal in the last 30 days (top on Månad/Vecka).
-        $steps = [
-            'SE0000108656' => [10, 1, 1],
-            'SE0000222222' => [1, 10, 1],
-            'SE0000333333' => [1, 1, 10],
-        ];
-        $this->insertInstrument('SE0000108656', 'Atlas Copco A');
-        $this->insertInstrument('SE0000222222', 'SSAB B');
-        $this->insertInstrument('SE0000333333', 'Kvartal C');
-
-        $start = new DateTimeImmutable('2025-01-01');
-        foreach ($steps as $isin => [$early, $mid, $late]) {
-            $v = 10000;
-            for ($i = 0; $i <= 365; ++$i) {
-                if ($i > 0) {
-                    $v += $i <= 275 ? $early : ($i <= 335 ? $mid : $late);
-                }
-                $this->seedFor($isin, $start->modify("+{$i} days")->format('Y-m-d'), $v);
-            }
-        }
-
-        $top = $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, $days, 10);
-
-        self::assertSame($expected, array_column($top, 'isin'));
-    }
-
-    public function testTopByTrendQualityForPeriodRejectsAnUnknownPeriodLength(): void
-    {
-        $this->expectException(\InvalidArgumentException::class);
-
-        $this->metrics->topByTrendQualityForPeriod(NormalizedRow::SOURCE_AVANZA, 14, 10);
     }
 
     // -- recentSeries() ---------------------------------------------------------
@@ -1016,6 +925,25 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
         $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['growth' => true], DerivedMetricsRepository::SORT_COUNT);
 
         self::assertSame(['SE0000108656'], array_column($rows, 'isin'), 'the spiking isin must never qualify for growth');
+    }
+
+    public function testSearchAndFilterGrowthFilterIncludesAFlatDayButExcludesADecliningOne(): void
+    {
+        // 2026-10-06: Fullständig listas "Stadig tillväxt"-filter kept
+        // consistent with Topplista's topByTrendQuality() -- a flat latest
+        // day still qualifies, only an actual decline disqualifies.
+        $this->insertInstrument('SE0000108656', 'Flat AB');
+        $this->insertInstrument('SE0000222222', 'Decline AB');
+
+        $this->seedFor('SE0000108656', '2026-06-01', 1000);
+        $this->seedFor('SE0000108656', '2026-06-02', 1000); // flat -> qualifies
+
+        $this->seedFor('SE0000222222', '2026-06-01', 1000);
+        $this->seedFor('SE0000222222', '2026-06-02', 990); // down -> excluded
+
+        $rows = $this->metrics->searchAndFilter(NormalizedRow::SOURCE_AVANZA, ['growth' => true], DerivedMetricsRepository::SORT_COUNT);
+
+        self::assertSame(['SE0000108656'], array_column($rows, 'isin'));
     }
 
     public function testSearchAndFilterSpikeFilterMatchesSpikeThresholdExactly(): void
@@ -1761,9 +1689,9 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
                 fn (?string $m, int $lim) => $this->metrics->topByOwnerCount($src, $lim, $m),
                 [$beta, $delta, $gamma],
             ],
-            'topByTrendQualityForPeriod' => [
-                fn (?string $m, int $lim) => $this->metrics->topByTrendQualityForPeriod($src, 30, $lim, $m),
-                [$gamma, $delta, $beta],
+            'topByTrendQuality' => [
+                fn (?string $m, int $lim) => $this->metrics->topByTrendQuality($src, $lim, $m),
+                [$delta, $gamma, $beta],
             ],
             'topByPlusDays' => [
                 fn (?string $m, int $lim) => $this->metrics->topByPlusDays($src, 30, false, $lim, $m),
@@ -1841,7 +1769,7 @@ final class DerivedMetricsRepositoryTest extends StoreTestCase
 
         return [
             'topByOwnerCount' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByOwnerCount($src, $lim, $m, $x),
-            'topByTrendQualityForPeriod' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByTrendQualityForPeriod($src, 30, $lim, $m, $x),
+            'topByTrendQuality' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByTrendQuality($src, $lim, $m, $x),
             'topByPlusDays' => fn (bool $x, ?string $m, int $lim) => $this->metrics->topByPlusDays($src, 30, false, $lim, $m, $x),
         ];
     }
